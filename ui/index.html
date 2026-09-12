@@ -1,0 +1,2643 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Cream's Macro | Anime Expeditions</title>
+<!-- Tailwind is VENDORED locally (ui/tailwind.js), not loaded from
+     cdn.tailwindcss.com. The whole layout is Tailwind utility classes, and a
+     synchronous <script> to an unreachable CDN (offline, school/work firewall,
+     DNS, CDN hiccup) blocks parsing and leaves the UI as unstyled stacked text.
+     A local file always resolves, so the app renders identically with no
+     internet. Same reason the Google Fonts <link> was dropped -- the CSS below
+     falls back to system-ui when Inter/Sora aren't present. -->
+<script src="tailwind.js"></script>
+<link rel="stylesheet" href="style.css">
+</head>
+<body class="h-full w-full flex flex-col">
+  <!-- Liquid Glass theme's animated backdrop (see #glass-aurora in
+       style.css) -- FIRST child on purpose: later siblings paint above it
+       with no z-index involvement. display:none outside the theme. -->
+  <div id="glass-aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+  <!-- Liquid Glass's LENS: an SVG displacement filter the glass panels use
+       via backdrop-filter: url(#glass-lens) -- feDisplacementMap bends the
+       backdrop at panel rims like real glass (refraction, not just blur;
+       Chromium-only, which this WebView2 always is). The map image is
+       generated at runtime by ensureLiquidLensMap() in app.js: R/G channels
+       encode x/y bend vectors around a rounded-rect edge band. -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <filter id="glass-lens" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB">
+      <feImage id="glass-lens-map" href="" preserveAspectRatio="none" x="0" y="0" width="100%" height="100%" result="map"/>
+      <feDisplacementMap in="SourceGraphic" in2="map" scale="64" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+  </svg>
+
+
+  <!-- Custom titlebar (frameless window, no native OS chrome). Hidden while the
+       waiting screen shows (see showWaiting()/showDocked() in app.js) so the
+       loading state reads as just the spinner, not a half-built app shell. -->
+  <div id="titlebar" class="pywebview-drag-region flex items-center justify-between px-4 border-b flex-shrink-0"
+       style="height: 44px; background: var(--bg-card); border-color: var(--border); display: none;">
+    <div class="flex items-center gap-3">
+      <div class="flex flex-col items-center" style="line-height: 1;">
+        <span class="logo-anime text-[8px] uppercase tracking-widest font-bold">Anime</span>
+        <span class="logo-expeditions brand-font text-base font-bold" style="line-height: 1.1;">Expeditions</span>
+      </div>
+      <span style="color: var(--border);">|</span>
+      <span class="text-sm font-semibold" style="color: var(--text-dim);">Cream's Macro</span>
+      <button type="button" id="ver-badge" class="ver-badge-btn flex items-center gap-1.5 text-[10px] px-2 py-0.5 rounded-md border font-medium no-drag" style="color: var(--brand); border-color: var(--border); background: var(--bg-surface); cursor: pointer;" title="Click to check for updates" onclick="manualCheckForUpdate()">
+        <svg class="w-3 h-3 ver-badge-icon flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/>
+          <path d="M3 21v-5h5"/>
+          <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/>
+          <path d="M21 3v5h-5"/>
+        </svg>
+        <span id="ver-badge-text">v0.0.1</span>
+      </button>
+    </div>
+
+    <div class="flex items-center gap-1 no-drag">
+      <button id="nav-dashboard" onclick="switchScreen('dashboard')" class="nav-btn active no-drag" data-tooltip="Dashboard">
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
+          <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
+        </svg>
+      </button>
+      <button id="nav-task" onclick="switchScreen('task')" class="nav-btn no-drag" data-tooltip="Task">
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9 11l3 3L22 4"/>
+          <path stroke-linecap="round" stroke-linejoin="round" d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
+        </svg>
+      </button>
+      <button id="nav-creation" onclick="switchScreen('creation')" class="nav-btn no-drag" data-tooltip="Macro Manager">
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16M4 12h16"/>
+        </svg>
+      </button>
+      <button id="nav-resource" onclick="switchScreen('resource')" class="nav-btn no-drag" data-tooltip="Resource">
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 2l9 5-9 5-9-5 9-5zM3 12l9 5 9-5M3 17l9 5 9-5"/>
+        </svg>
+      </button>
+      <button id="nav-settings" onclick="switchScreen('settings')" class="nav-btn no-drag" data-tooltip="Settings">
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+      </button>
+      <button id="nav-faq" onclick="openFaqModal()" class="nav-btn no-drag" data-tooltip="Help & FAQ">
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"/>
+          <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+          <line x1="12" y1="17" x2="12.01" y2="17"/>
+        </svg>
+      </button>
+    </div>
+
+    <div class="flex items-center gap-4 no-drag">
+      <div class="flex items-center gap-3 tooltip-left" data-tooltip="Time this session / all-time total">
+        <div class="flex flex-col items-end" style="line-height: 1;">
+          <span class="text-[8px] uppercase tracking-wider" style="color: var(--text-muted);">Session</span>
+          <span id="session-time" class="text-xs font-semibold" style="color: var(--text-dim);">00:00</span>
+        </div>
+        <div class="flex flex-col items-end" style="line-height: 1;">
+          <span class="text-[8px] uppercase tracking-wider" style="color: var(--text-muted);">All Time</span>
+          <span id="alltime-time" class="text-xs font-semibold" style="color: var(--lilac);">00:00</span>
+        </div>
+      </div>
+      <div class="flex items-center gap-1 no-drag">
+        <button onclick="pywebview.api.minimize_window()" class="titlebar-btn no-drag tooltip-left w-8 h-7 flex items-center justify-center rounded text-sm" style="color: var(--text-dim);" data-tooltip="Minimize">&#8211;</button>
+        <button onclick="pywebview.api.close_window()" class="titlebar-btn no-drag tooltip-left w-8 h-7 flex items-center justify-center rounded text-sm" style="color: var(--text-dim);" data-tooltip="Close" onmouseover="this.style.background='var(--rose)'; this.style.color='#fff';" onmouseout="this.style.background=''; this.style.color='var(--text-dim)';">&#10005;</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ COMPACT STRIP (F7) ============
+       A slim control bar pinned to the bottom of the (normal, full-size)
+       window, shown only while body.compact-mode is set (see
+       toggleCompactStrip in app.js). It hides the busy side panel + process
+       log via CSS but leaves the docked Roblox exactly where it is -- the
+       game stays visible and clickable, nothing about docking is touched. -->
+  <div id="compact-strip">
+    <span class="cs-status">
+      <span class="cs-dot" id="cs-dot"></span>
+      <span class="cs-action" id="compact-action">Idle</span>
+    </span>
+    <div class="cs-btns">
+      <button id="cs-start" class="cs-btn cs-start" onclick="startMacro()" data-tooltip="Start">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6.5 4.6c0-1.2 1.3-1.9 2.3-1.3l11 6.9c.9.6.9 2 0 2.6l-11 6.9c-1 .6-2.3-.1-2.3-1.3V4.6z"/></svg>
+      </button>
+      <button id="cs-pause" class="cs-btn cs-pause" onclick="togglePauseMacro()" data-tooltip="Pause" disabled>
+        <svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4.5" width="4" height="15" rx="1.2"/><rect x="14" y="4.5" width="4" height="15" rx="1.2"/></svg>
+      </button>
+      <button id="cs-stop" class="cs-btn cs-stop" onclick="stopMacro()" data-tooltip="Stop" disabled>
+        <svg viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>
+      </button>
+      <button id="cs-expand" class="cs-btn cs-expand" onclick="toggleCompactStrip()" data-tooltip="Back to dashboard (F7)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- ============ DASHBOARD screen (default): the docked Roblox view ============ -->
+  <div id="screen-dashboard" class="flex-1 flex flex-col min-h-0">
+
+    <!-- Shown while the window is still compact and Roblox hasn't been found/docked yet.
+         Without this, the compact window showed nothing at all: the two-column
+         layout below is 1552px wide and only renders correctly once the window
+         has actually expanded to full size, so it stays hidden until then. -->
+    <div id="waiting-screen" class="loading-screen flex-1 flex flex-col items-center justify-center">
+      <!-- Ambient backdrop: soft brand-tinted wash, a faint scanline grid fading
+           toward the edges, and a handful of slow-drifting particles -- all
+           purely decorative (pointer-events: none), sized to stay inside the
+           compact 400x324 window without pushing the content below it into
+           overflow (this screen only shows before the window expands). -->
+      <div class="loading-grid"></div>
+      <div class="loading-glow"></div>
+      <div class="loading-particles">
+        <span></span><span></span><span></span><span></span><span></span><span></span>
+      </div>
+
+      <!-- Radar-style emblem: a static outer ring, a spinning brand-lit arc,
+           a pulsing core, and two outward-expanding "ping" rings -- reads as
+           actively searching, which fits "waiting to detect Roblox" better
+           than a plain spinner. -->
+      <div class="loading-emblem">
+        <span class="loading-emblem-ping"></span>
+        <span class="loading-emblem-ping loading-emblem-ping-delay"></span>
+        <span class="loading-emblem-ring"></span>
+        <span class="loading-emblem-arc"></span>
+        <span class="loading-emblem-core"></span>
+      </div>
+
+      <div class="flex flex-col items-center" style="margin-top: 14px; line-height: 1;">
+        <span class="logo-anime text-[11px] uppercase tracking-[0.3em] font-bold">Anime</span>
+        <span class="logo-expeditions brand-font text-3xl font-bold" style="line-height: 1.15; margin-top: 2px;">Expeditions</span>
+      </div>
+
+      <div class="loading-tag" style="margin-top: 8px;">
+        <span class="loading-tag-dot"></span>Cream's Macro
+      </div>
+
+      <div class="flex items-center gap-1.5 text-sm font-semibold" style="color: var(--text); margin-top: 18px;">
+        <svg class="w-3.5 h-3.5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="var(--brand)" stroke-width="2">
+          <circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3.5"/><circle cx="12" cy="12" r="0.6" fill="var(--brand)"/>
+        </svg>
+        Waiting for Roblox<span class="loading-dots"><span>.</span><span>.</span><span>.</span></span>
+      </div>
+      <div class="text-xs font-medium" style="color: var(--text-muted); margin-top: 4px;">Launch Roblox, it'll dock in automatically</div>
+
+      <div class="flex items-center gap-2" style="margin-top: 16px;">
+        <button onclick="launchRoblox()" class="loading-skip-btn flex items-center gap-1.5 text-xs font-semibold px-3.5 py-1.5 rounded-full border transition"
+                style="color: var(--brand); border-color: var(--brand); background: rgba(255, 255, 255, 0.05);"
+                onmouseover="this.style.background='var(--brand)'; this.style.color='#000';"
+                onmouseout="this.style.background='rgba(255, 255, 255, 0.05)'; this.style.color='var(--brand)';">
+          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
+            <polygon points="5 3 19 12 5 21 5 3"/>
+          </svg>
+          Launch Roblox
+        </button>
+
+        <button onclick="skipWaiting()" class="loading-skip-btn flex items-center gap-1.5 text-xs font-semibold px-3.5 py-1.5 rounded-full border transition"
+                style="color: var(--text-dim); border-color: var(--border); background: var(--bg-surface);"
+                onmouseover="this.style.borderColor='var(--brand)'; this.style.color='var(--text)';"
+                onmouseout="this.style.borderColor='var(--border)'; this.style.color='var(--text-dim)';">
+          Skip
+          <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M5 5l7 7-7 7M15 5l7 7-7 7"/>
+          </svg>
+        </button>
+      </div>
+
+      <div id="ver-badge-loading" class="text-[10px] font-semibold" style="color: var(--text-muted); margin-top: 14px; letter-spacing: 0.04em;"></div>
+    </div>
+
+    <div id="main-layout" class="flex-1 flex min-h-0" style="display: none;">
+      <!-- Left column: game-slot is empty on purpose, Roblox is docked here as a
+           native child window, directly beneath this DOM (not inside it). Logs
+           sit below it, using the width Roblox doesn't need for its own height. -->
+      <div class="flex flex-col flex-shrink-0" style="width: 1152px;">
+        <div id="game-slot" style="height: 756px; flex-shrink: 0;"></div>
+        <div id="dash-log" class="flex-1 flex flex-col p-3 min-h-0">
+          <section class="rp-panel rp-panel-fill">
+            <header class="rp-panel-head">
+              <span class="rp-head-tag" style="--rp-tag: var(--brand);">Live</span>
+              <span class="rp-head-title">Process Log</span>
+              <span class="rp-head-rule"></span>
+              <div class="flex items-center gap-3 flex-shrink-0">
+                <button onclick="popOutLogs()" class="log-toolbar-btn flex items-center gap-1 text-[10px] font-semibold"
+                        style="color: var(--text-muted);" title="Open logs in their own window">
+                  <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                    <polyline points="15 3 21 3 21 9"/>
+                    <line x1="10" y1="14" x2="21" y2="3"/>
+                  </svg>
+                  Pop Out
+                </button>
+                <button onclick="clearLogs()" class="log-toolbar-btn text-[10px] font-semibold"
+                        style="color: var(--text-muted);" title="Clear logs">Clear</button>
+              </div>
+            </header>
+            <div id="log-list" class="rp-log-list overflow-y-auto font-mono font-medium text-[11px] p-2 space-y-0.5"
+                 style="color: var(--text-dim);">
+              <div>&gt; Waiting for macro to start...</div>
+            </div>
+            <!-- Shown only while you have scrolled away from the newest line
+                 (see ui/log_view.js). The log stops auto-following as soon as
+                 you scroll up, so this is what tells you lines are still
+                 arriving, and how many you have not seen. -->
+            <button id="log-jump" class="log-jump" onclick="jumpLogToLatest()" title="Jump to the newest line">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                   stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="6 9 12 15 18 9"/>
+              </svg>
+              <span id="log-jump-count">0</span> new
+            </button>
+          </section>
+        </div>
+      </div>
+
+      <div id="dash-side" class="flex flex-col p-3 gap-3 min-h-0 overflow-y-auto" style="width: 400px; flex-shrink: 0;">
+        <!-- Status readout: hero Action row + ledger rows with dotted leaders.
+             Wrapped in .rp-hoverpanel so the extra detail rows (.rp-rows-extra)
+             can be absolutely positioned and overlay the panels below on hover
+             instead of pushing them down -- see .rp-rows-extra in style.css. -->
+        <div class="rp-hoverpanel">
+        <section class="rp-panel">
+          <header class="rp-panel-head">
+            <span class="rp-head-tag" style="--rp-tag: var(--lilac);">Live</span>
+            <span class="rp-head-title">Status Readout</span>
+            <span class="rp-head-rule"></span>
+            <span class="rp-expand-hint" title="Hover for more detail">&#9662; details</span>
+          </header>
+          <div class="rp-hero">
+            <span class="rp-pulse"></span>
+            <div>
+              <div class="rp-hero-label">Action</div>
+              <div class="rp-hero-value" id="stat-action">Idle</div>
+            </div>
+          </div>
+          <div class="rp-rows">
+            <div class="rp-row">
+              <span class="rp-mark" style="--rp-mk: var(--lilac);"></span>
+              <span class="rp-row-label">Current Task</span>
+              <span class="rp-leader"></span>
+              <span class="rp-row-value" id="stat-current-task">-</span>
+            </div>
+            <div class="rp-row">
+              <span class="rp-mark" style="--rp-mk: var(--teal);"></span>
+              <span class="rp-row-label">Repeat</span>
+              <span class="rp-leader"></span>
+              <span class="rp-row-value" id="stat-current-repeat">-</span>
+            </div>
+            <div class="rp-row">
+              <span class="rp-mark" style="--rp-mk: var(--brand);"></span>
+              <span class="rp-row-label">Map</span>
+              <span class="rp-leader"></span>
+              <span class="rp-row-value" id="stat-map">-</span>
+            </div>
+            <div class="rp-row">
+              <span class="rp-mark" style="--rp-mk: var(--amber);"></span>
+              <span class="rp-row-label">Last Run</span>
+              <span class="rp-leader"></span>
+              <span class="rp-row-value" id="stat-last-run">-</span>
+            </div>
+            <div class="rp-row">
+              <span class="rp-mark" style="--rp-mk: var(--teal);"></span>
+              <span class="rp-row-label">Runs / Hour</span>
+              <span class="rp-leader"></span>
+              <span class="rp-row-value" id="stat-runs-per-hour">-</span>
+            </div>
+            <div class="rp-row">
+              <span class="rp-mark" style="--rp-mk: var(--slate);"></span>
+              <span class="rp-row-label">Time Until Challenge</span>
+              <span class="rp-leader"></span>
+              <span class="rp-row-value" id="stat-challenge">Disabled</span>
+            </div>
+          </div>
+        </section>
+        <!-- Hidden by default (max-height/opacity transition, see style.css);
+             reveals on hovering .rp-hoverpanel. Absolutely positioned so it
+             overlays the Scoreboard panel below instead of displacing it. -->
+        <div class="rp-rows-extra">
+          <div class="rp-rows">
+            <div class="rp-row">
+              <span class="rp-mark" style="--rp-mk: var(--brand);"></span>
+              <span class="rp-row-label">Mode</span>
+              <span class="rp-leader"></span>
+              <span class="rp-row-value" id="stat-mode">-</span>
+            </div>
+            <div class="rp-row">
+              <span class="rp-mark" style="--rp-mk: var(--teal);"></span>
+              <span class="rp-row-label">Stage</span>
+              <span class="rp-leader"></span>
+              <span class="rp-row-value" id="stat-stage">-</span>
+            </div>
+            <div class="rp-row">
+              <span class="rp-mark" style="--rp-mk: var(--amber);"></span>
+              <span class="rp-row-label">Difficulty</span>
+              <span class="rp-leader"></span>
+              <span class="rp-row-value" id="stat-difficulty">-</span>
+            </div>
+            <div class="rp-row">
+              <span class="rp-mark" style="--rp-mk: var(--slate);"></span>
+              <span class="rp-row-label">Play Mode</span>
+              <span class="rp-leader"></span>
+              <span class="rp-row-value" id="stat-play-mode">-</span>
+            </div>
+            <div class="rp-row">
+              <span class="rp-mark" style="--rp-mk: var(--lilac);"></span>
+              <span class="rp-row-label">Macro</span>
+              <span class="rp-leader"></span>
+              <span class="rp-row-value" id="stat-macro">-</span>
+            </div>
+          </div>
+        </div>
+        </div>
+
+        <!-- Scoreboard: session up top, split ratio bars, lifetime footer strip. -->
+        <section class="rp-panel">
+          <header class="rp-panel-head">
+            <span class="rp-head-tag" style="--rp-tag: var(--teal);">Session</span>
+            <span class="rp-head-title">Scoreboard</span>
+            <span class="rp-head-rule"></span>
+          </header>
+          <div class="rp-score">
+            <div class="rp-score-cell">
+              <div class="rp-score-num" id="stat-wins" style="color: var(--teal);">0</div>
+              <div class="rp-score-cap">Wins</div>
+              <div class="rp-score-sub"><span id="stat-alltime-wins">0</span> all-time</div>
+            </div>
+            <div class="rp-score-cell">
+              <div class="rp-score-rate" id="stat-winrate">-</div>
+              <div class="rp-score-cap">Win Rate</div>
+              <div class="rp-score-sub"><span id="stat-alltime-winrate">-</span> all-time</div>
+            </div>
+            <div class="rp-score-cell">
+              <div class="rp-score-num" id="stat-losses" style="color: var(--rose);">0</div>
+              <div class="rp-score-cap">Losses</div>
+              <div class="rp-score-sub"><span id="stat-alltime-losses">0</span> all-time</div>
+            </div>
+          </div>
+          <div class="rp-ratio">
+            <div class="rp-ratio-row">
+              <span class="rp-ratio-tag">Session</span>
+              <div class="rp-track">
+                <div id="bar-session-wins" class="rp-seg rp-seg-w" style="width: 0%;"></div>
+                <div id="bar-session-losses" class="rp-seg rp-seg-l" style="width: 0%;"></div>
+              </div>
+            </div>
+            <div class="rp-ratio-row">
+              <span class="rp-ratio-tag">All Time</span>
+              <div class="rp-track">
+                <div id="bar-alltime-wins" class="rp-seg rp-seg-w" style="width: 0%;"></div>
+                <div id="bar-alltime-losses" class="rp-seg rp-seg-l" style="width: 0%;"></div>
+              </div>
+            </div>
+          </div>
+          <div class="rp-foot">
+            <b id="stat-total-runs">0 total runs</b>
+            <span class="rp-foot-sep">&middot;</span>
+            <span>lifetime record</span>
+          </div>
+        </section>
+
+        <!-- Controls: one primary command, one quiet one. -->
+        <section class="rp-panel">
+          <header class="rp-panel-head">
+            <span class="rp-head-tag" style="--rp-tag: var(--brand);">Macro</span>
+            <span class="rp-head-title">Controls</span>
+            <span class="rp-head-rule"></span>
+          </header>
+          <div id="task-grid" class="rp-controls">
+            <button id="btn-macro-start" class="rp-btn rp-btn-start ui-btn-glow" onclick="startMacro()">
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M6.5 4.6c0-1.2 1.3-1.9 2.3-1.3l11 6.9c.9.6.9 2 0 2.6l-11 6.9c-1 .6-2.3-.1-2.3-1.3V4.6z"/>
+              </svg>
+              Start
+              <span id="btn-macro-start-key" class="rp-btn-hotkey"></span>
+            </button>
+            <button id="btn-macro-pause" class="rp-btn rp-btn-pause ui-btn-glow" onclick="togglePauseMacro()" disabled>
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+                <rect x="6" y="4.5" width="4" height="15" rx="1.2"/>
+                <rect x="14" y="4.5" width="4" height="15" rx="1.2"/>
+              </svg>
+              <span id="btn-macro-pause-label">Pause</span>
+              <span id="btn-macro-pause-key" class="rp-btn-hotkey"></span>
+            </button>
+            <button id="btn-macro-stop" class="rp-btn rp-btn-stop ui-btn-glow" onclick="stopMacro()" disabled>
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+                <rect x="5" y="5" width="14" height="14" rx="2"/>
+              </svg>
+              Stop
+              <span id="btn-macro-stop-key" class="rp-btn-hotkey"></span>
+            </button>
+          </div>
+        </section>
+
+        <!-- Run history: fills the remaining rail height, scrolls internally. -->
+        <section class="rp-panel rp-panel-fill" style="min-height: 120px;">
+          <header class="rp-panel-head">
+            <span class="rp-head-tag" style="--rp-tag: var(--amber);">Session</span>
+            <span class="rp-head-title">Run History</span>
+            <span class="rp-head-rule"></span>
+            <span id="run-history-count" class="text-[10px] font-semibold flex-shrink-0" style="color: var(--text-muted);"></span>
+          </header>
+          <div id="run-history-list" class="rp-log-list overflow-y-auto" style="padding: 4px 0 6px;">
+            <div class="rh-empty">No runs yet</div>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ TASK screen: queue (left) + labeled builder (right) ============
+       Split view: the left list is just the run order -- compact rows, drag to
+       reorder -- while every editing control lives in the right Builder panel
+       with a proper label over each field (the old all-in-one cards were rows
+       of bare dropdowns you had to decode). -->
+  <div id="screen-task" class="flex-1 flex min-h-0 p-3 gap-3" style="display: none;">
+    <div class="flex flex-col min-h-0" style="flex: 1.1;">
+      <section class="rp-panel rp-panel-fill">
+        <header class="rp-panel-head">
+          <span class="rp-head-tag" style="--rp-tag: var(--brand);">Macro</span>
+          <span class="rp-head-title">Task Queue</span>
+          <span class="rp-head-rule"></span>
+          <span id="task-queue-count" class="text-[10px] font-semibold flex-shrink-0" style="color: var(--text-muted);"></span>
+        </header>
+
+        <div class="flex items-center gap-2 px-3 py-2 flex-shrink-0" style="border-bottom: 1px solid var(--border);">
+          <button class="task-toolbar-btn add" onclick="addTaskCard()">+ Add Task</button>
+          <button class="task-toolbar-btn" onclick="importTasks()" title="Load tasks (and their macros) from a shared .json file">Import</button>
+          <button class="task-toolbar-btn" onclick="exportTasks()" title="Save this queue + its macros to a .json file to back up or share">Export</button>
+          <span class="flex-1"></span>
+          <button class="task-toolbar-btn danger" onclick="clearTaskQueue()">Clear All</button>
+        </div>
+
+        <!-- Saved queues. Export/Import above writes a file through a native
+             dialog (for sharing a queue with someone else); this is the
+             on-this-machine version -- name the queue you're running now,
+             pick it back off the dropdown later. See core/task_presets.py. -->
+        <div class="flex items-center gap-2 px-3 py-2 flex-shrink-0" style="border-bottom: 1px solid var(--border);">
+          <span class="text-[10px] font-semibold flex-shrink-0" style="color: var(--text-muted);">PRESET</span>
+          <select id="task-preset-select" class="task-select" style="flex: 1; min-width: 0;"
+                  onchange="onTaskPresetPicked()" title="Saved task queues on this machine">
+            <option value="">No saved presets</option>
+          </select>
+          <button class="task-toolbar-btn" onclick="loadTaskPreset()"
+                  title="Replace the queue above with the selected preset">Load</button>
+          <!-- A DOM input, not window.prompt() -- prompt() is blocked in
+               WebView2, and this matches how the Macro Manager takes a
+               template name (#template-name). -->
+          <input id="task-preset-name" class="task-select" style="width: 150px;"
+                 placeholder="Preset name" onkeydown="if (event.key === 'Enter') saveTaskPreset()">
+          <button class="task-toolbar-btn add" onclick="saveTaskPreset()"
+                  title="Save the current queue under the name on the left">Save</button>
+          <button class="task-toolbar-btn danger" onclick="deleteTaskPreset()"
+                  title="Delete the selected preset">Delete</button>
+          <!-- Presets are plain .json files, so renaming/backing up/copying one
+               in from another machine is just file management. -->
+          <button class="task-toolbar-btn" onclick="openTaskPresetsFolder()"
+                  title="Open the folder these presets are saved in">Folder</button>
+        </div>
+
+        <div id="task-list" class="flex-1 overflow-y-auto p-2" style="min-height: 0;">
+          <div class="rh-empty">No tasks yet -- click "+ Add Task" to queue one.</div>
+        </div>
+      </section>
+    </div>
+
+    <div class="flex flex-col min-h-0" style="flex: 1;">
+      <section class="rp-panel rp-panel-fill">
+        <header class="rp-panel-head">
+          <span class="rp-head-tag" style="--rp-tag: var(--lilac);">Editor</span>
+          <span class="rp-head-title">Task Builder</span>
+          <span class="rp-head-rule"></span>
+        </header>
+        <div id="task-builder" class="flex-1 overflow-y-auto p-3" style="min-height: 0;">
+          <div class="rh-empty">Select a task on the left to edit it.</div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- ============ CREATION screen: block-based routine builder ============ -->
+  <div id="screen-creation" class="flex-1 flex min-h-0" style="display: none;">
+    <div class="flex flex-col flex-shrink-0 p-3 gap-2 border-r" style="width: 190px; border-color: var(--border);">
+      <h2 class="text-[10px] uppercase tracking-widest font-semibold mb-1" style="color: var(--text-muted);">Blocks</h2>
+      <div id="block-palette" class="flex flex-col gap-2"></div>
+      <p class="text-[10px] mt-2" style="color: var(--text-muted);">Drag a block into a phase below, drag rows to reorder.</p>
+    </div>
+
+    <div class="flex-1 flex flex-col p-3 gap-2 min-h-0">
+      <div class="flex items-center gap-2 flex-shrink-0">
+        <input id="template-name" class="task-select" style="width: 170px;" placeholder="Template name">
+        <button onclick="saveCurrentTemplate()" class="task-toolbar-btn add">Save</button>
+        <select id="template-select" class="task-select" style="width: 170px;" onchange="loadSelectedTemplate()">
+          <option value="">Load...</option>
+        </select>
+        <button onclick="newTemplate()" class="task-toolbar-btn" title="Clear the editor and start a new template">New</button>
+        <button onclick="openExamples()" class="task-toolbar-btn" title="Start from a ready-made routine instead of a blank editor">Examples</button>
+        <button onclick="deleteSelectedTemplate()" class="task-toolbar-btn danger" title="Delete the loaded template">Delete</button>
+        <button onclick="importTemplates()" class="task-toolbar-btn" title="Load templates from a shared .json file">Import File</button>
+        <button onclick="exportTemplates()" class="task-toolbar-btn" title="Save every template to a .json file to back up or share">Export File</button>
+        <button onclick="openShareCodeModal('import')" class="task-toolbar-btn primary" title="Import templates via code string, raw JSON, or web link">Import Code</button>
+        <button onclick="openShareCodeModal('export')" class="task-toolbar-btn primary" title="Share templates via compressed code string or web link">Share Code</button>
+        <span class="flex-1"></span>
+        <!-- Team Loadout lives with the template (it's part of what the routine
+             runs with), not on each Task card -- the task just picks a template
+             and the loadout comes along with it. Rendered by
+             renderCreationLoadout() so the Equipment toggle can appear only
+             once a team is actually chosen. -->
+        <div id="creation-loadout" class="flex items-center gap-2"></div>
+      </div>
+      <div id="creation-phases" class="flex-1 overflow-y-auto flex flex-col gap-2"></div>
+    </div>
+  </div>
+
+  <!-- Regular Challenge now lives inside the RESOURCE screen below (its Story
+       Maps config in #challenge-maps-modal). Rendered by renderChallengeScreen(). -->
+
+  <!-- ============ RESOURCE screen ============
+       A hub for auto resource actions. Today: Auto Crafting (interleaved like
+       Challenge -- after every N qualifying wins it runs one crafting pass).
+       Future sections (Auto Fuel, Gold, Geode, ...) slot in as sibling blocks
+       below Auto Crafting -- a label + setting-rows, same shape. Rendered by
+       renderCraftingScreen() in app.js; settings live in settings.json under
+       "crafting" (see main.py's get_crafting_settings / core/runner_crafting.py).
+       The sprite list itself lives in the #crafting-sprites-modal to keep this
+       screen clean. The "Run now" test lives in Settings > Debug. -->
+  <div id="screen-resource" class="flex-1 flex min-h-0 p-3 gap-3" style="display: none;">
+    <div class="flex flex-col min-h-0" style="flex: 1;">
+      <section class="rp-panel rp-panel-fill">
+        <header class="rp-panel-head">
+          <span class="rp-head-tag" style="--rp-tag: var(--teal);">Auto</span>
+          <span class="rp-head-title">Resource</span>
+          <span class="rp-head-rule"></span>
+        </header>
+        <div class="p-3 flex flex-col gap-3 overflow-y-auto" style="min-height: 0;">
+
+          <!-- ── Auto Crafting ── -->
+          <details id="resource-card-crafting" class="resource-card">
+            <summary class="resource-card-head">
+              <span class="resource-card-icon">C</span>
+              <span class="resource-card-copy">
+                <span class="resource-card-title">Auto Crafting</span>
+                <span id="resource-crafting-details" class="resource-card-desc">No sprites selected.</span>
+              </span>
+              <span id="resource-crafting-summary" class="resource-card-state">Disabled</span>
+              <span class="resource-card-chevron">&#8250;</span>
+            </summary>
+            <div class="resource-card-body">
+
+          <div class="setting-row" style="padding: 10px 0;">
+            <div>
+              <div class="setting-label">Enable Auto Crafting</div>
+              <div class="setting-desc">After every N qualifying wins, leaves to the Crafting area, crafts your chosen sprites, then resumes farming.</div>
+            </div>
+            <button id="toggle-crafting-enabled" class="toggle-switch" onclick="toggleCraftingEnabled(this)"></button>
+          </div>
+
+          <div class="setting-row" style="padding: 10px 0;">
+            <div>
+              <div class="setting-label">Craft every</div>
+              <div class="setting-desc">Wins that count: <b>Mastery</b> (Story) and <b>Challenge</b> victories. Progress: <span id="crafting-progress">0 / 20</span>.</div>
+            </div>
+            <div class="challenge-count-group">
+              <input id="crafting-every" type="number" class="block-input" min="1" max="999" style="width: 64px;" value="20" onchange="setCraftingEvery(this.value)">
+              <span class="challenge-count-sep">wins</span>
+            </div>
+          </div>
+
+          <div class="setting-row" style="padding: 10px 0;">
+            <div>
+              <div class="setting-label">Sprites to Craft</div>
+              <div class="setting-desc">Pick which sprites to craft, their amounts, and the priority order.</div>
+            </div>
+            <button class="task-toolbar-btn" onclick="openCraftingSprites()">Choose sprites</button>
+          </div>
+
+          <div class="setting-row" style="padding: 10px 0;">
+            <div>
+              <div class="setting-label">Reset Progress</div>
+              <div class="setting-desc">Set the win counter back to 0.</div>
+            </div>
+            <button class="task-toolbar-btn danger" onclick="resetCraftingCount()">Reset</button>
+          </div>
+            </div>
+          </details>
+
+          <!-- Auto Fuel -->
+          <details id="resource-card-fuel" class="resource-card">
+            <summary class="resource-card-head">
+              <span class="resource-card-icon">F</span>
+              <span class="resource-card-copy">
+                <span class="resource-card-title">Auto Fuel</span>
+                <span id="resource-fuel-details" class="resource-card-desc">Resource Drill: Off | Gold Mine: Off</span>
+              </span>
+              <span id="resource-fuel-summary" class="resource-card-state">Disabled</span>
+              <span class="resource-card-chevron">&#8250;</span>
+            </summary>
+            <div class="resource-card-body">
+
+          <div class="setting-row" style="padding: 10px 0;">
+            <div>
+              <div class="setting-label">Enable Auto Fuel <span id="fuel-summary-status" class="challenge-ready-chip">Disabled</span></div>
+              <div class="setting-desc">Refills at safe Task Queue boundaries: Auto uses Max after 8 hours or numeric fuel duration; custom interval overrides both resources.</div>
+            </div>
+            <button id="toggle-fuel-enabled" class="toggle-switch" onclick="toggleFuelEnabled(this)"></button>
+          </div>
+
+          <div class="setting-row" style="padding: 10px 0;">
+            <div>
+              <div class="setting-label">Refill every</div>
+              <div class="setting-desc">Enter a value to choose your wait time. Auto uses 8 hours for Max or the selected numeric fuel duration.</div>
+            </div>
+            <div class="fuel-amount-control">
+              <div id="fuel-interval-controls" class="flex items-center gap-2">
+                <input id="fuel-interval-value" type="number" class="block-input" min="1" placeholder="30" style="width: 72px;"
+                       onchange="setFuelIntervalValue()">
+                <select id="fuel-interval-unit" class="task-select" onchange="setFuelIntervalValue()">
+                  <option value="minutes">Minutes</option>
+                  <option value="hours">Hours</option>
+                </select>
+              </div>
+              <button type="button" id="fuel-interval-auto" class="seg-btn" onclick="setFuelIntervalAuto(this)">Auto</button>
+            </div>
+          </div>
+
+          <div class="setting-row" style="padding: 10px 0;">
+            <div>
+              <div class="setting-label">Resource Drill <span id="fuel-resource-drill-status" class="challenge-ready-chip">Disabled</span></div>
+              <div class="setting-desc">Next refill: <span id="fuel-resource-drill-timer">Disabled</span>.</div>
+            </div>
+            <div class="fuel-resource-controls">
+              <div class="fuel-enable-control">
+                <button id="fuel-resource-drill-enabled" class="toggle-switch"
+                        onclick="toggleFuelResourceEnabled('resource_drill', this)"></button>
+                <div>
+                  <div class="fuel-control-title">Refill this resource</div>
+                  <div class="fuel-control-hint">Include in Auto Fuel</div>
+                </div>
+              </div>
+              <div class="fuel-control-divider"></div>
+              <div class="fuel-amount-control">
+                <div class="fuel-control-title">Fuel amount</div>
+                <div class="flex items-center gap-2">
+                  <div class="seg-toggle" style="width: auto;">
+                    <button type="button" id="fuel-resource-drill-max" class="seg-btn" onclick="setFuelAmountMode('resource_drill', 'max')">Max</button>
+                    <button type="button" id="fuel-resource-drill-number" class="seg-btn" onclick="setFuelAmountMode('resource_drill', 'number')">Number</button>
+                  </div>
+                  <input id="fuel-resource-drill-amount" type="number" class="block-input" min="1" max="100" style="width: 72px;"
+                         onchange="setFuelResourceAmount('resource_drill', this.value)">
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="setting-row" style="padding: 10px 0;">
+            <div>
+              <div class="setting-label">Gold Mine <span id="fuel-gold-mine-status" class="challenge-ready-chip">Disabled</span></div>
+              <div class="setting-desc">Next refill: <span id="fuel-gold-mine-timer">Disabled</span>.</div>
+            </div>
+            <div class="fuel-resource-controls">
+              <div class="fuel-enable-control">
+                <button id="fuel-gold-mine-enabled" class="toggle-switch"
+                        onclick="toggleFuelResourceEnabled('gold_mine', this)"></button>
+                <div>
+                  <div class="fuel-control-title">Refill this resource</div>
+                  <div class="fuel-control-hint">Include in Auto Fuel</div>
+                </div>
+              </div>
+              <div class="fuel-control-divider"></div>
+              <div class="fuel-amount-control">
+                <div class="fuel-control-title">Fuel amount</div>
+                <div class="flex items-center gap-2">
+                  <div class="seg-toggle" style="width: auto;">
+                    <button type="button" id="fuel-gold-mine-max" class="seg-btn" onclick="setFuelAmountMode('gold_mine', 'max')">Max</button>
+                    <button type="button" id="fuel-gold-mine-number" class="seg-btn" onclick="setFuelAmountMode('gold_mine', 'number')">Number</button>
+                  </div>
+                  <input id="fuel-gold-mine-amount" type="number" class="block-input" min="1" max="100" style="width: 72px;"
+                         onchange="setFuelResourceAmount('gold_mine', this.value)">
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="setting-row" style="padding: 10px 0;">
+            <div>
+              <div class="setting-label">Walking Paths</div>
+              <div class="setting-desc">Record and assign the three routes used inside Expedition Hub.</div>
+            </div>
+            <button class="task-toolbar-btn" onclick="openFuelPaths()">Configure paths</button>
+          </div>
+
+          <div class="setting-row" style="padding: 10px 0;">
+            <div>
+              <div class="setting-label">Reset Fuel Timer</div>
+              <div class="setting-desc">Makes every enabled resource ready for an immediate refill.</div>
+            </div>
+            <button class="task-toolbar-btn danger" onclick="resetFuelTimer()">Reset</button>
+          </div>
+            </div>
+          </details>
+
+          <!-- Auto Shop -->
+          <details id="resource-card-auto-shop" class="resource-card">
+            <summary class="resource-card-head">
+              <span class="resource-card-icon">S</span>
+              <span class="resource-card-copy">
+                <span class="resource-card-title">Auto Shop</span>
+                <span id="resource-auto-shop-details" class="resource-card-desc">Gold Shop: 0 enabled</span>
+              </span>
+              <span id="resource-auto-shop-summary" class="resource-card-state">Disabled</span>
+              <span class="resource-card-chevron">&#8250;</span>
+            </summary>
+            <div class="resource-card-body">
+              <div class="setting-row" style="padding: 10px 0;">
+                <div>
+                  <div class="setting-label">Enable Auto Shop</div>
+                  <div class="setting-desc">Runs enabled shops at safe Task Queue boundaries and resets daily progress at 00:00 UTC.</div>
+                </div>
+                <button id="toggle-auto-shop-enabled" class="toggle-switch" onclick="toggleAutoShopEnabled(this)"></button>
+              </div>
+
+              <div class="setting-row" style="padding: 10px 0;">
+                <div>
+                  <div class="setting-label">Gold Shop</div>
+                  <div class="setting-desc">Choose how many to buy on each pass. Numeric quantities repeat on later passes until sold out.</div>
+                </div>
+                <button id="toggle-gold-shop-enabled" class="toggle-switch"
+                        onclick="toggleAutoShopShopEnabled('gold_shop', this)"></button>
+              </div>
+
+              <div>
+                <div class="wh-hint" style="margin-bottom: 6px;">Items are checked in this order. Max buys the remaining stock once.</div>
+                <div id="auto-shop-gold-items" class="flex flex-col gap-1.5"></div>
+              </div>
+            </div>
+          </details>
+
+          <!-- ── Auto Challenge ── -->
+          <details id="resource-card-challenge" class="resource-card">
+            <summary class="resource-card-head">
+              <span class="resource-card-icon">CH</span>
+              <span class="resource-card-copy">
+                <span class="resource-card-title">Auto Challenge</span>
+                <span id="resource-challenge-details" class="resource-card-desc">Daily: Off | Regular: Off</span>
+              </span>
+              <span id="resource-challenge-summary" class="resource-card-state">Disabled</span>
+              <span class="resource-card-chevron">&#8250;</span>
+            </summary>
+            <div class="resource-card-body">
+
+          <div id="challenge-setup-warning" class="resource-setup-warning" style="display: none;"></div>
+
+          <div class="setting-row" style="padding: 10px 0;">
+            <div>
+              <div class="setting-label">Story Map Setup</div>
+              <div class="setting-desc">Assign a Macro Operation to each Story map the challenge can land on.</div>
+            </div>
+            <button class="task-toolbar-btn" onclick="openChallengeMaps()">Story maps</button>
+          </div>
+
+          <div class="setting-row" style="padding: 10px 0;">
+            <div>
+              <div class="setting-label">Reset Challenge Status Now</div>
+              <div class="setting-desc">UTC game day: <span id="challenge-last-reset">-</span>. Clears Daily completion, counts, and cooldowns.</div>
+            </div>
+            <button class="task-toolbar-btn danger" onclick="resetChallengeCounts()">Reset</button>
+          </div>
+
+          <div class="setting-row" style="padding: 10px 0;">
+            <div>
+              <div class="setting-label">Enable Daily Challenge <span id="daily-challenge-status" class="challenge-ready-chip">Ready</span></div>
+              <div class="setting-desc">Runs the once-per-game-day Daily Challenge first. Uses Story Map Setup and resets at 00:00 UTC.</div>
+            </div>
+            <div class="flex items-center gap-2">
+              <div class="challenge-count-group" title="Set to 1 if today's Daily Challenge was already completed manually">
+                <input id="daily-challenge-count" type="number" class="block-input" min="0" max="1" style="width: 52px;" value="0"
+                       onchange="setDailyChallengeCount(this.value)">
+                <span class="challenge-count-sep">/ 1</span>
+              </div>
+              <button id="toggle-daily-challenge-enabled" class="toggle-switch" onclick="toggleDailyChallengeEnabled(this)"></button>
+            </div>
+          </div>
+
+          <div class="setting-row" style="padding: 10px 0;">
+            <div>
+              <div class="setting-label">Enable Regular Challenge</div>
+              <div class="setting-desc">Runs every ready stage once, before the Task Queue, each time you press Start.</div>
+            </div>
+            <button id="toggle-challenge-enabled" class="toggle-switch" onclick="toggleChallengeEnabled(this)"></button>
+          </div>
+
+          <div class="setting-row" style="padding: 10px 0;">
+            <div>
+              <div class="setting-label">Challenge Play Mode</div>
+              <div class="setting-desc">Solo or Matchmaking for Daily and Regular Challenge.</div>
+            </div>
+            <div class="seg-toggle" style="width: auto;">
+              <button type="button" id="challenge-mode-solo" class="seg-btn" onclick="setChallengePlayMode('solo')">Solo</button>
+              <button type="button" id="challenge-mode-matchmaking" class="seg-btn" onclick="setChallengePlayMode('matchmaking')">Matchmaking</button>
+            </div>
+          </div>
+
+          <div>
+            <div class="wh-hint" style="margin-bottom: 6px;">Resets every :00 / :30 -- pick which of the 3 stage slots to attempt below.</div>
+            <div id="challenge-stage-list" class="flex flex-col gap-1.5"></div>
+          </div>
+            </div>
+          </details>
+
+          <!-- Auto Bounty -->
+          <details id="resource-card-bounty" class="resource-card">
+            <summary class="resource-card-head">
+              <span class="resource-card-icon">B</span>
+              <span class="resource-card-copy">
+                <span class="resource-card-title">Auto Bounty</span>
+                <span class="resource-card-desc">Complete supported Bounty Board objectives before other automation.</span>
+              </span>
+              <span id="resource-bounty-summary" class="resource-card-state">Disabled</span>
+              <span class="resource-card-chevron">&#8250;</span>
+            </summary>
+            <div class="resource-card-body">
+
+          <div id="bounty-setup-warning" class="resource-setup-warning" style="display: none;"></div>
+
+          <div class="setting-row" style="padding: 10px 0;">
+            <div>
+              <div class="setting-label">Enable Auto Bounty</div>
+              <div class="setting-desc">Checks the Event Bounty Board before Challenge and runs supported Clear Wave or Hard objectives.</div>
+            </div>
+            <button id="toggle-bounty-enabled" class="toggle-switch" onclick="toggleBountyEnabled(this)"></button>
+          </div>
+
+          <div class="setting-row" style="padding: 10px 0;">
+            <div>
+              <div class="setting-label">Auto Mythic Bounty</div>
+              <div class="setting-desc">Rerolls each eligible card until its card title verifies as Mythic.</div>
+            </div>
+            <button id="toggle-bounty-mythic" class="toggle-switch" onclick="toggleBountyMythic(this)"></button>
+          </div>
+
+          <div class="setting-row" style="padding: 10px 0;">
+            <div>
+              <div class="setting-label">Mythic Reroll Safety Limit</div>
+              <div class="setting-desc">Maximum rerolls for one card before Auto Bounty leaves it unclaimed. Allowed range: 1–100.</div>
+            </div>
+            <input id="bounty-mythic-max-rerolls" class="block-input" style="width: 64px;" type="number" min="1" max="100" value="20" onchange="setBountyMythicMaxRerolls(this.value)">
+          </div>
+
+          <div class="setting-row" style="padding: 10px 0;">
+            <div>
+              <div class="setting-label">Play Mode</div>
+              <div class="setting-desc">Solo or Matchmaking for bounty stages.</div>
+            </div>
+            <div class="seg-toggle" style="width: auto;">
+              <button type="button" id="bounty-mode-solo" class="seg-btn" onclick="setBountyPlayMode('solo')">Solo</button>
+              <button type="button" id="bounty-mode-matchmaking" class="seg-btn" onclick="setBountyPlayMode('matchmaking')">Matchmaking</button>
+            </div>
+          </div>
+
+          <div class="setting-row" style="padding: 10px 0;">
+            <div>
+              <div class="setting-label">Summon Banner</div>
+              <div class="setting-desc">Currency source for Summon bounties. Standard uses Gems; Villain uses Villain Coins.</div>
+            </div>
+            <div class="seg-toggle" style="width: auto;">
+              <button type="button" id="bounty-banner-standard" class="seg-btn" onclick="setBountySummonBanner('standard')">Standard</button>
+              <button type="button" id="bounty-banner-villain" class="seg-btn" onclick="setBountySummonBanner('villain')">Villain</button>
+            </div>
+          </div>
+
+          <div class="setting-row" style="padding: 10px 0;">
+            <div>
+              <div class="setting-label">Bounties Remaining</div>
+              <div class="setting-desc">Updated from the Bounty Board. At 0, Auto Bounty skips until the 00:00 UTC reset or a manual reset.</div>
+            </div>
+            <div class="flex items-center gap-2">
+              <span id="bounty-remaining" class="challenge-ready-chip">10 / 10</span>
+              <button class="task-toolbar-btn danger" onclick="resetBountyRemaining()">Reset</button>
+            </div>
+          </div>
+
+          <div class="setting-row" style="padding: 10px 0;">
+            <div>
+              <div class="setting-label">Story Map Setup</div>
+              <div class="setting-desc">Assign the Macro Operation Auto Bounty should use for each Story destination.</div>
+            </div>
+            <button class="task-toolbar-btn" onclick="openBountyMaps()">Story maps</button>
+          </div>
+            </div>
+          </details>
+
+          <!-- Future resource sections (Auto Fuel, Gold, Geode, ...) go here. -->
+
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- ============ SETTINGS screen ============ -->
+  <div id="screen-settings" class="flex-1 flex min-h-0" style="display: none;">
+    <div class="flex flex-col flex-shrink-0 p-2 gap-1 border-r" style="width: 160px; border-color: var(--border);">
+      <div class="settings-search-wrap">
+        <svg class="w-3.5 h-3.5 flex-shrink-0" style="color: var(--text-muted);" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+        </svg>
+        <input id="settings-search" type="text" placeholder="Search settings..." oninput="filterSettings(this.value)">
+      </div>
+      <button class="settings-cat-btn active" data-cat="all" onclick="setSettingsCategory('all')">
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
+          <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
+        </svg>
+        All
+      </button>
+      <button class="settings-cat-btn" data-cat="general" onclick="setSettingsCategory('general')">
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="4" y1="6" x2="20" y2="6"/><circle cx="9" cy="6" r="1.8" fill="currentColor" stroke="none"/>
+          <line x1="4" y1="12" x2="20" y2="12"/><circle cx="15" cy="12" r="1.8" fill="currentColor" stroke="none"/>
+          <line x1="4" y1="18" x2="20" y2="18"/><circle cx="7" cy="18" r="1.8" fill="currentColor" stroke="none"/>
+        </svg>
+        General
+      </button>
+      <button class="settings-cat-btn" data-cat="hotkeys" onclick="setSettingsCategory('hotkeys')">
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="2" y="6" width="20" height="12" rx="2"/>
+          <line x1="6" y1="10" x2="6" y2="10.01"/><line x1="10" y1="10" x2="10" y2="10.01"/>
+          <line x1="14" y1="10" x2="14" y2="10.01"/><line x1="18" y1="10" x2="18" y2="10.01"/>
+          <line x1="7" y1="14" x2="17" y2="14"/>
+        </svg>
+        Hotkeys
+      </button>
+      <button class="settings-cat-btn" data-cat="webhook" onclick="setSettingsCategory('webhook')">
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/>
+          <path stroke-linecap="round" stroke-linejoin="round" d="M13.73 21a2 2 0 0 1-3.46 0"/>
+        </svg>
+        Webhook
+      </button>
+      <button class="settings-cat-btn" data-cat="debug" onclick="setSettingsCategory('debug')">
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="3" width="18" height="18" rx="2"/>
+          <path stroke-linecap="round" stroke-linejoin="round" d="M8 12h8M12 8v8"/>
+        </svg>
+        Debug
+      </button>
+    </div>
+
+    <div class="flex-1 overflow-y-auto p-4">
+      <div class="settings-category" data-cat="general">
+        <section class="rp-panel">
+          <header class="rp-panel-head">
+            <span class="rp-head-tag" style="--rp-tag: var(--lilac);">System</span>
+            <span class="rp-head-title">General</span>
+            <span class="rp-head-rule"></span>
+            <button onclick="importSettings()" class="text-xs font-semibold px-2.5 py-1 rounded border flex-shrink-0 settings-action-btn" style="color: var(--text-dim); border-color: var(--border);" title="Import settings from a .json file">Import Settings</button>
+            <button onclick="exportSettings()" class="text-xs font-semibold px-2.5 py-1 rounded border flex-shrink-0 settings-action-btn" style="color: var(--text-dim); border-color: var(--border);" title="Export all current settings to a .json file">Export Settings</button>
+          </header>
+          <!-- Security Notice Banner -->
+          <div class="mx-2 my-2 p-3 rounded-lg border flex items-start gap-3" style="background: color-mix(in srgb, var(--teal) 10%, transparent); border-color: color-mix(in srgb, var(--teal) 30%, transparent);">
+            <svg class="w-5 h-5 flex-shrink-0 mt-0.5" style="color: var(--teal);" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            </svg>
+            <div style="font-size: 11px; color: var(--text-dim); line-height: 1.4;">
+              <strong style="color: var(--text); font-weight: 600;">Open-Source Security & False Positives:</strong>
+              This macro is 100% free and open-source. Heuristic false positives (e.g. 1/70 on VirusTotal) are common for Python PyInstaller executables. You can inspect the entire source code on GitHub anytime.
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-x-6 px-2 pb-2">
+            <div class="setting-row" style="border-bottom: none; grid-column: span 2; padding-bottom: 12px; margin-bottom: 6px; border-bottom: 1px dashed var(--border);">
+              <div>
+                <div class="setting-label">Software Updates</div>
+                <div class="setting-desc">Check GitHub for the latest releases, bug fixes, and feature updates.</div>
+              </div>
+              <button type="button" id="btn-check-updates" onclick="manualCheckForUpdate()" class="text-xs font-semibold px-3 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn flex items-center gap-1.5" style="color: var(--brand); border-color: var(--border);">
+                <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
+                Check for Updates
+              </button>
+            </div>
+            <div class="setting-row" style="border-bottom: none;">
+              <div>
+                <div class="setting-label">Start Minimized</div>
+                <div class="setting-desc">Launch minimized to the taskbar.</div>
+              </div>
+              <button id="toggle-start-minimized" class="toggle-switch" onclick="toggleSetting('start_minimized', this)"></button>
+            </div>
+            <div class="setting-row" style="border-bottom: none;">
+              <div>
+                <div class="setting-label">Auto-Reopen Roblox</div>
+                <div class="setting-desc">If Roblox closes or crashes mid-run, reopen the game and pick the run back up automatically -- so an unattended run survives a crash instead of sitting there stopped. Skipped when other Roblox windows are open (reopening would close them). Default on.</div>
+              </div>
+              <button id="toggle-auto-relaunch-roblox" class="toggle-switch" onclick="toggleSetting('auto_relaunch_roblox', this)"></button>
+            </div>
+            <div class="setting-row" style="border-bottom: none; grid-column: span 2; align-items: flex-start;">
+              <div>
+                <div class="setting-label">Periodic Roblox Refresh</div>
+                <div class="setting-desc">Restart Roblox after the selected number of hours to clear long-session memory buildup. It waits for a completed match and safe lobby boundary, so it does not interrupt a match or add FPS polling. Off by default.</div>
+              </div>
+              <div class="flex items-center gap-2" style="flex-shrink: 0;">
+                <input id="setting-memory-refresh-hours" type="number" min="1" max="12" step="0.5" class="block-input" style="width: 78px;" onchange="saveMemoryRefreshHours(this)">
+                <span style="font-size: 11px; color: var(--text-muted);">hours</span>
+                <button id="toggle-memory-refresh" class="toggle-switch" onclick="toggleSetting('memory_refresh_enabled', this)"></button>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div>
+                <div class="setting-label">Background</div>
+                <div class="setting-desc">Dark, Black, Slate, Light, Space, Semi Gold, Semi Silver, or Liquid Glass.</div>
+              </div>
+              <div id="theme-base-picker" class="theme-picker-grid"></div>
+            </div>
+            <div class="setting-row" style="border-bottom: none;">
+              <div>
+                <div class="setting-label">Accent</div>
+                <div class="setting-desc">Highlight color -- mixes with any Background above.</div>
+              </div>
+              <!-- Swatches wrap into two rows of four so the picker fits a half-width column. -->
+              <div id="theme-accent-picker" class="theme-picker-grid"></div>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <div class="settings-category" data-cat="hotkeys" style="margin-top: 20px;">
+        <section class="rp-panel">
+          <header class="rp-panel-head">
+            <span class="rp-head-tag" style="--rp-tag: var(--brand);">Input</span>
+            <span class="rp-head-title">Keybinds</span>
+            <span class="rp-head-rule"></span>
+            <button onclick="resetHotkeys()" class="text-xs font-semibold px-3 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--rose); border-color: var(--border);" title="Reset every keybind below back to its default key">Reset to Defaults</button>
+          </header>
+
+          <!-- 2 columns so each keybind button sits right next to its own label instead of
+               stretched across the full panel width, that's what was causing misclicks. -->
+          <div class="grid grid-cols-2 gap-x-6 px-2 pb-2">
+            <div class="setting-row">
+              <div>
+                <div class="setting-label">Toggle Game Visibility</div>
+                <div class="setting-desc">Switch to/from Dashboard.</div>
+              </div>
+              <div class="keybind-group">
+                <button id="keybind-clear-toggle_game" class="keybind-clear-btn" onclick="clearHotkey('toggle_game')" title="Reset to default key (press Esc while capturing to unbind)">&times;</button>
+                <button id="keybind-toggle_game" class="keybind-btn" onclick="startRebind('toggle_game', this)">F4</button>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div>
+                <div class="setting-label">Skip Waiting</div>
+                <div class="setting-desc">Use the panel before Roblox docks.</div>
+              </div>
+              <div class="keybind-group">
+                <button id="keybind-clear-skip_waiting" class="keybind-clear-btn" onclick="clearHotkey('skip_waiting')" title="Reset to default key (press Esc while capturing to unbind)">&times;</button>
+                <button id="keybind-skip_waiting" class="keybind-btn" onclick="startRebind('skip_waiting', this)">Unbound</button>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div>
+                <div class="setting-label">Start Macro</div>
+                <div class="setting-desc">Same as the Dashboard's Start button.</div>
+              </div>
+              <div class="keybind-group">
+                <button id="keybind-clear-macro_start" class="keybind-clear-btn" onclick="clearHotkey('macro_start')" title="Reset to default key (press Esc while capturing to unbind)">&times;</button>
+                <button id="keybind-macro_start" class="keybind-btn" onclick="startRebind('macro_start', this)">F1</button>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div>
+                <div class="setting-label">Stop Macro</div>
+                <div class="setting-desc">Same as the Dashboard's Stop button.</div>
+              </div>
+              <div class="keybind-group">
+                <button id="keybind-clear-macro_stop" class="keybind-clear-btn" onclick="clearHotkey('macro_stop')" title="Reset to default key (press Esc while capturing to unbind)">&times;</button>
+                <button id="keybind-macro_stop" class="keybind-btn" onclick="startRebind('macro_stop', this)">F2</button>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div>
+                <div class="setting-label">Pause / Resume Macro</div>
+                <div class="setting-desc">Same as the Dashboard's Pause button.</div>
+              </div>
+              <div class="keybind-group">
+                <button id="keybind-clear-macro_pause" class="keybind-clear-btn" onclick="clearHotkey('macro_pause')" title="Reset to default key (press Esc while capturing to unbind)">&times;</button>
+                <button id="keybind-macro_pause" class="keybind-btn" onclick="startRebind('macro_pause', this)">F5</button>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div>
+                <div class="setting-label">Debug Screenshot</div>
+                <div class="setting-desc">Same as Settings &gt; Debug &gt; Screenshot's Capture button.</div>
+              </div>
+              <div class="keybind-group">
+                <button id="keybind-clear-debug_screenshot" class="keybind-clear-btn" onclick="clearHotkey('debug_screenshot')" title="Reset to default key (press Esc while capturing to unbind)">&times;</button>
+                <button id="keybind-debug_screenshot" class="keybind-btn" onclick="startRebind('debug_screenshot', this)">F3</button>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div>
+                <div class="setting-label">Image Manager</div>
+                <div class="setting-desc">Opens/closes the Image Manager from anywhere -- capture a missing crop the moment a search fails, no digging through Settings.</div>
+              </div>
+              <div class="keybind-group">
+                <button id="keybind-clear-image_manager" class="keybind-clear-btn" onclick="clearHotkey('image_manager')" title="Reset to default key (press Esc while capturing to unbind)">&times;</button>
+                <button id="keybind-image_manager" class="keybind-btn" onclick="startRebind('image_manager', this)">F6</button>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div>
+                <div class="setting-label">Compact Strip</div>
+                <div class="setting-desc">Collapse the dashboard to a small always-on-top control bar (and back).</div>
+              </div>
+              <div class="keybind-group">
+                <button id="keybind-clear-toggle_compact" class="keybind-clear-btn" onclick="clearHotkey('toggle_compact')" title="Reset to default key (press Esc while capturing to unbind)">&times;</button>
+                <button id="keybind-toggle_compact" class="keybind-btn" onclick="startRebind('toggle_compact', this)">F7</button>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div>
+                <div class="setting-label">Auto Upgrade (In Game)</div>
+                <div class="setting-desc">Match the Auto Upgrade key configured in the game's settings. Used by Auto Upgrade Unit blocks set to Hotkey.</div>
+              </div>
+              <div class="keybind-group">
+                <button id="keybind-clear-game_auto_upgrade" class="keybind-clear-btn" onclick="clearHotkey('game_auto_upgrade')" title="Reset to default key (press Esc while capturing to unbind)">&times;</button>
+                <button id="keybind-game_auto_upgrade" class="keybind-btn" onclick="startRebind('game_auto_upgrade', this)">Unbound</button>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <div class="settings-category" data-cat="webhook" style="margin-top: 20px;">
+        <section class="rp-panel">
+          <header class="rp-panel-head">
+            <span class="rp-head-tag" style="--rp-tag: var(--brand);">Discord</span>
+            <span class="rp-head-title">Webhook</span>
+            <span class="rp-head-rule"></span>
+            <span id="webhook-chip" class="wh-chip" style="color: var(--text-muted);">Not linked</span>
+          </header>
+
+          <!-- Master switch + live state readout, same hero vocabulary as the Dashboard -->
+          <div class="rp-hero" style="padding: 12px 14px 10px;">
+            <span id="webhook-dot" class="wh-dot" style="color: var(--text-muted);"></span>
+            <div style="flex: 1;">
+              <div class="rp-hero-label">Delivery</div>
+              <div class="rp-hero-value" id="webhook-state-text" style="font-size: 15px;">Not linked</div>
+            </div>
+            <button id="toggle-webhook-enabled" class="toggle-switch" onclick="toggleWebhookField('enabled', this)"></button>
+          </div>
+
+          <div class="wh-field" style="border-top: 1px solid var(--border);">
+            <span class="wh-field-label">Webhook URL</span>
+            <div class="wh-input-wrap">
+              <svg class="w-3.5 h-3.5 flex-shrink-0" style="color: var(--text-muted);" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+                <path stroke-linecap="round" stroke-linejoin="round" d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+              </svg>
+              <input id="webhook-url" type="text" placeholder="https://discord.com/api/webhooks/..."
+                     onchange="saveWebhookSettings(true)" onfocus="revealWebhookUrl()" onblur="maskWebhookUrl()">
+              <span id="webhook-validity" class="w-2 h-2 rounded-full glow-dot flex-shrink-0" style="background: var(--text-muted); color: var(--text-muted);"></span>
+              <button onclick="pasteWebhookUrl()" class="wh-paste-btn">Paste</button>
+              <button id="webhook-test-btn" onclick="testWebhook()" class="wh-paste-btn">Send Test</button>
+            </div>
+            <div class="wh-hint">Server Settings &gt; Integrations &gt; Webhooks. <span id="webhook-status-text"></span></div>
+          </div>
+
+          <div class="wh-field">
+            <span class="wh-field-label">Discord User ID</span>
+            <div class="wh-input-wrap" style="width: 250px;">
+              <span style="color: var(--text-muted); font-weight: 700; font-size: 12px;">@</span>
+              <input id="webhook-mention-id" type="text" placeholder="123456789012345678" onchange="saveWebhookSettings(true)">
+            </div>
+            <div class="wh-hint">Optional, pings you on results.</div>
+          </div>
+
+          <div class="px-2" style="border-top: 1px solid var(--border); margin-top: 4px;">
+            <div class="setting-row" style="border-bottom: none;">
+              <div>
+                <div class="setting-label">Silent Mode</div>
+                <div class="setting-desc">No notification ping.</div>
+              </div>
+              <button id="toggle-webhook-silent" class="toggle-switch" onclick="toggleWebhookField('silent', this)"></button>
+            </div>
+            <div class="setting-row" style="border-bottom: none;">
+              <div>
+                <div class="setting-label">Progress Updates</div>
+                <div class="setting-desc">Send task and challenge start/finish notifications.</div>
+              </div>
+              <button id="toggle-webhook-progress" class="toggle-switch" onclick="toggleWebhookField('progress', this)"></button>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <div class="settings-category" data-cat="debug" style="margin-top: 20px;">
+        <section class="rp-panel">
+          <header class="rp-panel-head">
+            <span class="rp-head-tag" style="--rp-tag: var(--slate);">Capture</span>
+            <span class="rp-head-title">Screenshot</span>
+            <span class="rp-head-rule"></span>
+          </header>
+
+          <div class="setting-row" style="padding: 14px;">
+            <div>
+              <div class="setting-label">Debug Screenshot</div>
+              <div class="setting-desc">Captures Roblox, saves it to the debug folder.</div>
+            </div>
+            <button id="btn-debug-screenshot" onclick="saveDebugScreenshot(this)" class="text-xs font-semibold px-3 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);">Capture</button>
+          </div>
+
+          <!-- Off by default: every match the runner finds while actually
+               running (Play, Story, stage rows, ...) would otherwise save a
+               full-window screenshot to debug/ EVERY time, which adds up
+               fast over a real run. Turn it on only while you're actively
+               diagnosing a bad match. -->
+          <div class="setting-row" style="padding: 14px;">
+            <div>
+              <div class="setting-label">Debug Match Screenshots</div>
+              <div class="setting-desc">Save a screenshot every time the macro finds something while running. Off by default -- gets spammy fast.</div>
+            </div>
+            <button id="toggle-debug-screenshots" class="toggle-switch" onclick="toggleSetting('debug_screenshots', this)"></button>
+          </div>
+
+          <!-- Off by default: the strict OCR check ("unitteams", no space)
+               is correct for most setups and confirms the Load Team list
+               specifically. This loosens it to also accept "teams"/"team"/
+               "loadout" for setups where the strict text keeps missing --
+               those are generic enough to risk matching the PREVIOUS screen
+               (the Unit Manager, whose own Teams button reads "Teams") right
+               before a fixed-coordinate row click, so it's opt-in. -->
+          <div class="setting-row" style="padding: 14px;">
+            <div>
+              <div class="setting-label">Loose Team Panel Detection</div>
+              <div class="setting-desc">If Team Loadout keeps failing to open on your setup, this widens the OCR check that confirms it. Off by default -- the wider match can misfire on the previous screen.</div>
+            </div>
+            <button id="toggle-loose-team-ocr-match" class="toggle-switch" onclick="toggleSetting('loose_team_ocr_match', this)"></button>
+          </div>
+
+          <!-- These three decide HOW the game gets captured, which is what
+               this panel is for. They used to sit under "Expedition Wave
+               Check", where someone hitting a black/blank capture would never
+               think to look -- the Hardware Capture Fix below is the
+               documented answer to exactly that symptom. -->
+          <!-- Windows only, applies at next launch: capture the game via
+               PrintWindow instead of a screen BitBlt, which flashes the
+               display white on some GPU setups. Default on. -->
+          <div class="setting-row" style="padding: 14px;" data-win-only>
+            <div>
+              <div class="setting-label">Flicker-Free Capture</div>
+              <div class="setting-desc">Read the game from its own window instead of grabbing the screen -- stops the white screen-flashing some setups get while the macro runs. Leave this on unless image detection stops working, then turn it off and restart. Applies after restarting the macro.</div>
+            </div>
+            <button id="toggle-flicker-free" class="toggle-switch" onclick="toggleSetting('flicker_free_capture', this)"></button>
+          </div>
+
+          <!-- Windows-only, applies at next launch: Roblox glued BEHIND a
+               literal hole cut in the GUI over the game slot instead of
+               being reparented inside it -- see core/dock.py's cutout notes. -->
+          <div class="setting-row" style="padding: 14px;" data-win-only>
+            <div>
+              <div class="setting-label">Game Cutout Mode (experimental)</div>
+              <div class="setting-desc">Show Roblox through a cutout in the macro window instead of embedding it inside. Gentler on the game window and modals can never be covered. Applies after restarting the macro.</div>
+            </div>
+            <button id="toggle-game-cutout" class="toggle-switch" onclick="toggleSetting('game_cutout', this)"></button>
+          </div>
+
+          <!-- Windows-only, applies at next launch: Windows.Graphics.Capture
+               backend for setups where the game captures fully black -- see
+               core/wgc_capture.py. Forces cutout mode (needs the game
+               top-level to find it by title). -->
+          <div class="setting-row" style="padding: 14px; border-bottom: none;" data-win-only>
+            <div>
+              <div class="setting-label">Hardware Capture Fix (Windows.Graphics.Capture)</div>
+              <div class="setting-desc">Turn this on only if image detection fails on a black/blank game (common with NVIDIA GPU scheduling or fullscreen optimizations) even with Flicker-Free Capture off. Reads the game a different way that survives those setups. Also turns on Game Cutout Mode, since it needs Roblox as its own window. Applies after restarting the macro.</div>
+            </div>
+            <button id="toggle-wgc-capture" class="toggle-switch" onclick="toggleSetting('use_wgc_capture', this)"></button>
+          </div>
+        </section>
+      </div>
+
+      <!-- One-button environment verification + one-file bug reports --
+           see main.Api.run_health_check / export_failure_report. -->
+      <div class="settings-category" data-cat="debug" style="margin-top: 20px;">
+        <section class="rp-panel">
+          <header class="rp-panel-head">
+            <span class="rp-head-tag" style="--rp-tag: var(--teal);">Support</span>
+            <span class="rp-head-title">Diagnostics</span>
+            <span class="rp-head-rule"></span>
+          </header>
+
+          <!-- The permanent home for the four in-game settings. The welcome
+               modal shows them once and is dismissable on purpose (nothing
+               should trap someone on first launch), so anyone who clicked
+               past it needs somewhere to find them again -- and this sits
+               directly above Health Check and Export Failure Report, which
+               is exactly where someone goes when it "doesn't work".
+               Health Check cannot see inside Roblox, so these can never
+               become part of it. Kept word-for-word in step with the modal;
+               tests/test_ui_js.py fails if the two drift apart. -->
+          <div class="setting-row" style="padding: 14px; flex-wrap: wrap;">
+            <div style="flex-basis: 100%;">
+              <div class="setting-label">Roblox settings the macro needs</div>
+              <div class="setting-desc">Set inside Roblox, not here -- nothing in this app can read or change them, so Health Check can't check them either. Wrong values here cause most "it walks to the wrong spot" and "it won't place" reports.</div>
+              <div id="debug-ingame" style="margin-top: 10px;"></div>
+            </div>
+          </div>
+
+          <div class="setting-row" style="padding: 14px; flex-wrap: wrap;">
+            <div>
+              <div class="setting-label">Health Check</div>
+              <div class="setting-desc">Verifies capture, input, permissions, display scale, reference images and OCR in one pass. It cannot see inside Roblox -- the four settings above are still on you.</div>
+            </div>
+            <button id="btn-health-check" onclick="runHealthCheck(this)" class="text-xs font-semibold px-3 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--teal); border-color: var(--border);">Run</button>
+            <!-- Filled by runHealthCheck -- the verdict alone ("Issues
+                 found") with the details off on the Dashboard's log was
+                 exactly the confusing half-answer this row existed to
+                 prevent. -->
+            <div id="health-results" class="text-xs" style="flex-basis: 100%; display: none; margin-top: 10px; line-height: 1.8;"></div>
+          </div>
+
+          <div class="setting-row" style="padding: 14px; border-bottom: none;">
+            <div>
+              <div class="setting-label">Export Failure Report</div>
+              <div class="setting-desc">Bundles the latest debug screenshots, log tail, settings (webhook redacted) and a health check into one zip you can share when something breaks.</div>
+            </div>
+            <button id="btn-failure-report" onclick="exportFailureReport(this)" class="text-xs font-semibold px-3 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);">Export</button>
+          </div>
+        </section>
+      </div>
+
+      <!-- Runs one tick of the Expedition nav_start_game/exp_continue/
+           exp_extract check against Roblox as it is right now, no active
+           macro run needed -- so tuning that flow doesn't mean restarting
+           a whole run every time just to get back to the screen being
+           tested. See MacroRunner.debug_check_expedition_wave. -->
+      <div class="settings-category" data-cat="debug" style="margin-top: 20px;">
+        <section class="rp-panel">
+          <header class="rp-panel-head">
+            <span class="rp-head-tag" style="--rp-tag: var(--slate);">Capture</span>
+            <span class="rp-head-title">Expedition Wave Check</span>
+            <span class="rp-head-rule"></span>
+          </header>
+
+          <!-- Which checkpoint engine _check_expedition_wave_result uses:
+               color-first (find the green Continue by pixel color; an
+               off-center Continue means Extract is offered at the mirrored
+               position -- fast, template-free) vs the original per-image
+               template searches. See core/runner.py's EXP_COLOR_* block. -->
+          <div class="setting-row" style="padding: 14px; border-bottom: none;">
+            <div>
+              <div class="setting-label">Expedition Color Detection</div>
+              <div class="setting-desc">Detect the wave Continue/Extract buttons by their color instead of image search -- much faster between waves. Turn off to go back to image search if it misclicks on your setup. Applies from the next Start.</div>
+            </div>
+            <button id="toggle-expedition-color" class="toggle-switch" onclick="toggleSetting('expedition_color_buttons', this)"></button>
+          </div>
+
+          <div class="setting-row" style="padding: 14px;">
+            <div>
+              <div class="setting-label">Test Expedition Wave Check</div>
+              <div class="setting-desc">Navigate to a wave/checkpoint/extract screen in Roblox by hand, then press this -- runs one detection+click tick and logs what it found, no macro run needed.</div>
+            </div>
+            <button id="btn-debug-expedition-wave" onclick="testExpeditionWave(this)" class="text-xs font-semibold px-3 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);">Run Test Tick</button>
+          </div>
+
+          <div class="setting-row" style="padding: 14px; border-bottom: none;">
+            <div>
+              <div class="setting-label">Wave Monitor</div>
+              <div class="setting-desc">Opens a small always-on-top window that keeps reading the wave count from Roblox's window -- so you can tab out and still see if the run's progressing. Shows the live crop too, in case the number's a misread.</div>
+            </div>
+            <button id="btn-wave-monitor" onclick="openWaveMonitor(this)" class="text-xs font-semibold px-3 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--teal); border-color: var(--border);">Open Monitor</button>
+          </div>
+
+        </section>
+      </div>
+
+      <!-- Runs a chosen Macro Operation's Pre Start or Battle blocks
+           against Roblox as it is right now -- no lobby/gamemode/map/
+           stage/teleport setup needed first, just navigate to wherever the
+           blocks should actually run by hand. Runs as a real tracked run
+           (same as pressing the Dashboard's own Start), so Stop/Pause and
+           F2/F5 work on it unchanged -- see MacroRunner.start_debug_test. -->
+      <div class="settings-category" data-cat="debug" style="margin-top: 20px;">
+        <section class="rp-panel">
+          <header class="rp-panel-head">
+            <span class="rp-head-tag" style="--rp-tag: var(--slate);">Capture</span>
+            <span class="rp-head-title">Macro Operation Test</span>
+            <span class="rp-head-rule"></span>
+          </header>
+
+          <div class="setting-row" style="padding: 14px;">
+            <div>
+              <div class="setting-label">Macro Operation</div>
+              <div class="setting-desc">Which saved template's Pre Start/Battle blocks to run.</div>
+            </div>
+            <select id="debug-macro-op-select" class="task-select" style="width: 220px; flex-shrink: 0;"></select>
+          </div>
+
+          <div class="setting-row" style="padding: 14px; border-bottom: none;">
+            <div>
+              <div class="setting-label">Test Pre Start / Battle</div>
+              <div class="setting-desc">Runs once through Pre Start (place units, flip settings), or ticks Battle blocks continuously until you press Stop -- this counts as a real run, so F2/Stop and F5/Pause work on it.</div>
+            </div>
+            <div style="display: flex; gap: 8px; flex-shrink: 0;">
+              <button id="btn-debug-test-prestart" onclick="testMacroOperation(this, 'prestart')" class="text-xs font-semibold px-3 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);">Test Pre Start</button>
+              <button id="btn-debug-test-battle" onclick="testMacroOperation(this, 'battle')" class="text-xs font-semibold px-3 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);">Test Battle</button>
+            </div>
+          </div>
+
+          <div class="setting-row" style="padding: 14px;">
+            <div>
+              <div class="setting-label">Test Crafting</div>
+              <div class="setting-desc">Runs one crafting pass now on the docked Roblox window &mdash; ignores the win threshold and the Resource &gt; Auto Crafting Enable toggle. Counts as a real run, so F8/Stop cancels it. Switches to the Dashboard so you can watch the <b>[Craft]</b> log.</div>
+            </div>
+            <button id="btn-debug-test-crafting" onclick="testCrafting()" class="text-xs font-semibold px-3 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);">Run Now</button>
+          </div>
+
+          <div class="setting-row" style="padding: 14px;">
+            <div>
+              <div class="setting-label">Test Auto Refuel</div>
+              <div class="setting-desc">Refills the resources checked under Resource &gt; Auto Fuel now, ignoring the master toggle and timer. Uses the real paths and amounts, updates successful timers, and can be cancelled with F8/Stop.</div>
+            </div>
+            <button id="btn-debug-test-fuel" onclick="testFuel()" class="text-xs font-semibold px-3 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);">Run Now</button>
+          </div>
+        </section>
+      </div>
+
+      <!-- core.stage_select's map-name search: a debug capture of exactly the
+           band it scans (so a reference crop in Assets/maps/ can be
+           checked/tuned against it) plus the scroll-wheel strength it uses
+           to move through the map carousel while searching. -->
+      <div class="settings-category" data-cat="debug" style="margin-top: 20px;">
+        <section class="rp-panel">
+          <header class="rp-panel-head">
+            <span class="rp-head-tag" style="--rp-tag: var(--slate);">Capture</span>
+            <span class="rp-head-title">Story Map Search</span>
+            <span class="rp-head-rule"></span>
+            <button onclick="resetStoryScrollSettings()" class="text-xs font-semibold px-3 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--rose); border-color: var(--border);" title="Reset scroll power/attempts back to their defaults">Reset to Defaults</button>
+          </header>
+
+          <!-- The old "Story Map Region" capture row lived here -- removed
+               along with the search band itself: map-name labels are now
+               searched over the full window (see core/stage_select.py),
+               so there's no band left to capture/tune. -->
+          <div class="setting-row" style="padding: 14px;">
+            <div>
+              <div class="setting-label">Scroll Power</div>
+              <div class="setting-desc">Wheel-notch multiplier used to move through the map carousel while searching.</div>
+            </div>
+            <input id="story-scroll-power" type="number" min="1" max="10" step="1"
+                   class="block-input" style="width: 60px;"
+                   onchange="saveStoryScrollPower(this)">
+          </div>
+
+          <div class="setting-row" style="padding: 14px; border-bottom: none;">
+            <div>
+              <div class="setting-label">Scroll Attempts</div>
+              <div class="setting-desc">How many scrolls to try per pass before resetting to the start (up to 3 passes).</div>
+            </div>
+            <input id="story-scroll-nudges" type="number" min="1" max="30" step="1"
+                   class="block-input" style="width: 60px;"
+                   onchange="saveStoryScrollNudges(this)">
+          </div>
+        </section>
+      </div>
+
+      <div class="settings-category" data-cat="general" style="margin-top: 20px;">
+        <section class="rp-panel">
+          <header class="rp-panel-head">
+            <span class="rp-head-tag" style="--rp-tag: var(--slate);">Control</span>
+            <span class="rp-head-title">Roblox Window</span>
+            <span class="rp-head-rule"></span>
+          </header>
+
+          <div class="setting-row" style="padding: 14px;">
+            <div>
+              <div class="setting-label">Select Roblox Window</div>
+              <div class="setting-desc">Choose the Roblox window to use manually. Nothing attaches automatically.</div>
+            </div>
+            <select id="roblox-window-select" class="task-select" style="width: 220px; flex-shrink: 0;"></select>
+          </div>
+
+          <div class="setting-row" style="padding: 14px;">
+            <div>
+              <div class="setting-label">Attach Selected Roblox</div>
+              <div class="setting-desc">Manually attach the selected Roblox window into the macro window.</div>
+            </div>
+            <button id="btn-attach-roblox" onclick="attachSelectedRoblox(this)" class="text-xs font-semibold px-3 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);">Attach</button>
+          </div>
+
+          <div class="setting-row" style="padding: 14px;">
+            <div>
+              <div class="setting-label">Un-Attach Roblox</div>
+              <div class="setting-desc">Detach the currently docked Roblox window from the macro window.</div>
+            </div>
+            <button id="btn-unattach-roblox" onclick="unattachRoblox(this)" class="text-xs font-semibold px-3 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--rose); border-color: var(--border);">Un-Attach</button>
+          </div>
+
+          <!-- Manually fires the same deep-link rejoin a real disconnect
+               triggers -- resets Roblox back to the lobby on demand, so
+               testing a code change doesn't mean alt-tabbing over and
+               closing/reopening Roblox by hand every time. Belongs with the
+               other Roblox-window controls, not under "Expedition Wave
+               Check" where it used to sit. -->
+          <div class="setting-row" style="padding: 14px; border-bottom: none;">
+            <div>
+              <div class="setting-label">Force Rejoin</div>
+              <div class="setting-desc">Relaunches Roblox straight back into the lobby via the same deep link a real disconnect uses -- handy for resetting between test runs.</div>
+            </div>
+            <button id="btn-debug-force-rejoin" onclick="forceRejoin(this)" class="text-xs font-semibold px-3 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--rose); border-color: var(--border);">Rejoin Now</button>
+          </div>
+        </section>
+      </div>
+
+      <div class="settings-category" data-cat="general" style="margin-top: 20px;">
+        <section class="rp-panel">
+          <header class="rp-panel-head">
+            <span class="rp-head-tag" style="--rp-tag: var(--slate);">Control</span>
+            <span class="rp-head-title">OCR</span>
+            <span class="rp-head-rule"></span>
+          </header>
+
+          <div class="setting-row" style="padding: 14px; border-bottom: none;">
+            <div>
+              <div class="setting-label">Install Tesseract OCR</div>
+              <div class="setting-desc">Needed for reading match stats/rewards. One-click install via winget -- no manual download.</div>
+            </div>
+            <button id="btn-install-tesseract" onclick="installTesseract(this)" class="text-xs font-semibold px-3 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);">Install</button>
+          </div>
+        </section>
+      </div>
+
+      <!-- Everything image-search related in one General card: the Image
+           Manager (browse every reference image the macro searches for --
+           one folder per searched name, any number of variant crops each,
+           see core/vision.py's template_variant_paths -- plus capture-and-
+           crop straight from the live Roblox window: the in-app answer to
+           "the macro can't find X on my screen", no file explorer or image
+           editor needed), the raw Assets folder for hand edits, and the
+           cache reload that makes hand edits take effect without a
+           restart. -->
+      <div class="settings-category" data-cat="general" style="margin-top: 20px;">
+        <section class="rp-panel">
+          <header class="rp-panel-head">
+            <span class="rp-head-tag" style="--rp-tag: var(--slate);">Vision</span>
+            <span class="rp-head-title">Image Search</span>
+            <span class="rp-head-rule"></span>
+          </header>
+
+          <div class="setting-row" style="padding: 14px;">
+            <div>
+              <div class="setting-label">Image Manager</div>
+              <div class="setting-desc">Browse every image the macro searches for, and capture new ones from your Roblox screen -- add extra crops to any button the macro can't find on your setup.</div>
+            </div>
+            <button id="btn-image-manager" onclick="openImageManager()" class="text-xs font-semibold px-3 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);">Open</button>
+          </div>
+
+          <div class="setting-row" style="padding: 14px;">
+            <div>
+              <div class="setting-label">Open Assets Folder</div>
+              <div class="setting-desc">Every image lives here as a plain .png -- one folder per button/text, every image inside gets tried. Add or replace crops by hand, then Reload below.</div>
+            </div>
+            <button id="btn-open-assets" onclick="openAssetsFolder(this)" class="text-xs font-semibold px-3 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);">Open</button>
+          </div>
+
+          <div class="setting-row" style="padding: 14px; border-bottom: none;">
+            <div>
+              <div class="setting-label">Reload Vision Images</div>
+              <div class="setting-desc">Picks up images you added/replaced in the Assets folder by hand, without restarting. (The Image Manager does this automatically.)</div>
+            </div>
+            <button id="btn-reload-vision" onclick="reloadVisionTemplates(this)" class="text-xs font-semibold px-3 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);">Reload</button>
+          </div>
+        </section>
+      </div>
+
+      <!-- The user-adjustable "slow everything down" knob (core/pacing.py):
+           one extra delay added after EVERY click and keypress the macro
+           sends -- for machines/setups where the default cadence outruns
+           the game ("clicks too fast, the UI hasn't reacted yet"). Applied
+           live at the input layer, so it needs no restart and no per-step
+           tuning. -->
+      <div class="settings-category" data-cat="general" style="margin-top: 20px;">
+        <section class="rp-panel">
+          <header class="rp-panel-head">
+            <span class="rp-head-tag" style="--rp-tag: var(--slate);">Control</span>
+            <span class="rp-head-title">Macro Speed</span>
+            <span class="rp-head-rule"></span>
+          </header>
+
+          <div class="setting-row" style="padding: 14px; border-bottom: none;">
+            <div>
+              <div class="setting-label">Action Delay</div>
+              <div class="setting-desc">Extra pause (milliseconds) after every click and keypress. 0 = full speed. If the macro clicks faster than your game keeps up, try 150-300. Takes effect immediately, even mid-run.</div>
+            </div>
+            <input id="setting-action-delay" type="number" min="0" max="2000" step="50" class="block-input" style="width: 90px; flex-shrink: 0;" onchange="saveActionDelay(this)">
+          </div>
+        </section>
+      </div>
+
+      <div class="settings-category" data-cat="debug" style="margin-top: 20px;">
+        <section class="rp-panel">
+          <header class="rp-panel-head">
+            <span class="rp-head-tag" style="--rp-tag: var(--slate);">Control</span>
+            <span class="rp-head-title">Camera</span>
+            <span class="rp-head-rule"></span>
+          </header>
+
+          <div class="setting-row" style="padding: 14px;">
+            <div>
+              <div class="setting-label">Camera Setup</div>
+              <div class="setting-desc">Right-click drag down to tilt the camera fully, then holds O for 2s to zoom out.</div>
+            </div>
+            <button id="btn-camera-setup" onclick="runCameraSetup(this)" class="text-xs font-semibold px-3 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);">Run</button>
+          </div>
+
+          <div class="setting-row" style="padding: 14px;">
+            <div>
+              <div class="setting-label">Camera Setup 2</div>
+              <div class="setting-desc">Same as above, but with a custom O-hold time (ms) instead of the fixed 2s.</div>
+            </div>
+            <div class="flex items-center gap-2" style="flex-shrink: 0;">
+              <input type="number" id="camera-setup-2-ms" value="2000" min="0" step="100"
+                     class="block-input" style="width: 70px;" placeholder="ms">
+              <button id="btn-camera-setup-2" onclick="runCameraSetup2(this)" class="text-xs font-semibold px-3 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);">Run</button>
+            </div>
+          </div>
+
+          <div class="setting-row" style="padding: 14px;">
+            <div>
+              <div class="setting-label">Camera Setup 3</div>
+              <div class="setting-desc">Experimental: right-click drag down, release, then hold the Left arrow key for the time below.</div>
+            </div>
+            <div class="flex items-center gap-2" style="flex-shrink: 0;">
+              <input type="number" id="camera-setup-3-ms" value="2500" min="0" step="100"
+                     class="block-input" style="width: 70px;" placeholder="ms">
+              <button id="btn-camera-setup-3" onclick="runCameraSetup3(this)" class="text-xs font-semibold px-3 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);">Run</button>
+            </div>
+          </div>
+
+          <div class="setting-row" style="padding: 14px; border-bottom: none;">
+            <div>
+              <div class="setting-label">Expedition Camera Zoom</div>
+              <div class="setting-desc">How long O is held during Expedition's Pre Start camera setup (the small zoom step after the rotate). Applies from the next Start.</div>
+            </div>
+            <input type="number" id="setting-expedition-o-ms" min="0" max="3000" step="50"
+                   class="block-input" style="width: 90px; flex-shrink: 0;" onchange="saveExpeditionOZoom(this)">
+          </div>
+        </section>
+      </div>
+
+      <div class="settings-category" data-cat="debug" style="margin-top: 20px;">
+        <section class="rp-panel">
+          <header class="rp-panel-head">
+            <span class="rp-head-tag" style="--rp-tag: var(--slate);">Control</span>
+            <span class="rp-head-title">Pathing</span>
+            <span class="rp-head-rule"></span>
+          </header>
+
+          <div class="setting-row" style="padding: 14px; border-bottom: none;">
+            <div>
+              <div class="setting-label">Test Walking Path</div>
+              <div class="setting-desc">Replays a saved path (Macro Manager &gt; Walk Path &gt; Record) against the live game.</div>
+            </div>
+            <div class="flex items-center gap-2 flex-shrink-0">
+              <select id="debug-path-select" class="task-select" style="width: 160px;"></select>
+              <button id="btn-test-path" onclick="runTestPath(this)" class="text-xs font-semibold px-3 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);">Run</button>
+              <button id="btn-stop-test-path" onclick="stopTestPath(this)" class="text-xs font-semibold px-3 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--rose); border-color: var(--border); display: none;">Stop</button>
+            </div>
+          </div>
+
+          <!-- map name -> saved path: lets a template's Walk Path stay on
+               Auto for a map that already has a good recorded route,
+               instead of every template that runs that map needing the
+               same Custom path picked by hand. -->
+          <div class="setting-row" style="padding: 14px; border-bottom: none; flex-direction: column; align-items: stretch; gap: 10px;">
+            <div>
+              <div class="setting-label">Default Auto Walk</div>
+              <div class="setting-desc">Map a Story/Raid map to a saved path -- Auto uses it automatically for that map.</div>
+            </div>
+            <div class="flex items-center gap-2">
+              <input id="default-walk-map" class="block-input" style="flex: 1;" type="text" placeholder="Map name (e.g. Fairy King Forest)">
+              <select id="default-walk-path" class="task-select" style="width: 160px;"></select>
+              <button onclick="setDefaultWalkPath()" class="text-xs font-semibold px-3 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);">Set</button>
+            </div>
+            <div id="default-walk-list" class="flex flex-col gap-1"></div>
+          </div>
+        </section>
+      </div>
+
+      <!-- core.runner's fixed click points / search regions for the Select
+           Stage screen -- exposed as editable settings (not hardcoded) since
+           a game update shifting the UI shouldn't need a code change. -->
+      <div class="settings-category" data-cat="debug" style="margin-top: 20px;">
+        <section class="rp-panel">
+          <header class="rp-panel-head">
+            <span class="rp-head-tag" style="--rp-tag: var(--slate);">Control</span>
+            <span class="rp-head-title">Macro Coordinates</span>
+            <span class="rp-head-rule"></span>
+            <button onclick="resetMacroCoords()" class="text-xs font-semibold px-3 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--rose); border-color: var(--border);" title="Reset every field below back to its default number">Reset to Defaults</button>
+          </header>
+
+          <p class="text-[11px] px-3 pt-3 pb-1" style="color: var(--text-muted);">
+            Every fixed click point the macro uses, in the docked window's 1152&times;756 space. Each
+            <b>Pick</b> button captures the Roblox screen and lets you click the spot on it -- navigate the
+            game to the screen the button lives on first (e.g. open the stage list before picking a stage row).
+          </p>
+
+          <div class="setting-row" style="padding: 14px;">
+            <div>
+              <div class="setting-label">Story Card</div>
+              <div class="setting-desc">Fallback click on the gamemode-select screen when image search misses.</div>
+            </div>
+            <div class="flex items-center gap-2 flex-shrink-0">
+              <input id="coord-story_click_x" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('story_click_x', this.value)">
+              <input id="coord-story_click_y" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('story_click_y', this.value)">
+              <button onclick="openCoordPicker('story_click')" class="text-xs font-semibold px-2 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);" title="Capture the Roblox screen and click this spot">Pick</button>
+            </div>
+          </div>
+
+          <div class="setting-row" style="padding: 14px;">
+            <div>
+              <div class="setting-label">Story Stage Rows</div>
+              <div class="setting-desc">Pick clicks Level 1 then Level 2 -- Row H is computed from the gap. Or type the numbers.</div>
+            </div>
+            <div class="flex items-center gap-2 flex-shrink-0">
+              <input id="coord-stage_row_x" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('stage_row_x', this.value)">
+              <input id="coord-stage_row_y" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('stage_row_y', this.value)">
+              <span class="text-xs" style="color: var(--text-muted); margin-left: 6px;">Row H</span>
+              <input id="coord-stage_row_height" class="block-input" style="width: 52px;" type="number" onchange="setMacroCoord('stage_row_height', this.value)">
+              <button onclick="openCoordPicker('stage_row')" class="text-xs font-semibold px-2 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);" title="Capture the Roblox screen, click Level 1 then Level 2 -- Row H is auto-computed">Pick</button>
+            </div>
+          </div>
+
+          <div class="setting-row" style="padding: 14px;">
+            <div>
+              <div class="setting-label">Raid Act Rows</div>
+              <div class="setting-desc">Pick clicks Act 1 then Act 2 -- Row H is computed from the gap. Or type the numbers.</div>
+            </div>
+            <div class="flex items-center gap-2 flex-shrink-0">
+              <input id="coord-act_row_x" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('act_row_x', this.value)">
+              <input id="coord-act_row_y" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('act_row_y', this.value)">
+              <span class="text-xs" style="color: var(--text-muted); margin-left: 6px;">Row H</span>
+              <input id="coord-act_row_height" class="block-input" style="width: 52px;" type="number" onchange="setMacroCoord('act_row_height', this.value)">
+              <button onclick="openCoordPicker('act_row')" class="text-xs font-semibold px-2 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);" title="Capture the Roblox screen, click Act 1 then Act 2 -- Row H is auto-computed">Pick</button>
+            </div>
+          </div>
+
+          <div class="setting-row" style="padding: 14px;">
+            <div>
+              <div class="setting-label">Event Gamemode Card</div>
+              <div class="setting-desc">Click point on the Event (Villian Invasion) gamemode card. The click lands here instead of the matched crop's center -- pick this if the card's center click doesn't register.</div>
+            </div>
+            <div class="flex items-center gap-2 flex-shrink-0">
+              <input id="coord-event_gamemode_x" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('event_gamemode_x', this.value)">
+              <input id="coord-event_gamemode_y" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('event_gamemode_y', this.value)">
+              <button onclick="openCoordPicker('event_gamemode')" class="text-xs font-semibold px-2 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);" title="Capture the Roblox screen and click the Event gamemode card">Pick</button>
+            </div>
+          </div>
+
+          <div class="setting-row" style="padding: 14px;">
+            <div>
+              <div class="setting-label">Challenge Stage Slots</div>
+              <div class="setting-desc">Click points for the 3 Regular Challenge stage rows.</div>
+            </div>
+            <div class="flex items-center gap-2 flex-wrap flex-shrink-0" style="max-width: 420px; justify-content: flex-end;">
+              <span class="text-xs" style="color: var(--text-muted);">1</span>
+              <input id="coord-challenge_stage_1_x" class="block-input" style="width: 52px;" type="number" onchange="setMacroCoord('challenge_stage_1_x', this.value)">
+              <input id="coord-challenge_stage_1_y" class="block-input" style="width: 52px;" type="number" onchange="setMacroCoord('challenge_stage_1_y', this.value)">
+              <button onclick="openCoordPicker('challenge_stage_1')" class="text-xs font-semibold px-2 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);" title="Capture the Roblox screen and click slot 1's row">Pick</button>
+              <span class="text-xs" style="color: var(--text-muted);">2</span>
+              <input id="coord-challenge_stage_2_x" class="block-input" style="width: 52px;" type="number" onchange="setMacroCoord('challenge_stage_2_x', this.value)">
+              <input id="coord-challenge_stage_2_y" class="block-input" style="width: 52px;" type="number" onchange="setMacroCoord('challenge_stage_2_y', this.value)">
+              <button onclick="openCoordPicker('challenge_stage_2')" class="text-xs font-semibold px-2 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);" title="Capture the Roblox screen and click slot 2's row">Pick</button>
+              <span class="text-xs" style="color: var(--text-muted);">3</span>
+              <input id="coord-challenge_stage_3_x" class="block-input" style="width: 52px;" type="number" onchange="setMacroCoord('challenge_stage_3_x', this.value)">
+              <input id="coord-challenge_stage_3_y" class="block-input" style="width: 52px;" type="number" onchange="setMacroCoord('challenge_stage_3_y', this.value)">
+              <button onclick="openCoordPicker('challenge_stage_3')" class="text-xs font-semibold px-2 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);" title="Capture the Roblox screen and click slot 3's row">Pick</button>
+            </div>
+          </div>
+
+          <div class="setting-row" style="padding: 14px;">
+            <div>
+              <div class="setting-label">Expedition Difficulty "+"</div>
+              <div class="setting-desc">The "+" button that steps the Expedition level up by 1 per click.</div>
+            </div>
+            <div class="flex items-center gap-2 flex-shrink-0">
+              <input id="coord-expedition_difficulty_x" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('expedition_difficulty_x', this.value)">
+              <input id="coord-expedition_difficulty_y" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('expedition_difficulty_y', this.value)">
+              <button onclick="openCoordPicker('expedition_difficulty')" class="text-xs font-semibold px-2 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);" title="Capture the Roblox screen and click the + button">Pick</button>
+            </div>
+          </div>
+
+          <div class="setting-row" style="padding: 14px;">
+            <div>
+              <div class="setting-label">Difficulty Buttons</div>
+              <div class="setting-desc">Click points on the stage-detail panel's Normal/Hard toggle.</div>
+            </div>
+            <div class="flex items-center gap-2 flex-shrink-0">
+              <span class="text-xs" style="color: var(--text-muted);">Normal</span>
+              <input id="coord-difficulty_normal_x" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('difficulty_normal_x', this.value)">
+              <input id="coord-difficulty_normal_y" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('difficulty_normal_y', this.value)">
+              <button onclick="openCoordPicker('difficulty_normal')" class="text-xs font-semibold px-2 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);" title="Capture the Roblox screen and click Normal">Pick</button>
+              <span class="text-xs" style="color: var(--text-muted); margin-left: 6px;">Hard</span>
+              <input id="coord-difficulty_hard_x" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('difficulty_hard_x', this.value)">
+              <input id="coord-difficulty_hard_y" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('difficulty_hard_y', this.value)">
+              <button onclick="openCoordPicker('difficulty_hard')" class="text-xs font-semibold px-2 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);" title="Capture the Roblox screen and click Hard">Pick</button>
+            </div>
+          </div>
+
+          <div class="setting-row" style="padding: 14px;">
+            <div>
+              <div class="setting-label">Team Loadout Rows</div>
+              <div class="setting-desc">Pick clicks Loadout 1 then Loadout 2 -- Row H is computed from the gap. Or type the numbers.</div>
+            </div>
+            <div class="flex items-center gap-2 flex-shrink-0">
+              <input id="coord-team_loadout_x" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('team_loadout_x', this.value)">
+              <input id="coord-team_loadout_y" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('team_loadout_y', this.value)">
+              <span class="text-xs" style="color: var(--text-muted); margin-left: 6px;">Row H</span>
+              <input id="coord-team_loadout_row_height" class="block-input" style="width: 52px;" type="number" onchange="setMacroCoord('team_loadout_row_height', this.value)">
+              <button onclick="openCoordPicker('team_loadout')" class="text-xs font-semibold px-2 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);" title="Capture the Roblox screen, click Loadout 1 then Loadout 2 -- Row H is auto-computed">Pick</button>
+            </div>
+          </div>
+
+          <div class="setting-row" style="padding: 14px;">
+            <div>
+              <div class="setting-label">Teams Button Click</div>
+              <div class="setting-desc">Optional manual point inside the Teams button. Pick the lower/inner part if the image-match center misses; Auto uses the detected image center.</div>
+            </div>
+            <div class="flex items-center gap-2 flex-shrink-0">
+              <input id="coord-team_button_x" class="block-input" style="width: 56px;" type="number" placeholder="Auto" onchange="setMacroCoord('team_button_x', this.value)">
+              <input id="coord-team_button_y" class="block-input" style="width: 56px;" type="number" placeholder="Auto" onchange="setMacroCoord('team_button_y', this.value)">
+              <button onclick="openCoordPicker('team_button')" class="text-xs font-semibold px-2 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);" title="Capture the Roblox screen and pick a point inside the Teams button">Pick</button>
+              <button onclick="clearMacroCoord('team_button')" class="text-xs font-semibold px-2 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);" title="Use the detected Teams image center again">Auto</button>
+            </div>
+          </div>
+
+          <div class="setting-row" style="padding: 14px;">
+            <div>
+              <div class="setting-label">Neutral Clicks</div>
+              <div class="setting-desc">Middle: dismisses popups. Corner: closes the unit info panel.</div>
+            </div>
+            <div class="flex items-center gap-2 flex-shrink-0">
+              <span class="text-xs" style="color: var(--text-muted);">Middle</span>
+              <input id="coord-screen_middle_x" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('screen_middle_x', this.value)">
+              <input id="coord-screen_middle_y" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('screen_middle_y', this.value)">
+              <button onclick="openCoordPicker('screen_middle')" class="text-xs font-semibold px-2 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);" title="Capture the Roblox screen and click the spot">Pick</button>
+              <span class="text-xs" style="color: var(--text-muted); margin-left: 6px;">Corner</span>
+              <input id="coord-unit_info_reset_x" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('unit_info_reset_x', this.value)">
+              <input id="coord-unit_info_reset_y" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('unit_info_reset_y', this.value)">
+              <button onclick="openCoordPicker('unit_info_reset')" class="text-xs font-semibold px-2 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);" title="Capture the Roblox screen and click the spot">Pick</button>
+            </div>
+          </div>
+
+          <div class="setting-row" style="padding: 14px; border-bottom: none;">
+            <div>
+              <div class="setting-label">Enter Matchmaking Region</div>
+              <div class="setting-desc">Search region (x y w h) the Enter Matchmaking button is found in.</div>
+            </div>
+            <div class="flex items-center gap-2 flex-shrink-0">
+              <input id="coord-matchmaking_region_x" class="block-input" style="width: 52px;" type="number" onchange="setMacroCoord('matchmaking_region_x', this.value)">
+              <input id="coord-matchmaking_region_y" class="block-input" style="width: 52px;" type="number" onchange="setMacroCoord('matchmaking_region_y', this.value)">
+              <input id="coord-matchmaking_region_w" class="block-input" style="width: 52px;" type="number" onchange="setMacroCoord('matchmaking_region_w', this.value)">
+              <input id="coord-matchmaking_region_h" class="block-input" style="width: 52px;" type="number" onchange="setMacroCoord('matchmaking_region_h', this.value)">
+              <button onclick="saveMatchmakingRegionDebug(this)" class="text-xs font-semibold px-3 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);">Capture</button>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <div class="settings-category" data-cat="debug" style="margin-top: 20px;">
+        <section class="rp-panel">
+          <header class="rp-panel-head">
+            <span class="rp-head-tag" style="--rp-tag: var(--slate);">Vision</span>
+            <span class="rp-head-title">Reward Reader</span>
+            <span class="rp-head-rule"></span>
+            <button onclick="resetRewardRegion()" class="text-xs font-semibold px-3 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--rose); border-color: var(--border);" title="Reset the region below back to its default numbers">Reset to Defaults</button>
+          </header>
+
+          <p class="text-[11px] px-3 pt-3 pb-1" style="color: var(--text-muted);">
+            Reads the Victory screen's reward row by identifying each icon's color against
+            Assets/item_icons, then looking its guaranteed quantity up in the stage data (no OCR) -- how
+            many icons there are gets detected automatically, no need to count them. Coordinates below are
+            relative to the docked Roblox window's top-left corner; use the Screenshot capture above to
+            find them, then tune here.
+          </p>
+
+          <div class="grid grid-cols-4 gap-2 px-3 pt-2 pb-2">
+            <label class="rw-field">
+              <span>X</span>
+              <input id="reward-x" type="number" class="block-input" onchange="saveRewardRegion()">
+            </label>
+            <label class="rw-field">
+              <span>Y</span>
+              <input id="reward-y" type="number" class="block-input" onchange="saveRewardRegion()">
+            </label>
+            <label class="rw-field">
+              <span>Width</span>
+              <input id="reward-w" type="number" class="block-input" onchange="saveRewardRegion()">
+            </label>
+            <label class="rw-field">
+              <span>Height</span>
+              <input id="reward-h" type="number" class="block-input" onchange="saveRewardRegion()">
+            </label>
+          </div>
+
+          <div class="setting-row" style="padding: 14px;">
+            <div>
+              <div class="setting-label">Preview Region</div>
+              <div class="setting-desc">Saves what gets captured -- check this first if reads look wrong.</div>
+            </div>
+            <button id="btn-preview-rewards" onclick="previewRewardRegion(this)" class="text-xs font-semibold px-3 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--text-dim); border-color: var(--border);">Preview</button>
+          </div>
+          <div class="setting-row" style="padding: 14px; border-bottom: none;">
+            <div>
+              <div class="setting-label">Read Rewards</div>
+              <div class="setting-desc">
+                Captures the region above and logs each item. Pick a stage below to test against its
+                known reward list -- narrows icon matching the same way a real post-match run does,
+                without needing to actually win a fresh match to check a reading.
+              </div>
+              <div class="flex items-center gap-2" style="margin-top: 8px;">
+                <select id="reward-test-map" class="task-select" style="width: 150px;"><option value="">Map (optional)</option></select>
+                <select id="reward-test-stage" class="task-select" style="width: 100px;">
+                  <option value="">Stage</option>
+                  <option value="1">1</option><option value="2">2</option><option value="3">3</option>
+                  <option value="4">4</option><option value="5">5</option>
+                  <option value="Infinite">Infinite</option><option value="Mastery">Mastery</option>
+                </select>
+                <select id="reward-test-difficulty" class="task-select" style="width: 100px;">
+                  <option value="Normal">Normal</option><option value="Hard">Hard</option>
+                </select>
+              </div>
+            </div>
+            <button id="btn-read-rewards" onclick="readRewards(this)" class="text-xs font-semibold px-3 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);">Read</button>
+          </div>
+        </section>
+      </div>
+
+      <div class="settings-category" data-cat="debug" style="margin-top: 20px;">
+        <section class="rp-panel">
+          <header class="rp-panel-head">
+            <span class="rp-head-tag" style="--rp-tag: var(--slate);">Vision</span>
+            <span class="rp-head-title">Game Stats</span>
+            <span class="rp-head-rule"></span>
+            <button onclick="resetStatsRegion()" class="text-xs font-semibold px-3 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--rose); border-color: var(--border);" title="Reset the region below back to its default numbers">Reset to Defaults</button>
+          </header>
+
+          <p class="text-[11px] px-3 pt-3 pb-1" style="color: var(--text-muted);">
+            Reads the Victory screen's Game Stats panel (Clear Time, Total Yen, Total Kills, Total
+            Damage) via OCR -- fixed 2x2 layout, so calibrate the box tightly around all four values.
+            Coordinates are relative to the docked Roblox window's top-left corner.
+          </p>
+
+          <div class="grid grid-cols-4 gap-2 px-3 pt-2 pb-2">
+            <label class="rw-field">
+              <span>X</span>
+              <input id="stats-x" type="number" class="block-input" onchange="saveStatsRegion()">
+            </label>
+            <label class="rw-field">
+              <span>Y</span>
+              <input id="stats-y" type="number" class="block-input" onchange="saveStatsRegion()">
+            </label>
+            <label class="rw-field">
+              <span>Width</span>
+              <input id="stats-w" type="number" class="block-input" onchange="saveStatsRegion()">
+            </label>
+            <label class="rw-field">
+              <span>Height</span>
+              <input id="stats-h" type="number" class="block-input" onchange="saveStatsRegion()">
+            </label>
+          </div>
+
+          <div class="setting-row" style="padding: 14px;">
+            <div>
+              <div class="setting-label">Preview Region</div>
+              <div class="setting-desc">Saves what gets captured -- check this first if reads look wrong.</div>
+            </div>
+            <button id="btn-preview-stats" onclick="previewStatsRegion(this)" class="text-xs font-semibold px-3 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--text-dim); border-color: var(--border);">Preview</button>
+          </div>
+          <div class="setting-row" style="padding: 14px; border-bottom: none;">
+            <div>
+              <div class="setting-label">Read Game Stats</div>
+              <div class="setting-desc">Captures the region above and logs the four values.</div>
+            </div>
+            <button id="btn-read-stats" onclick="readGameStats(this)" class="text-xs font-semibold px-3 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);">Read</button>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ Save-recorded-path modal ============
+       Replaces the native prompt() after Stop Recording: the prompt rendered
+       behind the docked Roblox window (a native child HWND paints over
+       everything in its rect). toggleRecordPath switches back to Macro Manager
+       (game hidden there) before showing this, so it is always on top. -->
+  <div id="path-name-modal" class="modal-overlay" style="display:none;">
+    <div class="modal-panel" style="width: 380px; max-width: 92vw;">
+      <div class="modal-head">
+        <span class="modal-title">Save Recorded Path</span>
+        <span class="modal-close" onclick="discardPathRecording()">&times;</span>
+      </div>
+      <div class="modal-body">
+        <input id="path-name-input" class="block-input" style="width: 100%; margin-bottom: 14px;" type="text"
+               placeholder="Path name..." onkeydown="if (event.key === 'Enter') savePathName()">
+        <div class="flex items-center gap-2" style="justify-content: flex-end;">
+          <button type="button" class="rec-stop-btn" onclick="discardPathRecording()">Discard</button>
+          <button type="button" class="pu-set-btn" onclick="savePathName()">Save Path</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ Sprites-to-craft picker (Resource > Auto Crafting) ============
+       Kept in a modal so the Resource screen stays clean. Rows rendered by
+       renderCraftingScreen() into #crafting-item-list. -->
+  <div id="crafting-sprites-modal" class="modal-overlay" style="display:none;" onmousedown="if(event.target===this) closeCraftingSprites()">
+    <div class="modal-panel" style="width: 560px; max-width: 94vw;">
+      <div class="modal-head">
+        <span class="modal-title">Sprites to Craft</span>
+        <span class="modal-close" onclick="closeCraftingSprites()">&times;</span>
+      </div>
+      <div class="modal-body">
+        <div class="wh-hint" style="margin-bottom: 8px;">Enable the sprites to craft and set each amount (Max or a number). Crafted top&#8209;to&#8209;bottom &mdash; drag items or use arrows to set priority. If an item shows &ldquo;insufficient items&rdquo; it's skipped and the next one is tried.</div>
+        <div id="crafting-item-list" style="max-height: 60vh; overflow-y: auto;"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ Auto Fuel walking paths (Resource > Auto Fuel) ============ -->
+  <div id="fuel-paths-modal" class="modal-overlay" style="display:none;" onmousedown="if(event.target===this) closeFuelPaths()">
+    <div class="modal-panel" style="width: 620px; max-width: 94vw;">
+      <div class="modal-head">
+        <span class="modal-title">Auto Fuel Walking Paths</span>
+        <span class="modal-close" onclick="closeFuelPaths()">&times;</span>
+      </div>
+      <div class="modal-body">
+        <div class="wh-hint" style="margin-bottom: 10px;">Start each recording at the route's first location. Stop at the destination, then save the path with any name.</div>
+        <div id="fuel-path-list" class="flex flex-col gap-2"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ Challenge Story Maps (Resource > Auto Challenge) ============
+       Per-map Macro Operation assignment; kept in a modal to keep the Resource
+       screen clean. Rows rendered by renderChallengeScreen() into #challenge-map-list. -->
+  <!-- Examples: ready-made routines that ship with the app. Picking one
+       COPIES it into the user's own templates (see Api.use_example_template)
+       rather than loading it in place, so the bundled original can never be
+       edited away and the copy is theirs to change. -->
+  <div id="examples-modal" class="modal-overlay" style="display:none;" onmousedown="if(event.target===this) closeExamples()">
+    <div class="modal-panel" style="width: 560px; max-width: 94vw;">
+      <div class="modal-head">
+        <span class="modal-title">Example Macros</span>
+        <span style="flex:1;"></span>
+        <button onclick="openCommunity()" class="task-toolbar-btn"
+                style="margin-right: 10px;"
+                title="discord.gg/creams -- opens in your browser">More Examples on Discord :)</button>
+        <span class="modal-close" onclick="closeExamples()">&times;</span>
+      </div>
+      <div class="modal-body">
+        <div class="wh-hint" style="margin-bottom: 8px;">Adds a copy to your own templates and loads it &mdash; edit it freely, the original stays put.</div>
+        <!-- padding, not margin: .task-card lifts 1px and casts a shadow on
+             hover, and an overflow-y container clips both on the top row.
+             The horizontal padding keeps the shadow off the scrollbar too. -->
+        <div id="examples-list" style="max-height: 60vh; overflow-y: auto; padding: 4px 4px 0;"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="challenge-maps-modal" class="modal-overlay" style="display:none;" onmousedown="if(event.target===this) closeChallengeMaps()">
+    <div class="modal-panel" style="width: 520px; max-width: 94vw;">
+      <div class="modal-head">
+        <span class="modal-title">Challenge Story Maps</span>
+        <span class="modal-close" onclick="closeChallengeMaps()">&times;</span>
+      </div>
+      <div class="modal-body">
+        <div class="wh-hint" style="margin-bottom: 8px;">Regular Challenge rotates one of the Story maps through each slot &mdash; assign the Macro Operation to run for each.</div>
+        <div id="challenge-map-list" style="max-height: 60vh; overflow-y: auto;"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ Bounty Story Maps (Resource > Auto Bounty) ============
+       Uses the same compact map-assignment flow as Auto Challenge while
+       retaining Auto Bounty's independent per-map Macro Operations. -->
+  <div id="bounty-maps-modal" class="modal-overlay" style="display:none;" onmousedown="if(event.target===this) closeBountyMaps()">
+    <div class="modal-panel" style="width: 520px; max-width: 94vw;">
+      <div class="modal-head">
+        <span class="modal-title">Bounty Story Maps</span>
+        <span class="modal-close" onclick="closeBountyMaps()">&times;</span>
+      </div>
+      <div class="modal-body">
+        <div class="wh-hint" style="margin-bottom: 8px;">Assign the Macro Operation Auto Bounty should run for each Story destination.</div>
+        <div id="bounty-map-list" style="max-height: 60vh; overflow-y: auto;"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ First-run welcome ============
+       Shown exactly once per install (settings.onboarding_done, see
+       app.js showOnboarding) -- the short list of environment things that
+       otherwise get learned one broken run at a time. Rows are tagged
+       data-plat so each OS only sees its own items. -->
+  <div id="onboarding-modal" class="modal-overlay" style="display:none;">
+    <!-- Wider than the other modals on purpose: this one carries two full
+         checklists, and at 560px every reason wrapped to three lines while
+         two thirds of the window sat empty. -->
+    <div class="modal-panel onb-panel" style="width: min(1040px, 94vw);">
+      <div class="modal-head">
+        <span class="modal-title">Welcome to Cream's Macro</span>
+      </div>
+      <div class="modal-body">
+        <p class="onb-intro">
+          A one-time checklist -- these are the things that cause almost every "it doesn't work".
+          You can close this at any time; the same list lives in <b>Settings &gt; Debug</b>.
+        </p>
+
+        <!-- ============ In-game Roblox settings ============
+             Split out from the list below on purpose. Everything below is
+             about the computer and is verifiable by Health Check; these
+             four are inside Roblox, only the player can set them, and
+             nothing in the app can see or check them. They were missing
+             from this modal entirely, which is why "it walks to the wrong
+             spot / won't place" kept arriving as a macro bug.
+
+             Each carries its own reason -- a checklist people understand is
+             one they follow. The sprint line especially: the shipped walk
+             paths in Paths/defaults are bare key timings with no sprint
+             flag (see core/paths.py replay_events, which only holds Shift
+             when a block explicitly asks), so they were recorded at sprint
+             speed and only reach their spot at sprint speed. -->
+        <!-- ============ In-game Roblox settings ============
+             Rendered by app.js renderIngameChecklist from INGAME_REQUIREMENTS,
+             not written out here, because the identical list also appears in
+             Settings > Debug. Two hand-maintained copies drift; one source
+             cannot.
+
+             Split out from the machine-side list below on purpose: these four
+             live inside Roblox, only the player can set them, and nothing in
+             the app can read or verify them -- Health Check cannot see into
+             the game. They were missing from this modal entirely, which is
+             why "it walks to the wrong spot / won't place" kept arriving as a
+             macro bug. -->
+        <div class="onb-grid">
+          <div id="onboarding-ingame"></div>
+
+        <!-- Rendered by app.js renderMachineChecklist. Not tick-your-own-box
+             like the Roblox list above: Health Check actually verifies most
+             of these, and a box someone ticks for "display scale is 100%"
+             while it is really 175% is worse than no box at all. -->
+          <div id="onboarding-machine"></div>
+        </div>
+        <div class="flex items-center gap-2 onb-actions" style="justify-content: flex-end;">
+          <button type="button" class="rec-stop-btn" onclick="runHealthCheck(this)" title="Verifies capture, input, permissions and images right now -- results go to the Process Log">Run Health Check</button>
+          <button type="button" class="pu-set-btn" onclick="closeOnboarding()">Get Started</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ One-time subscribe prompt ============
+       Shown once per install (settings.subscribe_prompted, see app.js
+       showSubscribePrompt) -- the creator asking users to subscribe, with a
+       clear opt-out so it's never shown again either way. -->
+  <div id="subscribe-modal" class="modal-overlay" style="display:none;">
+    <div class="modal-panel" style="width: min(680px, 92vw);">
+      <div class="modal-head">
+        <span class="modal-title">Enjoying the macro?</span>
+      </div>
+      <div class="modal-body">
+        <p class="text-xs" style="color: var(--text-dim); line-height: 1.8; margin-bottom: 16px;">
+          This macro is free. If it's saving you time, subscribing to the creator's YouTube channel is a
+          big help -- it's the only thing asked in return. You'll only ever see this once.
+        </p>
+        <div class="flex items-center gap-2" style="justify-content: flex-end;">
+          <button type="button" class="rec-stop-btn" onclick="closeSubscribePrompt()">Maybe later</button>
+          <button type="button" class="pu-set-btn" onclick="subscribeAndClose()">Subscribe on YouTube</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ Path-recording pop-out ============
+       Floating pill shown while a walk path is being recorded (see
+       toggleRecordPath). Recording jumps the UI to the Dashboard so the
+       player can see the game -- this keeps a Stop button reachable there
+       instead of making them navigate back to Macro Manager's Walk Path row.
+       Pinned bottom-right ON PURPOSE: the docked Roblox child window paints
+       over any DOM it overlaps, and the bottom-right corner is the one spot
+       that is never inside the game slot. -->
+  <div id="rec-popout" style="display:none;">
+    <span class="rec-dot"></span>
+    <span id="rec-popout-text">Recording path (WASD + I/O) - timer starts on your first key</span>
+    <button type="button" class="rec-stop-btn" onclick="stopActiveRecording()">Stop Recording</button>
+  </div>
+
+  <!-- ============ Save-recorded-input modal ============
+       Record block counterpart of #path-name-modal above, for a stopped
+       mouse+keyboard input capture (see toggleRecordMacro/core.input_record)
+       instead of a WASD walk path. Kept as its own modal rather than reusing
+       #path-name-modal so the two recorders' Save/Discard flows can't cross-
+       wire (see recordingMacroBlockId in ui/app.js). -->
+  <div id="macro-record-name-modal" class="modal-overlay" style="display:none;">
+    <div class="modal-panel" style="width: 380px; max-width: 92vw;">
+      <div class="modal-head">
+        <span class="modal-title">Save Recorded Input</span>
+        <span class="modal-close" onclick="discardMacroRecording()">&times;</span>
+      </div>
+      <div class="modal-body">
+        <input id="macro-record-name-input" class="block-input" style="width: 100%; margin-bottom: 14px;" type="text"
+               placeholder="Recording name..." onkeydown="if (event.key === 'Enter') saveMacroRecordingName()">
+        <div class="flex items-center gap-2" style="justify-content: flex-end;">
+          <button type="button" class="rec-stop-btn" onclick="discardMacroRecording()">Discard</button>
+          <button type="button" class="pu-set-btn" onclick="saveMacroRecordingName()">Save Recording</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ Place Unit map picker modal ============
+       Opened by openPlaceUnitModal() (Macro Manager > Place Unit block > Set).
+       Category tabs -> map thumbnail grid -> zoomable/pannable canvas; the
+       canvas can also show a frozen Roblox screenshot instead of a map
+       image (see usePlaceUnitRobloxScreen) -- either way it's a static
+       image, so clicking it can never reach the live game. -->
+  <div id="pu-modal" class="modal-overlay" style="display:none;" onmousedown="if(event.target===this) closePlaceUnitModal()">
+    <div class="modal-panel">
+      <div class="modal-head">
+        <span class="modal-title">Set Position</span>
+        <span class="modal-close" onclick="closePlaceUnitModal()">&times;</span>
+      </div>
+      <div class="modal-body">
+        <div class="flex items-center gap-2 flex-wrap" style="margin-bottom: 10px;">
+          <div id="pu-category-tabs" class="flex items-center gap-1"></div>
+          <span class="flex-1"></span>
+          <button class="task-toolbar-btn" onclick="usePlaceUnitRobloxScreen()">Use Roblox Screen</button>
+        </div>
+
+        <div id="pu-map-grid" class="pu-map-grid"></div>
+
+        <div id="pu-canvas-wrap" style="display:none;">
+          <div class="flex items-center gap-2" style="margin-bottom: 8px;">
+            <button class="task-toolbar-btn" onclick="backToPlaceUnitMapGrid()">&larr; Maps</button>
+            <span class="text-[10px]" style="color: var(--text-muted);">Scroll to zoom &middot; drag to pan &middot; click to set position &middot; amber dots = units already placed</span>
+            <span class="flex-1"></span>
+            <span id="pu-pos-readout" class="task-chip">Not set</span>
+          </div>
+          <canvas id="pu-canvas" class="pu-canvas" width="760" height="440"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ Image Manager modal ============
+       Opened by openImageManager() (Settings > General > Image Search). Two
+       views inside one modal:
+
+       LIBRARY -- every reference image the macro searches for, one card per
+       searched name (a folder on disk, see core/vision.py's
+       template_variant_paths), grouped by category tab (UI Buttons / Map
+       Names), filterable. Each card shows all of that name's variant crops;
+       hovering a crop reveals a delete button (two-step: first click arms
+       it red, second click actually deletes -- no native confirm() popup,
+       which would render behind the docked game window).
+
+       CAPTURE -- a frozen screenshot of the live Roblox window on a
+       zoomable canvas (same one-shot mss grab as the Set Position picker,
+       so nothing done here can ever reach the real game): drag a box
+       around the button/text, pick or type the name it belongs to, Save.
+       The crop is cut server-side from the exact captured frame (see
+       main.Api.save_image_search_crop) and lands in that name's Assets
+       folder as an extra variant image the very next search will try.
+       Stays in capture view after saving on purpose -- one screenshot
+       usually yields several crops in a row. -->
+  <div id="im-modal" class="modal-overlay" style="display:none;" onmousedown="if(event.target===this) closeImageManager()">
+    <div class="modal-panel" style="width: min(940px, 96vw);">
+      <div class="modal-head">
+        <span class="modal-title">Image Manager</span>
+        <span class="modal-close" onclick="closeImageManager()">&times;</span>
+      </div>
+      <div class="modal-body">
+
+        <!-- Toolbar: badge legend + name filter + folder/capture actions.
+             The old UI/Maps tabs are gone -- both folders are shown together
+             in one badged list (renderImageLibrary), so a saved crop's folder
+             comes from the card it was started from (or the typed name), never
+             a tab that could be left on the wrong one. -->
+        <div class="flex items-center gap-2 flex-wrap" style="margin-bottom: 10px;">
+          <div id="im-category-tabs" class="flex items-center gap-1"></div>
+          <input id="im-filter" class="block-input" style="width: 150px;" type="text"
+                 placeholder="Filter names..." oninput="renderImageLibrary()">
+          <span class="flex-1"></span>
+          <button class="task-toolbar-btn" onclick="openAssetsFolder(this)" title="Open the Assets folder in File Explorer">Open Folder</button>
+          <button id="im-capture-btn" class="pu-set-btn" onclick="startImageCapture()" title="Screenshot your Roblox window and crop new reference images from it">Capture Roblox</button>
+        </div>
+
+        <!-- LIBRARY view: card grid, filled by renderImageLibrary(). -->
+        <div id="im-library" class="im-library"></div>
+
+        <!-- CAPTURE view: crop canvas + save bar, hidden until a capture. -->
+        <div id="im-capture-wrap" style="display:none;">
+          <div class="flex items-center gap-2" style="margin-bottom: 8px;">
+            <button class="task-toolbar-btn" onclick="backToImageLibrary()">&larr; Library</button>
+            <span class="text-[10px]" style="color: var(--text-muted);">Drag a box around the button/text &middot; scroll to zoom &middot; right-drag to pan &middot; crop tight, background included</span>
+            <span class="flex-1"></span>
+            <span id="im-crop-readout" class="task-chip">No selection</span>
+          </div>
+          <canvas id="im-canvas" class="pu-canvas" width="880" height="430"></canvas>
+          <div class="flex items-center gap-2" style="margin-top: 10px;">
+            <input id="im-save-name" class="block-input" style="flex: 1;" type="text" list="im-name-list"
+                   placeholder="Save as... (pick an existing name to add a variant, or type a new one)">
+            <!-- Existing names of the ACTIVE category -- picking one adds
+                 the crop as an extra variant of that name; anything else
+                 creates a brand-new name/folder. -->
+            <datalist id="im-name-list"></datalist>
+            <button class="task-toolbar-btn" onclick="startImageCapture()" title="Take a fresh screenshot (e.g. after changing screens in Roblox)">Retake</button>
+            <button id="im-use-region-btn" class="pu-set-btn" style="display:none;" onclick="useDetectRegion()" title="Use the dragged box as this Detect block's search region">Use as region</button>
+            <button id="im-save-btn" class="pu-set-btn" onclick="saveImageCrop()">Save Crop</button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ Detect test modal ============
+       Shows one full Roblox-window frame plus the exact Detect verdict and
+       scores, without running either nested branch or changing the macro. -->
+  <div id="detect-test-modal" class="modal-overlay" style="display:none;" onmousedown="if(event.target===this) closeDetectTest()">
+    <div class="modal-panel detect-test-panel">
+      <div class="modal-head">
+        <span class="modal-title">Test Detect</span>
+        <span class="modal-close" onclick="closeDetectTest()">&times;</span>
+      </div>
+      <div class="modal-body detect-test-body">
+        <div id="detect-test-status" class="detect-test-status missed">Waiting for test...</div>
+        <div id="detect-test-meta" class="detect-test-meta"></div>
+        <div class="detect-test-layout">
+          <div class="detect-test-preview-wrap">
+            <img id="detect-test-image" class="detect-test-image" alt="Detect test capture">
+          </div>
+          <div id="detect-test-details" class="detect-test-details"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Update popup: shown when the background GitHub check (main._check_for_
+       update_background) finds a newer tagged release than VERSION. Update
+       downloads the release source and restarts the app to apply it (see
+       main.Api.apply_update) -- Later just dismisses for this launch. -->
+  <div id="update-modal" class="modal-overlay" style="display:none;" onmousedown="if(event.target===this) dismissUpdateModal()">
+    <div class="modal-panel" style="max-width: 360px;">
+      <div class="modal-head">
+        <span class="modal-title">Update Available</span>
+        <span class="modal-close" onclick="dismissUpdateModal()">&times;</span>
+      </div>
+      <div class="modal-body">
+        <div style="margin-bottom: 10px;">
+          <span id="update-version" class="task-chip" style="margin-right: 6px;">-</span>
+          <span class="text-[10px]" style="color: var(--text-muted);">current <span id="update-current-version">-</span></span>
+        </div>
+        <div id="update-notes" style="font-size: 11px; color: var(--text-dim); white-space: pre-wrap; max-height: 160px; overflow-y: auto; margin-bottom: 14px;"></div>
+
+        <!-- Hidden until Update & Restart is clicked -- replaces the
+             notes/buttons with real download progress (see applyUpdate's
+             polling loop in app.js) instead of the button just saying
+             "Updating..." with no other feedback for however long the
+             download takes. -->
+        <div id="update-progress-wrap" style="display:none; margin-bottom: 4px;">
+          <div id="update-progress-track" style="height: 6px; border-radius: 3px; background: var(--bg-surface); overflow: hidden; margin-bottom: 8px;">
+            <div id="update-progress-bar" style="height: 100%; width: 0%; border-radius: 3px; background: var(--brand); transition: width 0.2s ease;"></div>
+          </div>
+          <div id="update-progress-text" class="text-[10px]" style="color: var(--text-muted);">Starting download...</div>
+        </div>
+
+        <div id="update-actions" class="flex items-center gap-2" style="justify-content: flex-end;">
+          <button type="button" class="task-toolbar-btn" onclick="dismissUpdateModal()">Later</button>
+          <button type="button" id="update-apply-btn" class="rp-btn rp-btn-start" style="padding: 6px 14px;" onclick="applyUpdate()">Update &amp; Restart</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Shown once at startup when Windows display scale isn't 100% (see
+       main._launch_ui / core.window.get_display_scale_percent) -- every
+       fixed click/search coordinate in core/runner.py was captured at
+       100% scale, so a different scale is a common, hard-to-diagnose
+       cause of clicks/detection landing slightly off. -->
+  <div id="scale-warning-modal" class="modal-overlay" style="display:none;" onmousedown="if(event.target===this) dismissScaleWarning()">
+    <div class="modal-panel" style="max-width: 380px;">
+      <div class="modal-head">
+        <span class="modal-title">Display Scale Warning</span>
+        <span class="modal-close" onclick="dismissScaleWarning()">&times;</span>
+      </div>
+      <div class="modal-body">
+        <div style="font-size: 12px; color: var(--text-dim); margin-bottom: 10px;">
+          Your Windows display scale is <b id="scale-warning-percent" style="color: var(--rose);">-</b>, not 100%.
+          Every click/search position this macro uses was captured at 100% scale, so anything else is a common
+          cause of clicks landing slightly wrong or buttons not being found.
+        </div>
+        <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 10px;">
+          <b>Fix:</b> Windows Settings &gt; System &gt; Display &gt; Scale &mdash; set it to <b>100%</b>, then
+          <b>restart your computer</b> (not just the macro) &mdash; Windows and Roblox don't always fully pick up
+          a scale change until everything's been relaunched fresh.
+        </div>
+        <div style="font-size: 11px; color: var(--text-muted);">
+          If clicks/detection are still off after that, also try: set the game's own UI scale to <b>1x</b> (in-game
+          Settings), turn off <b>HDR</b> (Windows Settings &gt; Display), and if your monitor runs a high refresh
+          rate, try dropping it under 100Hz &mdash; some setups render color slightly differently at very high
+          refresh rates, which can throw off the macro's image matching.
+        </div>
+        <div class="flex items-center gap-2" style="justify-content: flex-end; margin-top: 14px;">
+          <button type="button" class="rp-btn rp-btn-start" style="padding: 6px 14px;" onclick="dismissScaleWarning()">Got it</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Share Code Modal -->
+  <div id="share-code-modal" class="modal-overlay" style="display: none;">
+    <div class="modal-panel" style="width: 520px; max-width: 90vw;">
+      <div class="modal-head">
+        <span class="modal-title">Share via Code / Link</span>
+        <span class="modal-close" onclick="closeShareCodeModal()">&times;</span>
+      </div>
+      <div class="modal-body" style="display: flex; flex-direction: column; gap: 12px;">
+        <div class="flex items-center gap-2" style="border-bottom: 1px solid var(--border); padding-bottom: 8px;">
+          <button id="share-tab-export" class="task-toolbar-btn primary" onclick="switchShareTab('export')">Export Code</button>
+          <button id="share-tab-import" class="task-toolbar-btn" onclick="switchShareTab('import')">Import Code / Link</button>
+        </div>
+
+        <!-- Export Tab Content -->
+        <div id="share-content-export" style="display: flex; flex-direction: column; gap: 10px;">
+          <div style="font-size: 11px; color: var(--text-dim);">Select templates to include in share code:</div>
+          <div class="flex items-center gap-4 flex-wrap">
+            <label style="font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 4px;">
+              <input type="radio" name="share-export-scope" value="single" checked onchange="onExportScopeChange()"> Current Template
+            </label>
+            <label style="font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 4px;">
+              <input type="radio" name="share-export-scope" value="custom" onchange="onExportScopeChange()"> Select Templates
+            </label>
+            <label style="font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 4px;">
+              <input type="radio" name="share-export-scope" value="all" onchange="onExportScopeChange()"> All Templates
+            </label>
+          </div>
+
+          <!-- Template Checklist Box -->
+          <div id="share-export-checklist-box" style="display: none; flex-direction: column; gap: 6px; background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px; max-height: 110px; overflow-y: auto;">
+            <div class="flex items-center justify-between" style="border-bottom: 1px solid var(--border); padding-bottom: 4px; margin-bottom: 4px;">
+              <span style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Check templates to share:</span>
+              <div class="flex items-center gap-2">
+                <button type="button" class="task-toolbar-btn" style="font-size: 10px; padding: 1px 6px;" onclick="toggleExportAllCheckboxes(true)">Select All</button>
+                <button type="button" class="task-toolbar-btn" style="font-size: 10px; padding: 1px 6px;" onclick="toggleExportAllCheckboxes(false)">Clear</button>
+              </div>
+            </div>
+            <div id="share-export-checklist-items" style="display: flex; flex-direction: column; gap: 4px;"></div>
+          </div>
+
+          <textarea id="share-export-code-output" readonly rows="4" style="width: 100%; font-family: monospace; font-size: 11px; padding: 8px; background: var(--bg-surface); border: 1px solid var(--border); color: var(--text); border-radius: 6px; resize: none;" placeholder="Generating code..."></textarea>
+          <div class="flex items-center gap-2" style="justify-content: space-between;">
+            <span id="share-export-size-info" style="font-size: 11px; color: var(--text-muted);">Size: 0 chars</span>
+            <button id="btn-copy-share-code" onclick="copyShareCodeOutput()" class="task-toolbar-btn primary" style="padding: 4px 14px;">Copy Code</button>
+          </div>
+        </div>
+
+        <!-- Import Tab Content -->
+        <div id="share-content-import" style="display: none; flex-direction: column; gap: 10px;">
+          <div class="flex items-center justify-between">
+            <span style="font-size: 11px; color: var(--text-dim);">Paste code (`CREAM:v1:`), raw JSON, or web URL (Pastebin/Gist/Discord):</span>
+            <button type="button" class="task-toolbar-btn" style="padding: 2px 8px; font-size: 10px;" onclick="pasteFromClipboardPython()">Paste Clipboard</button>
+          </div>
+          <textarea id="share-import-input" rows="3" style="width: 100%; font-family: monospace; font-size: 11px; padding: 8px; background: var(--bg-surface); border: 1px solid var(--border); color: var(--text); border-radius: 6px; resize: vertical;" placeholder="Paste code or URL here..." oninput="onShareImportInput()"></textarea>
+
+          <!-- Live Preview Container -->
+          <div id="share-import-preview-box" style="display: none; background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px; flex-direction: column; gap: 6px;">
+            <div class="flex items-center justify-between">
+              <span id="share-import-preview-badge" style="font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 4px; background: color-mix(in srgb, var(--teal) 20%, transparent); color: var(--teal);">Single Template</span>
+              <span id="share-import-preview-count" style="font-size: 11px; color: var(--text-muted);">1 item</span>
+            </div>
+            <div id="share-import-preview-items" style="font-size: 11px; color: var(--text); max-height: 90px; overflow-y: auto; display: flex; flex-direction: column; gap: 3px; font-family: monospace;"></div>
+          </div>
+
+          <div id="share-import-status" style="font-size: 11px; color: var(--rose); display: none;"></div>
+
+          <div class="flex items-center gap-2" style="justify-content: flex-end; margin-top: 4px;">
+            <button id="btn-submit-import-share" onclick="submitImportShareCode()" class="task-toolbar-btn primary" style="padding: 6px 16px;">Import Now</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ Help & FAQ modal ============ -->
+  <div id="faq-modal" class="modal-overlay" style="display:none;" onmousedown="if(event.target===this) closeFaqModal()">
+    <div class="modal-panel" style="width: 620px; max-width: 94vw;">
+      <div class="modal-head">
+        <div class="flex items-center gap-2">
+          <svg class="w-4 h-4" style="color: var(--brand);" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"/>
+            <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+            <line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+          <span class="modal-title">Help & Troubleshooting FAQ</span>
+        </div>
+        <span class="modal-close" onclick="closeFaqModal()">&times;</span>
+      </div>
+      <div class="modal-body" style="display: flex; flex-direction: column; gap: 12px; max-height: 75vh; overflow-y: auto;">
+
+        <!-- Search input for live filtering -->
+        <div style="position: relative;">
+          <input type="text" id="faq-search-input" oninput="filterFaqItems()" placeholder="Search questions (e.g., Act 3, virus, camera, updater)..."
+                 style="width: 100%; padding: 8px 12px; font-size: 12px; background: var(--bg-surface); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">
+        </div>
+
+        <div id="faq-accordion-list" style="display: flex; flex-direction: column; gap: 8px;">
+
+          <!-- Question 1: Virus Total / False Positive -->
+          <div class="faq-item" data-keywords="virus virustotal safe trojan malware security threat">
+            <button class="faq-question" onclick="toggleFaqItem(this)">
+              <span>Is this macro safe? Why does VirusTotal show 1 virus detection?</span>
+              <svg class="w-4 h-4 faq-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <div class="faq-answer">
+              <p><strong>Yes, the macro is safe and open-source.</strong></p>
+              <p>PyInstaller executables often trigger false positives in basic antivirus scans. You can inspect every line of code on our <a href="https://github.com/Cweamy/Anime-Expeditions-Creams-Macro" target="_blank" style="color: var(--brand); text-decoration: underline;">GitHub repository</a> or run it directly from source.</p>
+            </div>
+          </div>
+
+          <!-- Question 2: How to farm Raid Act 3 or Act 2 -->
+          <div class="faq-item" data-keywords="raid act 3 act 2 act 1 difficulty stage matchmaking party">
+            <button class="faq-question" onclick="toggleFaqItem(this)">
+              <span>How do I farm Raid Act 3 or Act 2 instead of Act 1?</span>
+              <svg class="w-4 h-4 faq-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <div class="faq-answer">
+              <p>1. Open the <strong>Task</strong> tab in the top menu.</p>
+              <p>2. Add a task and set <strong>Mode</strong> to <strong>Raid</strong>.</p>
+              <p>3. In the <strong>Stage</strong> dropdown, choose <strong>Stage 3</strong> (Act 3) or <strong>Stage 2</strong> (Act 2).</p>
+              <p>4. Pick <strong>Solo</strong> or <strong>Matchmaking</strong> under Play Mode.</p>
+            </div>
+          </div>
+
+          <!-- Question 3: Auto-Updater stuck on same version -->
+          <div class="faq-item" data-keywords="update updater version zip download freeze stay same">
+            <button class="faq-question" onclick="toggleFaqItem(this)">
+              <span>Why does the macro stay on the same version after updating?</span>
+              <svg class="w-4 h-4 faq-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <div class="faq-answer">
+              <p>A running background process might lock the executable file from being overwritten.</p>
+              <p><strong>Fix:</strong> Close all macro processes in Task Manager, or download the latest <code>.zip</code> from <a href="https://github.com/Cweamy/Anime-Expeditions-Creams-Macro/releases/latest" target="_blank" style="color: var(--brand); text-decoration: underline;">GitHub Releases</a> and extract it to a new folder.</p>
+            </div>
+          </div>
+
+          <!-- Question 4: Image Manager background / black screen -->
+          <div class="faq-item" data-keywords="image manager capture background black screen dpi scale roblox">
+            <button class="faq-question" onclick="toggleFaqItem(this)">
+              <span>Why does Image Manager show a black screen or background only?</span>
+              <svg class="w-4 h-4 faq-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <div class="faq-answer">
+              <p>This happens when Windows Display Scaling is above 100% or GPU settings interfere with screen captures.</p>
+              <p><strong>Fix:</strong></p>
+              <p>1. Open <strong>Settings &gt; Capture</strong> in the macro.</p>
+              <p>2. Turn on <strong>Hardware Capture Fix (Windows.Graphics.Capture)</strong> and restart the macro.</p>
+              <p>3. Set Roblox to Windowed Mode instead of Fullscreen.</p>
+            </div>
+          </div>
+
+          <!-- Question 5: Camera moving up instead of down -->
+          <div class="faq-item" data-keywords="camera looking up down invert settings break mouse shiftlock">
+            <button class="faq-question" onclick="toggleFaqItem(this)">
+              <span>Why is the camera pointing UP instead of DOWN?</span>
+              <svg class="w-4 h-4 faq-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <div class="faq-answer">
+              <p>Inverted camera controls in Roblox cause this behavior.</p>
+              <p><strong>Fix:</strong> Open Roblox settings (<code>Esc</code> &gt; <code>Settings</code>), turn off <strong>Invert Camera Y-Axis</strong>, and set <strong>Camera Mode</strong> to <code>Default (Classic)</code>.</p>
+            </div>
+          </div>
+
+          <!-- Question 6: Unit placement issues -->
+          <div class="faq-item" data-keywords="unit place placement phantom remove Defense node expedition">
+            <button class="faq-question" onclick="toggleFaqItem(this)">
+              <span>Why are units failing to place or being removed?</span>
+              <svg class="w-4 h-4 faq-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <div class="faq-answer">
+              <p>Defense nodes in Expeditions clear placed phantom units by design.</p>
+              <p>For standard stages, open <strong>Macro Manager</strong>, select your <strong>Place Unit</strong> block, and enable <strong>Keep Placing</strong> to retry placement automatically until confirmed.</p>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Before app.js on purpose: app.js calls addLog() (defined here) from the
+       moment it loads, and the popped-out log window loads this same file. -->
+  <script src="log_view.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

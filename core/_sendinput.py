@@ -1,0 +1,154 @@
+"""Low-level Win32 SendInput plumbing shared by Mouse and Keyboard.
+
+SendInput is used instead of SetCursorPos/mouse_event/pyautogui's default
+backend because it pushes events through the real input stack, which is
+what most games (and DirectInput titles) actually listen to. Cursor-only
+writes are ignored by a lot of games.
+"""
+import ctypes
+import sys
+
+if not sys.platform.startswith("win"):
+    raise RuntimeError("core._sendinput requires Windows (uses ctypes.WinDLL('user32'))")
+
+user32 = ctypes.WinDLL("user32", use_last_error=True)
+
+ULONG_PTR = ctypes.c_size_t
+
+INPUT_MOUSE = 0
+INPUT_KEYBOARD = 1
+
+MOUSEEVENTF_MOVE = 0x0001
+MOUSEEVENTF_ABSOLUTE = 0x8000
+# Without this, Windows maps an ABSOLUTE move's 0-65535 coordinates onto the
+# PRIMARY monitor only -- but screen_to_absolute() below normalizes against
+# the FULL virtual desktop (SM_XVIRTUALSCREEN/CXVIRTUALSCREEN), specifically
+# so multi-monitor setups (or any primary monitor not sitting at the virtual
+# desktop's origin) work at all. Missing this flag is a well-known SendInput
+# gotcha and silently sends every move to the wrong place on exactly those
+# setups -- the cursor can end up clamped to the primary monitor's edge or
+# jump somewhere unrelated to the intended target, which reads as "the mouse
+# barely moves/is stuck" even though SendInput itself never errors.
+MOUSEEVENTF_VIRTUALDESK = 0x4000
+MOUSEEVENTF_LEFTDOWN = 0x0002
+MOUSEEVENTF_LEFTUP = 0x0004
+MOUSEEVENTF_RIGHTDOWN = 0x0008
+MOUSEEVENTF_RIGHTUP = 0x0010
+MOUSEEVENTF_MIDDLEDOWN = 0x0020
+MOUSEEVENTF_MIDDLEUP = 0x0040
+MOUSEEVENTF_WHEEL = 0x0800
+
+KEYEVENTF_EXTENDEDKEY = 0x0001
+KEYEVENTF_KEYUP = 0x0002
+KEYEVENTF_SCANCODE = 0x0008
+
+SM_XVIRTUALSCREEN = 76
+SM_YVIRTUALSCREEN = 77
+SM_CXVIRTUALSCREEN = 78
+SM_CYVIRTUALSCREEN = 79
+
+MAPVK_VK_TO_VSC = 0
+
+
+class MouseInput(ctypes.Structure):
+    _fields_ = [
+        ("dx", ctypes.c_long),
+        ("dy", ctypes.c_long),
+        ("mouseData", ctypes.c_ulong),
+        ("dwFlags", ctypes.c_ulong),
+        ("time", ctypes.c_ulong),
+        ("dwExtraInfo", ULONG_PTR),
+    ]
+
+
+class KeyBdInput(ctypes.Structure):
+    _fields_ = [
+        ("wVk", ctypes.c_ushort),
+        ("wScan", ctypes.c_ushort),
+        ("dwFlags", ctypes.c_ulong),
+        ("time", ctypes.c_ulong),
+        ("dwExtraInfo", ULONG_PTR),
+    ]
+
+
+class HardwareInput(ctypes.Structure):
+    _fields_ = [
+        ("uMsg", ctypes.c_ulong),
+        ("wParamL", ctypes.c_short),
+        ("wParamH", ctypes.c_ushort),
+    ]
+
+
+class _InputUnion(ctypes.Union):
+    _fields_ = [("mi", MouseInput), ("ki", KeyBdInput), ("hi", HardwareInput)]
+
+
+class Input(ctypes.Structure):
+    _anonymous_ = ("_u",)
+    _fields_ = [("type", ctypes.c_ulong), ("_u", _InputUnion)]
+
+
+def send_mouse_input(mi: MouseInput) -> None:
+    inp = Input(type=INPUT_MOUSE, mi=mi)
+    _dispatch(inp)
+
+
+def send_keyboard_input(ki: KeyBdInput) -> None:
+    inp = Input(type=INPUT_KEYBOARD, ki=ki)
+    _dispatch(inp)
+
+
+def _dispatch(inp: Input) -> None:
+    ctypes.set_last_error(0)
+    sent = user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(Input))
+    if sent != 1:
+        raise ctypes.WinError(ctypes.get_last_error())
+
+
+def virtual_screen_rect():
+    x = user32.GetSystemMetrics(SM_XVIRTUALSCREEN)
+    y = user32.GetSystemMetrics(SM_YVIRTUALSCREEN)
+    w = user32.GetSystemMetrics(SM_CXVIRTUALSCREEN)
+    h = user32.GetSystemMetrics(SM_CYVIRTUALSCREEN)
+    return x, y, w, h
+
+
+def screen_to_absolute(x: int, y: int):
+    vx, vy, vw, vh = virtual_screen_rect()
+    # vw/vh come from GetSystemMetrics, which reports a DPI-UNAWARE
+    # process's virtual screen as a scaled-down/virtualized size, not the
+    # real physical pixel dimensions (see core.window.set_dpi_aware) -- if
+    # that ever silently fails again, dividing by the wrong denominator
+    # here would push abs_x/abs_y outside SendInput's valid 0-65535 range,
+    # which is exactly what turned into "cursor barely moves / clicks land
+    # nowhere near the target" in practice. Clamping can't fix a wrong
+    # scale, but it guarantees a bad computation degrades to "clicks the
+    # nearest screen edge" instead of an arbitrarily out-of-range value.
+    # Aim at the CENTRE of the target pixel's slice of the 0..65535 range.
+    #
+    # Windows maps an absolute coordinate back to a pixel by flooring
+    # (pixel = abs * size >> 16), so pixel x owns the half-open absolute
+    # range [x*65536/size, (x+1)*65536/size). Landing anywhere inside it
+    # gives pixel x; landing on the boundary is a coin flip against
+    # rounding. Adding half a pixel's width puts the request in the middle
+    # of that band, which is the furthest possible from either edge.
+    #
+    # Measured by moving the real cursor and reading it back, 209 x-coords
+    # across a 1463px desktop:
+    #     int(x * 65536 / size)          55 wrong   (the original)
+    #     round(x * 65535 / (size - 1))  24 wrong   (endpoint-to-endpoint)
+    #     this                            0 wrong
+    # The endpoint form is the natural reading of "0..65535 maps onto
+    # 0..size-1", but it only matches an inverse that rounds; Windows'
+    # floors, so it still misses wherever the two disagree.
+    #
+    # Integer arithmetic throughout -- no float rounding to reason about.
+    abs_x = ((x - vx) * 65536 + 32768) // vw if vw else 0
+    abs_y = ((y - vy) * 65536 + 32768) // vh if vh else 0
+    abs_x = max(0, min(65535, abs_x))
+    abs_y = max(0, min(65535, abs_y))
+    return abs_x, abs_y
+
+
+def vk_to_scan(vk: int) -> int:
+    return user32.MapVirtualKeyW(vk, MAPVK_VK_TO_VSC)

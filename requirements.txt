@@ -1,0 +1,42 @@
+pywebview      # docked macro UI (Windows: uses the EdgeChromium/WebView2 runtime, preinstalled on Win10/11)
+keyboard       # global hotkeys (Settings > Hotkeys), also the keyboard half of the
+               # Macro Manager Record block's global input capture (core/input_record.py)
+mouse          # the mouse half of the Record block's global input capture -- same
+               # author/style as keyboard above, global move/click/scroll hooks
+               # (core/input_record.py)
+mss            # screen capture (Settings > Webhook > Debug Screenshot, core/rewards.py)
+requests       # multipart webhook uploads (core/webhook.py send_file)
+opencv-python  # reward-icon image preprocessing (core/rewards.py)
+numpy          # array handling for opencv/mss (core/rewards.py)
+pytesseract    # OCR FALLBACK -- Windows uses the built-in Windows.Media.Ocr (see winsdk
+               # below); Tesseract is only used when that isn't available (older Windows,
+               # macOS). Its engine binary can't be pip-installed:
+               # https://github.com/UB-Mannheim/tesseract/wiki  (macOS: `brew install tesseract`)
+
+# Windows only -- the built-in Windows OCR (Windows.Media.Ocr) projection, the
+# PREFERRED OCR engine on Win10/11 (see core/ocr_windows.py). Python 3.13 uses
+# the successor winrt-Windows.* packages because winsdk has no cp313 wheel.
+# Ships in the build, so users install nothing extra for wave/stats reading.
+winsdk; sys_platform == "win32" and python_version < "3.13"
+winrt-Windows.Media.Ocr; sys_platform == "win32" and python_version >= "3.13"
+winrt-Windows.Globalization; sys_platform == "win32" and python_version >= "3.13"
+winrt-Windows.Graphics.Imaging; sys_platform == "win32" and python_version >= "3.13"
+winrt-Windows.Security.Cryptography; sys_platform == "win32" and python_version >= "3.13"
+winrt-Windows.Foundation; sys_platform == "win32" and python_version >= "3.13"
+winrt-Windows.Foundation.Collections; sys_platform == "win32" and python_version >= "3.13"
+winrt-Windows.Storage.Streams; sys_platform == "win32" and python_version >= "3.13"
+
+# Windows only -- the Windows.Graphics.Capture backend (core/wgc_capture.py),
+# used ONLY when the "use_wgc_capture" setting is on. Reads the game window's
+# composed frames, which return REAL pixels where the mss/BitBlt and
+# PrintWindow paths come back BLACK on hardware-accelerated / flip-model
+# Roblox. Prebuilt wheels, no compiler needed; imported lazily so a missing
+# install just disables the feature instead of breaking startup.
+windows-capture; sys_platform == "win32"
+
+# macOS only -- the Quartz/Cocoa/Accessibility bindings the mac input and
+# window backends are built on (core/_input_mac.py, core/window_mac.py).
+# Environment markers keep these out of Windows installs entirely.
+pyobjc-framework-Cocoa; sys_platform == "darwin"
+pyobjc-framework-Quartz; sys_platform == "darwin"
+pyobjc-framework-ApplicationServices; sys_platform == "darwin"
