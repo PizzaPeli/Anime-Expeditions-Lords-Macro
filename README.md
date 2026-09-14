@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="logo.ico" width="80" alt="Lord's Macro — Anime Expeditions logo">
+  <img src="ui/cat-logo-transparent.png" width="160" alt="Lord's Macro crowned-cat logo">
 </p>
 
 <h1 align="center">Lord's Macro | Anime Expeditions</h1>
@@ -8,6 +8,10 @@
   <strong>Free, open-source auto-farm macro for the Roblox game Anime Expeditions</strong><br>
   Vision-based (screen capture + image matching) — no injection, no memory reading.<br>
   Docks Roblox directly inside its own window and automates the full Story/Raid/Expedition grind loop.
+</p>
+
+<p align="center">
+  <strong>Maintained by PizzaPeli</strong> · A customized continuation of Cream's original macro
 </p>
 
 <p align="center">
@@ -197,4 +201,7 @@ This is a fan-made automation tool, not affiliated with, endorsed by, or associa
 
 ## License
 
-[MIT](LICENSE) — see the LICENSE file for details.
+[MIT](LICENSE) — Lord's Macro is a customized continuation of
+[Cream's Anime Expeditions Macro](https://github.com/Cweamy/Anime-Expeditions-Creams-Macro).
+The original project and its author, Cream, are credited under the same MIT license;
+this version adds Lord's Macro branding, release builds, and its own improvements.
