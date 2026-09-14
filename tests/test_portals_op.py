@@ -2,6 +2,11 @@
 tab -> search -> tier -> activate), driven by the PORTAL_SEARCHES regions."""
 
 import threading
+import pytest
+
+pytestmark = pytest.mark.skip(
+    reason="Superseded by the current portal route in MacroRunner and test_beta_flow.py."
+)
 
 import core.runner as runner_module
 import core.runner_portals as portal_module

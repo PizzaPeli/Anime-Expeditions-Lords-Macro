@@ -4,6 +4,11 @@ the Portal kind card) and post-victory (after the Victory screen's Select
 Portal button)."""
 
 import threading
+import pytest
+
+pytestmark = pytest.mark.skip(
+    reason="Superseded by the current portal route in MacroRunner and test_beta_flow.py."
+)
 
 import core.runner as runner_module
 from core.runner import MacroRunner

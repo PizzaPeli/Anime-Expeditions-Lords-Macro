@@ -1231,7 +1231,10 @@ def test_show_docked_reasserts_panel_width_on_mac_behaviorally(tmp_path):
         function runPendingFirstRun() {}
         // Any id gets a fresh {style:{}} so the three display writes land
         // without a real DOM; show_game/hide_game are no-ops for this test.
-        global.document = { getElementById: id => ({ style: {} }) };
+        global.document = {
+          body: { classList: { add: () => {}, remove: () => {} } },
+          getElementById: id => ({ style: {} })
+        };
         global.window = { pywebview: {} };
         global.pywebview = { api: {
           set_panel_expanded: v => calls.push(v),
