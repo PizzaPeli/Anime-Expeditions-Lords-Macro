@@ -38,6 +38,18 @@ def test_autoplay_ignores_old_toggle_and_follows_macro(macro, want_on):
     runner._ensure_autoplay.assert_called_once_with(1, stop, want_on)
 
 
+def test_autoplay_click_uses_located_button_and_hover(monkeypatch):
+    runner = MacroRunner(MagicMock(), MagicMock(), MagicMock())
+    runner._autoplay_state = MagicMock(side_effect=['off', 'on'])
+    runner._click_found_image = MagicMock(return_value={'score': 0.86})
+    runner._interruptible_sleep = MagicMock()
+    stop = threading.Event()
+
+    assert runner._ensure_autoplay(1, stop, True)
+    runner._click_found_image.assert_called_once_with(
+        1, 'autoplay_off', 8.0, stop, shuffle=True, threshold=0.80)
+
+
 def test_unknown_card_identity_never_authorizes_buy(monkeypatch):
     import numpy as np
     monkeypatch.setattr(auto_shop_vision, '_identity_references', lambda _key: [])

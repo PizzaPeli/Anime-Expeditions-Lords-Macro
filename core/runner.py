@@ -2119,7 +2119,7 @@ class MacroRunner(BountyOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, Expedi
             # at 0.80 and then refusing to click it at 0.93 would find it and
             # then fail to act on it.
             if self._click_found_image(hwnd, image, AUTOPLAY_BUTTON_TIMEOUT, stop_event,
-                                       threshold=AUTOPLAY_LOCATE_THRESHOLD) is None:
+                                       shuffle=True, threshold=AUTOPLAY_LOCATE_THRESHOLD) is None:
                 # The state read above says the button IS there, so a failed
                 # click here means the match went stale between the two (the
                 # label swapped, the HUD shifted). The calibrated point is the
