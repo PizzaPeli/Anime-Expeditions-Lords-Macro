@@ -174,8 +174,6 @@ _BUILTIN_DEFAULT_WALK_PATHS = {
     "Fairy King Forest": "Fairy King Forest",
     "King's Tomb": "Kings Tomb",
     "Spirit City Act3": "Spirit Act3",
-    "Event Act1": "Villian1",
-    "Event Act2": "Villian2",
 }
 
 
@@ -187,6 +185,32 @@ def load_shipped_default_walk_paths() -> dict:
     except (OSError, json.JSONDecodeError):
         pass
     return merged
+
+
+def set_shipped_default_walk_path(map_name: str, path_name: str) -> dict:
+    """Persist a map -> recording mapping in the shared Assets data.
+
+    This file is intentionally project/release data rather than user settings:
+    map recordings calibrated during test builds should be available to every
+    user once the resulting Assets folder is committed and released.
+    """
+    saved = {}
+    try:
+        with open(SHIPPED_DEFAULT_WALK_PATHS_FILE, "r", encoding="utf-8") as f:
+            loaded = json.load(f)
+            if isinstance(loaded, dict):
+                saved = loaded
+    except (OSError, json.JSONDecodeError):
+        pass
+    map_name = (map_name or "").strip()
+    if map_name:
+        if path_name:
+            saved[map_name] = path_name
+        else:
+            saved.pop(map_name, None)
+    os.makedirs(os.path.dirname(SHIPPED_DEFAULT_WALK_PATHS_FILE), exist_ok=True)
+    write_json_atomic(SHIPPED_DEFAULT_WALK_PATHS_FILE, saved)
+    return load_shipped_default_walk_paths()
 
 
 # A SECOND walk per map, walked MID-RUN rather than at stage entry. The
@@ -310,6 +334,19 @@ def save_path(name: str, events: list) -> str:
     # through to the shipped default, so for a name that ships one the
     # replacement is silent AND walks a different route (see
     # core/jsonstore.py).
+    write_json_atomic(path, {"name": name, "events": events})
+    return name
+
+
+def save_shared_path(name: str, events: list) -> str:
+    """Save a release-ready map walk in the tracked defaults directory."""
+    if getattr(sys, "frozen", False):
+        # A frozen app cannot write into PyInstaller's temporary BUNDLE_DIR.
+        # TEST_BUILD.bat syncs this writable copy back after the app closes.
+        return save_path(name, events)
+    name = (name or "").strip() or "path"
+    os.makedirs(DEFAULT_PATHS_DIR, exist_ok=True)
+    path = os.path.join(DEFAULT_PATHS_DIR, f"{_free_slug(name)}.json")
     write_json_atomic(path, {"name": name, "events": events})
     return name
 

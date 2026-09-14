@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="logo.ico" width="80" alt="Cream's Macro — Anime Expeditions logo">
+  <img src="logo.ico" width="80" alt="Lord's Macro — Anime Expeditions logo">
 </p>
 
-<h1 align="center">Cream's Macro | Anime Expeditions</h1>
+<h1 align="center">Lord's Macro | Anime Expeditions</h1>
 
 <p align="center">
   <strong>Free, open-source auto-farm macro for the Roblox game Anime Expeditions</strong><br>
@@ -11,14 +11,14 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Cweamy/Anime-Expeditions-Creams-Macro/releases/latest">
-    <img src="https://img.shields.io/github/v/release/Cweamy/Anime-Expeditions-Creams-Macro?style=flat-square&color=blue" alt="Latest Release">
+  <a href="https://github.com/PizzaPeli/Anime-Expeditions-Lords-Macro/releases/latest">
+    <img src="https://img.shields.io/github/v/release/PizzaPeli/Anime-Expeditions-Lords-Macro?style=flat-square&color=blue" alt="Latest Release">
   </a>
-  <a href="https://github.com/Cweamy/Anime-Expeditions-Creams-Macro/releases/latest">
-    <img src="https://img.shields.io/github/downloads/Cweamy/Anime-Expeditions-Creams-Macro/total?style=flat-square&color=green" alt="Downloads">
+  <a href="https://github.com/PizzaPeli/Anime-Expeditions-Lords-Macro/releases/latest">
+    <img src="https://img.shields.io/github/downloads/PizzaPeli/Anime-Expeditions-Lords-Macro/total?style=flat-square&color=green" alt="Downloads">
   </a>
-  <a href="https://github.com/Cweamy/Anime-Expeditions-Creams-Macro/actions/workflows/ci.yml">
-    <img src="https://github.com/Cweamy/Anime-Expeditions-Creams-Macro/actions/workflows/ci.yml/badge.svg" alt="CI">
+  <a href="https://github.com/PizzaPeli/Anime-Expeditions-Lords-Macro/actions/workflows/ci.yml">
+    <img src="https://github.com/PizzaPeli/Anime-Expeditions-Lords-Macro/actions/workflows/ci.yml/badge.svg" alt="CI">
   </a>
   <a href="LICENSE">
     <img src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square" alt="License: MIT">
@@ -29,7 +29,7 @@
 </p>
 
 <p align="center">
-  <a href="https://discord.gg/FwU6ppjKNf">Discord</a> · <a href="https://www.youtube.com/@Cweamya">YouTube</a> · <a href="https://github.com/Cweamy/Anime-Expeditions-Creams-Macro/releases/latest">Download</a>
+  <a href="https://github.com/PizzaPeli/Anime-Expeditions-Lords-Macro/issues">Issues</a> · <a href="https://github.com/PizzaPeli/Anime-Expeditions-Lords-Macro">Repository</a> · <a href="https://github.com/PizzaPeli/Anime-Expeditions-Lords-Macro/releases/latest">Download</a>
 </p>
 
 > Looking for an **Anime Expeditions auto farm bot**, **Anime Expeditions macro**, or a way to **auto raid / auto story farm / auto expedition** in Anime Expeditions on Roblox? You're in the right place.
@@ -79,9 +79,9 @@
 
 No `git clone`, no Python needed.
 
-1. Open the [**Releases page**](https://github.com/Cweamy/Anime-Expeditions-Creams-Macro/releases/latest)
+1. Open the [**Releases page**](https://github.com/PizzaPeli/Anime-Expeditions-Lords-Macro/releases/latest)
 2. The newest release is shown at the top
-3. Under **Assets**, download **`Creams-Macro-Anime-Expeditions-Windows.zip`** (or the `-macOS` zip on a Mac)
+3. Under **Assets**, download **`Lords-Macro-Anime-Expeditions-Windows.zip`** (or the `-macOS` zip on a Mac)
 4. Extract it anywhere — you get the app `.exe` with an `Assets/` folder next to it — and run the exe
 
 The `Assets/` folder is every image the macro searches for on screen, kept **outside** the exe on purpose: one folder per button/text, and you can open, replace, or add extra crops freely (Settings > General > **Image Manager** captures and crops them for you, straight from your Roblox screen). Updates never overwrite images you've changed or added.
@@ -95,14 +95,14 @@ The only other thing you need is [Tesseract OCR](https://github.com/UB-Mannheim/
 ### Option B: Run from source
 
 ```bash
-git clone https://github.com/Cweamy/Anime-Expeditions-Creams-Macro.git
-cd Anime-Expeditions-Creams-Macro
+git clone https://github.com/PizzaPeli/Anime-Expeditions-Lords-Macro.git
+cd Anime-Expeditions-Lords-Macro
 pip install -r requirements.txt
 ```
 
 ### macOS (experimental — testers wanted)
 
-Releases also publish **`Creams-Macro-Anime-Expeditions-macOS.zip`** (an Intel/x86_64 `.app` + the same editable `Assets/` folder), and source runs work via `./run.sh`. Key differences and setup:
+Releases also publish **`Lords-Macro-Anime-Expeditions-macOS.zip`** (an Intel/x86_64 `.app` + the same editable `Assets/` folder), and source runs work via `./run.sh`. Key differences and setup:
 
 1. **Permissions (required):** System Settings > Privacy & Security — grant the app (or your terminal, for source runs) **Accessibility**, **Input Monitoring**, and **Screen Recording**. Without them, clicks silently do nothing and captures come back black. The app logs a warning at startup if Accessibility is missing.
 2. **Side-by-side, not docked:** macOS can't embed another app's window, so Roblox is auto-arranged *next to* the control panel at the exact reference size instead of inside it. The panel sizes itself to whatever width the game doesn't need and to the full height of the screen's *visible* area (menu bar and Dock excluded), so nothing ends up under either.
@@ -175,13 +175,17 @@ bootstrap.py     # tiny installer exe -- downloads/extracts the release zip and 
                  # the app; built locally via build_bootstrap.py, not uploaded to releases
 build_pyinstaller.py # builds the real app exe
 build_bootstrap.py # builds bootstrap.py into its own small exe
+BUILD_EXE.bat       # one-click Windows build for the real app exe
+TEST_BUILD.bat      # resets an isolated playtest env, builds, launches, and preserves Assets/paths
+RUN_TESTS.bat       # prepares .venv and runs the automated pytest suite
+CLEAR_DATA.bat      # resets local settings, recordings, paths, and templates
 ```
 
 ## Contributing
 
 Issues and PRs are welcome. Every push/PR runs CI on Windows: the `tests/` unit suite under pytest, a compile check over every Python file, and a syntax check of `ui/app.js`. Run the suite locally with `pip install -r requirements-dev.txt` then `python -m pytest tests/`. It only covers the pure-logic modules (settings, pacing, webhook, and friends), so please also describe how you tested a change manually in your PR.
 
-To cut a release: bump `VERSION`, commit, then tag with an **annotated** tag whose message is a short, human-readable changelog: `git tag -a vX.Y.Z -m "..." && git push origin vX.Y.Z`. That message becomes both the GitHub Release body and what gets posted to Discord (see below) — a lightweight tag (no `-a`/`-m`) falls back to just the tagged commit's own message, which is usually not what you want announced. Pushing the tag triggers the release workflow, which builds the app exe with PyInstaller (see `build_pyinstaller.py`), packages it together with the user-editable `Assets/` folder into `Creams-Macro-Anime-Expeditions-Windows.zip` (a macOS job builds the `-macOS` twin) — the per-platform zips are the only uploaded assets, which new installs, the auto-updater, and any bootstrapper copies all read from — and publishes a GitHub Release.
+To cut a release: bump `VERSION`, commit, then tag with an **annotated** tag whose message is a short, human-readable changelog: `git tag -a vX.Y.Z -m "..." && git push origin vX.Y.Z`. That message becomes both the GitHub Release body and what gets posted to Discord (see below) — a lightweight tag (no `-a`/`-m`) falls back to just the tagged commit's own message, which is usually not what you want announced. Pushing the tag triggers the release workflow, which builds the app exe with PyInstaller (see `build_pyinstaller.py`), packages it together with the user-editable `Assets/` folder into `Lords-Macro-Anime-Expeditions-Windows.zip` (a macOS job builds the `-macOS` twin) — the per-platform zips are the only uploaded assets, which new installs, the auto-updater, and any bootstrapper copies all read from — and publishes a GitHub Release.
 
 Every push to `main` posts a one-line summary to a Discord "git log" channel; every tagged release posts its changelog to a separate Discord "update log" channel. Both are wired via `DISCORD_GIT_LOGS_WEBHOOK`/`DISCORD_UPDATE_LOGS_WEBHOOK` repo secrets (Settings > Secrets and variables > Actions) — unset in a fork, so both steps just no-op instead of failing.
 

@@ -1,0 +1,101 @@
+{
+  "name": "Expedition",
+  "description": "Example Expedition setup with a default path and starter unit placements.",
+  "blocks": {
+    "team": "",
+    "equipment": "include",
+    "prestart": [
+      {
+        "type": "walk_path",
+        "params": {},
+        "once": true,
+        "mode": "auto",
+        "pathName": "",
+        "sprint": false
+      },
+      {
+        "type": "place_unit",
+        "params": {
+          "name": "stone",
+          "x": 461,
+          "y": 394
+        },
+        "once": false,
+        "hotkey": "6",
+        "ignoreHighlight": false,
+        "retryUntilPlaced": false
+      },
+      {
+        "type": "place_unit",
+        "params": {
+          "name": "ramen",
+          "x": 462,
+          "y": 325
+        },
+        "once": false,
+        "hotkey": "5",
+        "ignoreHighlight": false,
+        "retryUntilPlaced": false
+      },
+      {
+        "type": "place_unit",
+        "params": {
+          "name": "dmg 1",
+          "x": 746,
+          "y": 361
+        },
+        "once": false,
+        "hotkey": "1",
+        "ignoreHighlight": false,
+        "retryUntilPlaced": false
+      },
+      {
+        "type": "place_unit",
+        "params": {
+          "name": "dmg 2",
+          "x": 523,
+          "y": 360
+        },
+        "once": false,
+        "hotkey": "2",
+        "ignoreHighlight": false,
+        "retryUntilPlaced": false
+      }
+    ],
+    "battle": [
+      {
+        "type": "wait_wave",
+        "params": {
+          "wave": "2"
+        },
+        "once": false
+      },
+      {
+        "type": "place_unit",
+        "params": {
+          "name": "support 1",
+          "x": 638,
+          "y": 323
+        },
+        "once": false,
+        "hotkey": "3",
+        "ignoreHighlight": false,
+        "retryUntilPlaced": false
+      },
+      {
+        "type": "place_unit",
+        "params": {
+          "name": "support 2",
+          "x": 638,
+          "y": 391
+        },
+        "once": false,
+        "hotkey": "4",
+        "ignoreHighlight": false,
+        "retryUntilPlaced": false
+      }
+    ],
+    "loop_a": [],
+    "loop_b": []
+  }
+}

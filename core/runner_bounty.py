@@ -660,19 +660,9 @@ class BountyOps:
         settings = self._bounty_settings()
         if not settings.get("enabled"):
             return False
-        if settings.get("setup_ready") is False:
-            missing = ", ".join(settings.get("missing_maps") or [])
-            invalid = ", ".join(
-                f'{item.get("map")} ("{item.get("macro")}")'
-                for item in (settings.get("invalid_maps") or []))
-            details = "; ".join(part for part in (
-                f"unassigned: {missing}" if missing else "",
-                f"missing or old macros: {invalid}" if invalid else "",
-            ) if part)
-            self._log(
-                "[Macro] Auto Bounty skipped: every Story map needs a saved "
-                f"Macro Operation before it can run ({details}).")
-            return False
+        # No "every map needs a macro" gate any more. A map with no usable
+        # macro runs on Auto Play (see below) rather than stopping the whole
+        # feature -- the same change Auto Challenge got.
         if settings.get("remaining") == 0:
             self._log(
                 "[Macro] Auto Bounty: 0 bounties remain for this game day "
@@ -859,13 +849,28 @@ class BountyOps:
             # stage-detail panel. Every path from here returns to the lobby,
             # so the next objective must open a fresh board.
             board_open = False
-            macro_name = ((settings.get("maps", {}).get(map_name) or {}).get("macro") or "")
+            map_cfg = settings.get("maps", {}).get(map_name) or {}
+            macro_name = map_cfg.get("macro") or ""
+            # Missing, or named but no longer on disk -- either way there is
+            # nothing to run the map, so Auto Play runs it. Entering with no
+            # blocks and no Auto Play is the one outcome that helps nobody.
+            if macro_name and not self._macro_is_usable(macro_name):
+                self._log(f'[Macro] Auto Bounty: "{map_name}" is assigned the macro '
+                          f'"{macro_name}", which no longer exists (or has no blocks) -- '
+                          "running it on Auto Play instead.")
+                macro_name = ""
+            want_autoplay = not macro_name
             play_mode = settings.get("play_mode") or "solo"
             stage = "Infinite" if objective["kind"] == "infinite" else "1"
             task = {
                 "mode": "story", "is_bounty": True, "map": map_name, "stage": stage,
                 "difficulty": "Hard", "macro": macro_name, "play_mode": play_mode,
                 "repeat": 1, "team": "", "equipment": "include",
+                # Same as Challenge: never left unset, because
+                # _settle_autoplay_for_match reads a missing key as "off" and
+                # would switch Auto Play off on a map that has nothing else
+                # to play it.
+                "auto_play": "autoplay" if want_autoplay else "macro",
                 # Existing Infinite behavior leaves only after this wave is
                 # complete, when the following wave begins.
                 "infinite_wave_limit": objective.get("target_wave"),

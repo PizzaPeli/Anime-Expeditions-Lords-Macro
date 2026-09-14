@@ -1,5 +1,5 @@
 """
-Cream's Macro | Anime Expeditions
+Lord's Macro | Anime Expeditions
 Run:  python main.py            (launches the docked macro UI)
       python main.py --test     (CLI diagnostics for mouse/keyboard/window)
 """
@@ -68,6 +68,13 @@ def _debug_dir() -> str:
 # only when a reward read actually happens, same as every other core.*
 # import in this file being deferred into the function that needs it.
 REWARD_SCROLLBAR_PROBE = (710, 428, 4, 2)  # (x, y, width, height)
+
+# How long to let Roblox actually come forward after show_window/
+# activate_window before capturing it. The focus dance is not
+# instantaneous: the window is still being raised (and repainted) for
+# a moment after the call returns, and a capture taken inside that
+# moment can still hold whatever was covering it.
+FOCUS_SETTLE = 0.35
 REWARD_SCROLLBAR_COLOR = 0x373737
 
 # Image Manager (Settings > General > Image Search) categories: tab key ->
@@ -88,11 +95,12 @@ IMAGE_MANAGER_CATEGORIES = {
     "detect": ("detect", "Detection Images"),
 }
 
-GUI_TITLE = "Cream's Macro | Anime Expeditions"
+GUI_TITLE = "Lord's Macro | Anime Expeditions"
 PANEL_WIDTH = 400
 TITLEBAR_H = 44  # custom HTML titlebar, since the window is frameless (no native OS titlebar)
+NAV_RAIL_WIDTH = 160  # labeled vertical replacement for the former horizontal titlebar
 LOGS_H = 160  # log strip under the docked Roblox window, same width as the game
-GUI_WIDTH_FULL = config.FIXED_WIN_W + PANEL_WIDTH
+GUI_WIDTH_FULL = NAV_RAIL_WIDTH + config.FIXED_WIN_W + PANEL_WIDTH
 GUI_WIDTH_COMPACT = PANEL_WIDTH
 GUI_HEIGHT_FULL = TITLEBAR_H + config.FIXED_WIN_H + LOGS_H
 GUI_HEIGHT_COMPACT = TITLEBAR_H + 380  # tall enough for the waiting screen's full stack (emblem +
@@ -106,7 +114,7 @@ GUI_HEIGHT_COMPACT = TITLEBAR_H + 380  # tall enough for the waiting screen's fu
 # visible and clickable, and docking is never touched. Strip height mirrors
 # #compact-strip's height in ui/style.css.
 COMPACT_STRIP_H = 50
-GUI_WIDTH_COMPACT_FIT = config.FIXED_WIN_W
+GUI_WIDTH_COMPACT_FIT = NAV_RAIL_WIDTH + config.FIXED_WIN_W
 GUI_HEIGHT_COMPACT_FIT = TITLEBAR_H + config.FIXED_WIN_H + COMPACT_STRIP_H
 
 # ── macOS side-by-side geometry ─────────────────────────────────────────────
@@ -119,12 +127,13 @@ GUI_HEIGHT_COMPACT_FIT = TITLEBAR_H + config.FIXED_WIN_H + COMPACT_STRIP_H
 MAC_GAP = 20  # breathing room BETWEEN the panel and the game -- also grabbable space to drag either
 MAC_MARGIN = 24  # inset both windows from the top/left screen edges so their title bars aren't jammed
                  # against the menu bar / edge, which makes them fiddly to drag (reported)
-MAC_PANEL_MIN_W = PANEL_WIDTH  # narrower than the Windows panel column and it stops being usable
-MAC_PANEL_MAX_W = 560  # past this the single-column dashboard just looks stretched
+MAC_PANEL_MIN_W = PANEL_WIDTH + NAV_RAIL_WIDTH  # preserve the panel beside the new rail
+MAC_PANEL_MAX_W = 560 + NAV_RAIL_WIDTH  # past this the single-column dashboard just looks stretched
 UI_INDEX = os.path.join(constants.UI_DIR, "index.html")
 LOGS_WINDOW_HTML = os.path.join(constants.UI_DIR, "logs_window.html")
 WAVE_MONITOR_HTML = os.path.join(constants.UI_DIR, "wave_monitor.html")
 LOGO_ICO = os.path.join(constants.BUNDLE_DIR, "logo.ico")
+MOUSE_POSITION_WINDOW_HTML = os.path.join(constants.UI_DIR, "mouse_position_window.html")
 LOG_HISTORY_LIMIT = 500  # caps what a freshly popped-out window gets replayed with
 
 # Log lines are coalesced and pushed to the UI in ~100ms batches (see
@@ -149,7 +158,7 @@ ROBLOX_RELAUNCH_COOLDOWN = 60.0
 
 HOTKEY_DEFAULTS = {
     "toggle_game": "f4", "skip_waiting": "", "macro_start": "f1", "macro_stop": "f2", "macro_pause": "f5",
-    "debug_screenshot": "f3",
+    "screen_snapshot": "f3",
     # Sent to Roblox by an Auto Upgrade Unit block whose Input is set to
     # Hotkey. This is deliberately not registered as an app-wide shortcut
     # in _register_hotkeys: it belongs to the game, not the macro UI.
@@ -182,8 +191,11 @@ MACRO_COORD_DEFAULTS = {
     # from a captured Roblox screenshot via the Pick buttons in Settings >
     # Debug > Macro Coordinates.
     "story_click_x": 666, "story_click_y": 147,
-    "stage_row_x": 246, "stage_row_y": 230, "stage_row_height": 56,
-    "act_row_x": 250, "act_row_y": 267, "act_row_height": 129,
+    # Story and Raid share the same list layout in the current game UI.
+    # These are the calibrated Level/Act 1 point and row spacing supplied by
+    # the user (245, 230, 55), rather than the older unrelated defaults.
+    "stage_row_x": 245, "stage_row_y": 230, "stage_row_height": 55,
+    "act_row_x": 245, "act_row_y": 230, "act_row_height": 55,
     "challenge_stage_1_x": 460, "challenge_stage_1_y": 277,
     "challenge_stage_2_x": 460, "challenge_stage_2_y": 400,
     "challenge_stage_3_x": 460, "challenge_stage_3_y": 533,
@@ -196,6 +208,45 @@ MACRO_COORD_DEFAULTS = {
     "team_button_x": None, "team_button_y": None,
     "screen_middle_x": 576, "screen_middle_y": 378,
     "unit_info_reset_x": 3, "unit_info_reset_y": 3,
+    # Used only if the Daily Challenge tab image cannot be found. It was
+    # previously a hidden runtime coordinate, which made it impossible to
+    # repair after a Roblox UI shift.
+    "daily_challenge_tab_x": 250, "daily_challenge_tab_y": 315,
+    # Portal click points. Each one is the 1152x756 client-space point the
+    # runner clicks for the named step, pickable from Settings > Debug >
+    # Macro Coordinates; per-user overrides in settings.json win, so a game
+    # update that shifts one is a picker click away.
+    #
+    # The route deliberately does NOT go through the Event menu. A portal is
+    # opened straight out of the inventory -- Items > Portals > the portal --
+    # which works from the lobby whatever else is or isn't on screen, so the
+    # event card and Portal Mode tile the 0.21 route clicked through are gone
+    # along with their coords.
+    #
+    # There is deliberately no "which portal" point here, not even a
+    # fallback. Which portal to run is per-player AND per-task -- two queued
+    # Portals tasks can farm two different portals out of one inventory -- so
+    # a global default could only ever be right for one of them, and a task
+    # silently falling back to someone else's portal is worse than being told
+    # to pick its own. A Portals task carries its two points and refuses to
+    # run without them.
+    "nav_items_x": 114, "nav_items_y": 335,
+    "portal_tab_x": 227, "portal_tab_y": 246,
+    "portal_activate_x": 834, "portal_activate_y": 591,
+    # Activate opens a PARTY screen with its own green Start button -- nothing
+    # teleports until that is pressed. Shipped unset; the button matches
+    # reliably, so this is only the re-skin fallback.
+    "portal_start_x": 681, "portal_start_y": 519,
+    "portal_select_x": 292, "portal_select_y": 581,
+    "portal_exit_x": 701, "portal_exit_y": 581,
+    # The in-match Auto Play button ("Plays The Map" on a task). Fallback for
+    # when neither autoplay_on nor autoplay_off matches -- the button doesn't
+    # move within a match, so a fixed point is safe here.
+    "autoplay_x": 1123, "autoplay_y": 485,
+    # The green Select in the Portal Selection screen's right-hand detail
+    # pane -- the chooser route's confirm. Normally found by image; this is
+    # the fallback, measured from a docked capture of that screen.
+    "portal_chooser_confirm_x": 792, "portal_chooser_confirm_y": 564,
 }
 
 # Settings > Debug > "Reward Reader"/"Game Stats": OCR capture regions for
@@ -430,9 +481,15 @@ class Api:
 
     def __init__(self):
         self._window = None
+        # The HTML title rail owns the maximize/restore control, so keep its
+        # state here rather than relying on a backend-specific window flag.
+        # restore() returns to the OS-saved bounds from immediately before
+        # maximize(), preserving the user's previous window format.
+        self._window_is_maximized = False
         self._log_window = None
         self._wave_window = None  # the Wave Monitor pop-out (see pop_out_wave_monitor)
         self._log_history = []
+        self._mouse_position_window = None
         self.docker = GameDocker()
         # Cutout mode (Settings > Debug, Windows only, applies at launch):
         # Roblox stays a top-level window glued BEHIND a literal hole cut in
@@ -441,6 +498,20 @@ class Api:
         # own window contents in this mode (the screen shows our solid GUI
         # whenever the hole is closed), hence force_window_capture.
         _cfg = cfg.load()
+        # A Tesseract that was installed into a non-PATH location (winget's
+        # per-user %LOCALAPPDATA% path, most often) is remembered when it is
+        # found, so every later launch points straight at it instead of
+        # rediscovering it -- or, as happened before 0.26.2, failing to.
+        _saved_tesseract = _cfg.get("tesseract_cmd") or ""
+        if _saved_tesseract:
+            try:
+                from core import ocr as _ocr
+                if not _ocr.set_tesseract_cmd(_saved_tesseract):
+                    # It moved or was uninstalled; forget it rather than
+                    # pinning every future read to a path that no longer runs.
+                    cfg.update({"tesseract_cmd": ""})
+            except Exception:
+                pass
         # Flicker-free capture: read the game via PrintWindow (its own backing
         # store) instead of a screen BitBlt, which flashes the display white
         # on some GPU/fullscreen-optimization setups. Default ON on Windows
@@ -830,7 +901,12 @@ class Api:
             "debug_screenshots": data.get("debug_screenshots", False),
             "action_delay_ms": data.get("action_delay_ms", 0),
             "expedition_color_buttons": data.get("expedition_color_buttons", True),
-            "expedition_camera_o_ms": data.get("expedition_camera_o_ms", 100),
+            # Per-map / per-mode Pre Start camera framing (Settings > Debug >
+            # Camera Profiles). Empty means every mode keeps its built-in
+            # sequence -- see core.camera.BUILTIN_PROFILES.
+            "camera_profiles": self.get_camera_profiles(),
+            # Persisted acknowledgement state for the Roblox setup checklist.
+            "ingame_confirmed": data.get("ingame_confirmed", {}),
             # False until the welcome checklist's "Get Started" -- the UI
             # shows it exactly once per install (see app.js showOnboarding).
             "onboarding_done": data.get("onboarding_done", False),
@@ -931,12 +1007,13 @@ class Api:
         return {**walk_paths.load_shipped_default_walk_paths(), **cfg.load().get("default_walk_paths", {})}
 
     def set_default_walk_path(self, map_name: str, path_name: str) -> dict:
-        defaults = dict(cfg.load().get("default_walk_paths", {}))
-        if path_name:
-            defaults[map_name] = path_name
-        else:
-            defaults.pop(map_name, None)
-        cfg.update({"default_walk_paths": defaults})
+        from core import paths as walk_paths
+        defaults = walk_paths.set_shipped_default_walk_path(map_name, path_name)
+        # Remove a legacy personal override for this map so it cannot mask the
+        # newly saved shared mapping on this machine.
+        personal = dict(cfg.load().get("default_walk_paths", {}) or {})
+        personal.pop((map_name or "").strip(), None)
+        cfg.update({"default_walk_paths": personal})
         return {"ok": True, "default_walk_paths": defaults}
 
     # ---- Challenge tab ----
@@ -963,6 +1040,8 @@ class Api:
             # since that's what needs to follow the map around as it
             # rotates through slots.
             "stages": {slot: {"enabled": True, "count": 0, "last_played_at": 0} for slot in CHALLENGE_STAGE_SLOTS},
+            # No Macro means the game handles combat with Auto Play. Choosing
+            # a macro turns Auto Play off and runs that macro instead.
             "maps": {m: {"macro": ""} for m in CHALLENGE_STORY_MAPS},
             "last_reset_date": _current_challenge_reset_period(),
             "reset_schedule": CHALLENGE_RESET_SCHEDULE,
@@ -1061,26 +1140,6 @@ class Api:
 
     def set_challenge_enabled(self, enabled: bool) -> dict:
         challenge = self.get_challenge_settings()
-        if enabled and not challenge["setup_ready"]:
-            challenge["enabled"] = False
-            cfg.update({"challenge": challenge})
-            missing = ", ".join(challenge["missing_maps"])
-            invalid = ", ".join(
-                f'{item["map"]} ("{item["macro"]}")'
-                for item in challenge["invalid_maps"])
-            details = "; ".join(part for part in (
-                f"unassigned: {missing}" if missing else "",
-                f"missing or old macros: {invalid}" if invalid else "",
-            ) if part)
-            self.push_log(
-                "[Macro] Auto Challenge was not enabled. Assign a saved Macro Operation "
-                f"to every Story map first ({details}).")
-            return {
-                "ok": False,
-                "reason": "incomplete_challenge_maps",
-                "missing_maps": challenge["missing_maps"],
-                "invalid_maps": challenge["invalid_maps"],
-            }
         challenge["enabled"] = bool(enabled)
         cfg.update({"challenge": challenge})
         return {"ok": True}
@@ -1095,26 +1154,6 @@ class Api:
 
     def set_daily_challenge_enabled(self, enabled: bool) -> dict:
         challenge = self.get_challenge_settings()
-        if enabled and not challenge["setup_ready"]:
-            challenge["daily"]["enabled"] = False
-            cfg.update({"challenge": challenge})
-            missing = ", ".join(challenge["missing_maps"])
-            invalid = ", ".join(
-                f'{item["map"]} ("{item["macro"]}")'
-                for item in challenge["invalid_maps"])
-            details = "; ".join(part for part in (
-                f"unassigned: {missing}" if missing else "",
-                f"missing or old macros: {invalid}" if invalid else "",
-            ) if part)
-            self.push_log(
-                "[Macro] Daily Challenge was not enabled. Assign a saved Macro Operation "
-                f"to every Story map first ({details}).")
-            return {
-                "ok": False,
-                "reason": "incomplete_challenge_maps",
-                "missing_maps": challenge["missing_maps"],
-                "invalid_maps": challenge["invalid_maps"],
-            }
         challenge["daily"]["enabled"] = bool(enabled)
         cfg.update({"challenge": challenge})
         return {"ok": True}
@@ -1181,17 +1220,13 @@ class Api:
         challenge = self.get_challenge_settings()
         challenge["maps"][map_name]["macro"] = macro or ""
         setup = self._challenge_macro_setup(challenge)
-        auto_disabled = bool(
-            (challenge.get("enabled") or challenge.get("daily", {}).get("enabled"))
-            and not setup["setup_ready"])
-        if auto_disabled:
-            challenge["enabled"] = False
-            challenge["daily"]["enabled"] = False
-            self.push_log(
-                f'[Macro] Auto Challenge was disabled because "{map_name}" no longer '
-                "has a usable Macro Operation.")
+        # Clearing a map's macro no longer switches Auto Challenge off -- that
+        # map just plays itself now (see _story_macro_setup).
         cfg.update({"challenge": challenge})
-        return {"ok": True, "auto_disabled": auto_disabled, **setup}
+        if not (challenge["maps"][map_name].get("macro") or ""):
+            self.push_log(f'[Challenge] "{map_name}" has no Macro Operation -- it will run on '
+                           "Auto Play.")
+        return {"ok": True, "auto_disabled": False, **setup}
 
     def reset_challenge_counts(self) -> dict:
         challenge = self.get_challenge_settings()
@@ -1246,8 +1281,20 @@ class Api:
             data = tpl.load_template(macro_name)
             if not isinstance(data.get("blocks"), dict):
                 invalid_maps.append({"map": map_name, "macro": macro_name})
+        # ADVISORY, never a gate. This used to refuse to enable Auto
+        # Challenge / Auto Bounty until all six maps had a working macro,
+        # which meant one renamed or deleted template silently turned the
+        # whole feature off and buried the reason in a log line repeated
+        # once per press. There is a perfectly good thing to do with a map
+        # that has no usable macro -- play it on Auto Play, which is what
+        # the runner now does -- so blocking the feature was never the right
+        # answer to it.
+        #
+        # setup_ready stays in the payload (the UI reads it) and is now
+        # always True. The two lists are kept because "which maps will fall
+        # back to Auto Play" is genuinely worth showing.
         return {
-            "setup_ready": not missing_maps and not invalid_maps,
+            "setup_ready": True,
             "missing_maps": missing_maps,
             "invalid_maps": invalid_maps,
         }
@@ -1324,26 +1371,6 @@ class Api:
 
     def set_bounty_enabled(self, enabled: bool) -> dict:
         settings = self.get_bounty_settings()
-        if enabled and not settings["setup_ready"]:
-            settings["enabled"] = False
-            self._save_bounty_settings(settings)
-            missing = ", ".join(settings["missing_maps"])
-            invalid = ", ".join(
-                f'{item["map"]} ("{item["macro"]}")'
-                for item in settings["invalid_maps"])
-            details = "; ".join(part for part in (
-                f"unassigned: {missing}" if missing else "",
-                f"missing or old macros: {invalid}" if invalid else "",
-            ) if part)
-            self.push_log(
-                "[Macro] Auto Bounty was not enabled. Assign a saved Macro Operation "
-                f"to every Story map first ({details}).")
-            return {
-                "ok": False,
-                "reason": "incomplete_bounty_maps",
-                "missing_maps": settings["missing_maps"],
-                "invalid_maps": settings["invalid_maps"],
-            }
         settings["enabled"] = bool(enabled)
         self._save_bounty_settings(settings)
         return {"ok": True}
@@ -1388,14 +1415,13 @@ class Api:
         settings = self.get_bounty_settings()
         settings["maps"][map_name]["macro"] = macro or ""
         setup = self._bounty_macro_setup(settings)
-        auto_disabled = bool(settings.get("enabled") and not setup["setup_ready"])
-        if auto_disabled:
-            settings["enabled"] = False
-            self.push_log(
-                f'[Macro] Auto Bounty was disabled because "{map_name}" no longer '
-                "has a usable Macro Operation.")
+        # Same as Challenge: no macro means Auto Play for that map, not the
+        # whole feature switched off.
         self._save_bounty_settings(settings)
-        return {"ok": True, "auto_disabled": auto_disabled, **setup}
+        if not (settings["maps"][map_name].get("macro") or ""):
+            self.push_log(f'[Bounty] "{map_name}" has no Macro Operation -- it will run on '
+                           "Auto Play.")
+        return {"ok": True, "auto_disabled": False, **setup}
 
     def set_bounty_remaining(self, remaining, total=None) -> dict:
         settings = self.get_bounty_settings()
@@ -1632,7 +1658,10 @@ class Api:
             period,
         )
         has_pending = any(
-            (item.get("state") or {}).get("status") == auto_shop.STATUS_PENDING
+            (item.get("state") or {}).get("status") in (
+                auto_shop.STATUS_PENDING,
+                auto_shop.STATUS_PENDING_NOT_LOCATED,
+            )
             for item in canonical["shops"]["gold_shop"]["items"].values()
         )
         if has_pending and shop_state.get("status") == auto_shop.STATUS_FAILED_TODAY:
@@ -2062,7 +2091,7 @@ class Api:
             lambda: self.game_hwnd, self.get_tasks, scroll_power, coords, scroll_nudges, debug_screenshots,
             default_walk_paths, webhook_settings,
             expedition_color_buttons=data.get("expedition_color_buttons", True),
-            expedition_camera_o_ms=data.get("expedition_camera_o_ms", 100),
+            camera_profiles=self.get_camera_profiles(),
             loose_team_ocr_match=data.get("loose_team_ocr_match", False),
             memory_refresh_enabled=data.get("memory_refresh_enabled", False),
             memory_refresh_hours=data.get("memory_refresh_hours", 4.0))
@@ -2260,6 +2289,18 @@ class Api:
         self.push_log(f"[Macro Manager] Recorded path \"{saved_name}\" ({len(events)} key events).")
         return {"ok": True, "name": saved_name}
 
+    def save_pending_shared_path(self, name: str) -> dict:
+        """Save the central map recorder's path as shared project data."""
+        from core import paths
+        events = self._pending_path_events or []
+        if not events:
+            return {"ok": False, "reason": "no_movement_recorded"}
+        saved_name = paths.save_shared_path(name, events)
+        self._pending_path_events = None
+        self.push_log(f"[Path Recorder] Saved shared map path \"{saved_name}\" "
+                      f"({len(events)} key events).")
+        return {"ok": True, "name": saved_name}
+
     def discard_pending_path(self) -> dict:
         from core import paths
         paths.cancel_recording()
@@ -2353,7 +2394,10 @@ class Api:
     def get_hotkeys(self) -> dict:
         data = cfg.load()
         keys_ = dict(HOTKEY_DEFAULTS)
-        keys_.update(data.get("hotkeys", {}))
+        saved = dict(data.get("hotkeys", {}) or {})
+        if "screen_snapshot" not in saved and "debug_screenshot" in saved:
+            saved["screen_snapshot"] = saved["debug_screenshot"]
+        keys_.update({k: v for k, v in saved.items() if k in HOTKEY_DEFAULTS})
         return keys_
 
     def set_hotkey(self, action: str, key: str) -> dict:
@@ -2642,6 +2686,31 @@ class Api:
             except Exception as e:
                 return {"ok": False, "text": "", "reason": str(e)}
 
+    def write_clipboard_text(self, text: str) -> dict:
+        """Write plain text without relying on WebView clipboard permission."""
+        text = str(text or "")
+        try:
+            import win32clipboard
+            win32clipboard.OpenClipboard()
+            try:
+                win32clipboard.EmptyClipboard()
+                win32clipboard.SetClipboardText(text)
+            finally:
+                win32clipboard.CloseClipboard()
+            return {"ok": True}
+        except Exception:
+            try:
+                import tkinter as tk
+                root = tk.Tk()
+                root.withdraw()
+                root.clipboard_clear()
+                root.clipboard_append(text)
+                root.update()
+                root.destroy()
+                return {"ok": True}
+            except Exception as e:
+                return {"ok": False, "reason": str(e)}
+
     def get_webhook_settings(self) -> dict:
         data = cfg.load()
         return {
@@ -2671,7 +2740,7 @@ class Api:
             "title": "Test",
             "description": "If you can see this, the webhook is working.",
             "color": 0x5865F2,  # Discord blurple
-            "footer": {"text": "Cream's Macro | Anime Expeditions"},
+            "footer": {"text": "Lord's Macro | Anime Expeditions"},
         }
         return webhook.send(url or "", embed)
 
@@ -2761,7 +2830,7 @@ class Api:
                 self._log_window = None
 
         win = webview.create_window(
-            "Logs | Cream's Macro",
+            "Logs | Lord's Macro",
             url=LOGS_WINDOW_HTML,
             width=480,
             height=420,
@@ -2825,7 +2894,7 @@ class Api:
             except Exception:
                 self._wave_window = None
         win = webview.create_window(
-            "Wave Monitor | Cream's Macro",
+            "Wave Monitor | Lord's Macro",
             url=WAVE_MONITOR_HTML,
             width=300, height=280,
             on_top=True,
@@ -2836,6 +2905,31 @@ class Api:
 
         def _on_closed():
             self._wave_window = None
+        win.events.closed += _on_closed
+        return {"ok": True}
+
+    def pop_out_mouse_position(self) -> dict:
+        """Open the live, copyable coordinate readout used by Settings."""
+        import webview
+        if self._mouse_position_window:
+            try:
+                self._mouse_position_window.restore()
+                return {"ok": True}
+            except Exception:
+                self._mouse_position_window = None
+
+        win = webview.create_window(
+            "Mouse Coordinates | Lord's Macro",
+            url=MOUSE_POSITION_WINDOW_HTML,
+            width=330, height=210,
+            on_top=True,
+            background_color="#11131c",
+            js_api=self,
+        )
+        self._mouse_position_window = win
+
+        def _on_closed():
+            self._mouse_position_window = None
         win.events.closed += _on_closed
         return {"ok": True}
 
@@ -2851,6 +2945,16 @@ class Api:
         if self._window:
             self._window.minimize()
 
+    def maximize_window(self):
+        """Toggle the custom-chrome window between maximized and restored."""
+        if self._window:
+            if self._window_is_maximized:
+                self._window.restore()
+                self._window_is_maximized = False
+            else:
+                self._window.maximize()
+                self._window_is_maximized = True
+
     def show_game(self):
         # Only touches visibility, not docking state: the Roblox window stays
         # parented/borderless the whole time, so this is just a toggle.
@@ -2861,7 +2965,7 @@ class Api:
         if self.game_cutout:
             self._cutout_game_visible = True
             if self.docker.docked and self.game_hwnd and wm.is_window(self.game_hwnd) and self.gui_hwnd:
-                self.docker.dock(self.game_hwnd, self.gui_hwnd, x=0, y=TITLEBAR_H)
+                self.docker.dock(self.game_hwnd, self.gui_hwnd, x=NAV_RAIL_WIDTH, y=TITLEBAR_H)
             return
         if self.game_hwnd and wm.is_window(self.game_hwnd):
             wm.show_window(self.game_hwnd)
@@ -3092,43 +3196,6 @@ class Api:
             return {"ok": False, "error": str(exc)}
 
 
-
-    def save_debug_screenshot(self) -> dict:
-        # Settings > Debug > "Screenshot": grabs just the Roblox region (its
-        # own window rect works whether docked or not -- no need to touch
-        # parenting/undock at all, which is what made the old "move to
-        # top-left" debug button fight the dock watchdog and thrash the UI)
-        # and saves it to the debug folder instead of posting it anywhere.
-        hwnd = self.game_hwnd
-        if not hwnd or not wm.is_window(hwnd):
-            return {"ok": False, "reason": "no_roblox"}
-
-        left, top, right, bottom = wm.get_window_rect_screen(hwnd)
-        width, height = right - left, bottom - top
-        if width <= 0 or height <= 0:
-            return {"ok": False, "reason": "bad_region"}
-
-        # Numbered instead of overwritten -- each press (button or hotkey)
-        # keeps its own screenshot instead of clobbering the last one, so a
-        # quick "before/after" or "try a few angles" capture session doesn't
-        # lose everything but the final shot.
-        debug_dir = _debug_dir()
-        n = 1
-        while os.path.isfile(os.path.join(debug_dir, f"debug_screenshot_{n}.png")):
-            n += 1
-        path = os.path.join(debug_dir, f"debug_screenshot_{n}.png")
-        try:
-            import mss
-            from mss.tools import to_png
-            with mss.MSS() as sct:
-                shot = sct.grab({"left": left, "top": top, "width": width, "height": height})
-                to_png(shot.rgb, shot.size, output=path)
-        except Exception as exc:
-            self.push_log(f"Debug screenshot capture failed: {exc}")
-            return {"ok": False, "reason": "capture_failed"}
-
-        self.push_log(f"[Debug] Saved screenshot to {path}")
-        return {"ok": True, "path": path}
 
     def debug_test_detect(self, block: dict) -> dict:
         """Test one Detect block against the current full Roblox window.
@@ -3491,10 +3558,20 @@ class Api:
         # own JS polls for completion the same way Camera Setup's does.
         def run():
             from core import tesseract_installer, ocr
-            ok = tesseract_installer.install_tesseract(log=self.push_log)
-            if ok:
+            # The installer returns the PATH of a Tesseract it has actually
+            # RUN, not winget's exit code -- see its docstring. winget
+            # without admin installs into %LOCALAPPDATA%\Programs and puts
+            # nothing on PATH, which is how "Installed successfully" and
+            # "Tesseract OCR engine not found" ended up in the same log.
+            path = tesseract_installer.install_tesseract(log=self.push_log)
+            if path:
                 ocr.reset_tesseract_cache()
-            self.push_ui("tesseractInstallDone" if ok else "tesseractInstallFailed")
+                ocr.set_tesseract_cmd(path)
+                # Remembered so the NEXT launch doesn't have to rediscover
+                # it, and so a machine where Tesseract lives somewhere
+                # unusual only has to be sorted out once.
+                cfg.update({"tesseract_cmd": path})
+            self.push_ui("tesseractInstallDone" if path else "tesseractInstallFailed")
 
         threading.Thread(target=run, daemon=True).start()
         return {"ok": True}
@@ -3513,6 +3590,10 @@ class Api:
             "ok": True,
             "windows_ocr": win_available,
             "tesseract_installed": tess_ok,
+            # Where it actually is, so "installed" can be checked rather
+            # than believed.
+            "tesseract_path": ocr.find_tesseract_binary(),
+            "windows_ocr_reason": "" if win_available else ocr_windows.unavailable_reason(),
         }
 
 
@@ -3562,6 +3643,339 @@ class Api:
         self.game_hwnd = None
         self.push_ui("showWaiting")
         self.push_log("[Debug] Roblox un-attached -- won't auto re-dock until you Attach again.")
+        return {"ok": True}
+
+    # ------------------------------------------------------------------
+    # Portal Scanner -- Settings > Debug > Portal Scanner
+    #
+    # The lattice of squares the scanner clicks on each portal screen, and
+    # the two regions of the detail pane it reads once a square is selected.
+    # Geometry only: WHICH portal to take is per task (its "Portal Name"),
+    # because two queued tasks can want different portals out of one
+    # inventory, while the grid itself is the same for everybody.
+    # ------------------------------------------------------------------
+    def get_portal_scan_settings(self) -> dict:
+        from core import portal_scan
+        data = cfg.load().get("portal_scan", {})
+        if not isinstance(data, dict):
+            data = {}
+        return {
+            "inventory_slots": [list(p) for p in portal_scan.normalize_slots(
+                data.get("inventory_slots"), portal_scan.DEFAULT_INVENTORY_SLOTS)],
+            "chooser_slots": [list(p) for p in portal_scan.normalize_slots(
+                data.get("chooser_slots"), portal_scan.DEFAULT_CHOOSER_SLOTS)],
+            "name_region": list(portal_scan.normalize_region(
+                data.get("name_region"), portal_scan.DEFAULT_NAME_REGION)),
+            "modifier_region": list(portal_scan.normalize_region(
+                data.get("modifier_region"), portal_scan.DEFAULT_MODIFIER_REGION)),
+            # The Portal Selection list's pane sits ~25px left of the
+            # inventory's, so it gets its own pair -- see portal_scan.
+            "chooser_name_region": list(portal_scan.normalize_region(
+                data.get("chooser_name_region"),
+                portal_scan.DEFAULT_CHOOSER_NAME_REGION)),
+            "chooser_modifier_region": list(portal_scan.normalize_region(
+                data.get("chooser_modifier_region"),
+                portal_scan.DEFAULT_CHOOSER_MODIFIER_REGION)),
+        }
+
+    def set_portal_scan_settings(self, settings: dict) -> dict:
+        from core import portal_scan
+        if not isinstance(settings, dict):
+            return {"ok": False, "reason": "bad_settings"}
+        current = self.get_portal_scan_settings()
+        merged = {
+            "inventory_slots": [list(p) for p in portal_scan.normalize_slots(
+                settings.get("inventory_slots", current["inventory_slots"]),
+                portal_scan.DEFAULT_INVENTORY_SLOTS)],
+            "chooser_slots": [list(p) for p in portal_scan.normalize_slots(
+                settings.get("chooser_slots", current["chooser_slots"]),
+                portal_scan.DEFAULT_CHOOSER_SLOTS)],
+            "name_region": list(portal_scan.normalize_region(
+                settings.get("name_region", current["name_region"]),
+                portal_scan.DEFAULT_NAME_REGION)),
+            "modifier_region": list(portal_scan.normalize_region(
+                settings.get("modifier_region", current["modifier_region"]),
+                portal_scan.DEFAULT_MODIFIER_REGION)),
+            "chooser_name_region": list(portal_scan.normalize_region(
+                settings.get("chooser_name_region", current["chooser_name_region"]),
+                portal_scan.DEFAULT_CHOOSER_NAME_REGION)),
+            "chooser_modifier_region": list(portal_scan.normalize_region(
+                settings.get("chooser_modifier_region", current["chooser_modifier_region"]),
+                portal_scan.DEFAULT_CHOOSER_MODIFIER_REGION)),
+        }
+        cfg.update({"portal_scan": merged})
+        return {"ok": True, "portal_scan": merged}
+
+    def reset_portal_scan_settings(self) -> dict:
+        cfg.update({"portal_scan": {}})
+        return {"ok": True, "portal_scan": self.get_portal_scan_settings()}
+
+    def _focus_game_for_debug(self) -> int:
+        """Bring Roblox forward for a live-game Debug action, or 0.
+
+        Every Settings > Debug action that reads or clicks the real game
+        needs Roblox in front first -- our own panel is what the user just
+        clicked, so without this the capture reads the panel (that is what
+        made the first Test Read come back empty, with the regions blamed).
+        """
+        hwnd = self.game_hwnd
+        if not hwnd or not wm.is_window(hwnd):
+            return 0
+        wm.show_window(hwnd)
+        wm.activate_window(hwnd)
+        time.sleep(FOCUS_SETTLE)
+        return hwnd
+
+    def _return_focus_to_panel(self) -> None:
+        """Give focus back to the dashboard when a Debug action is done.
+
+        These actions are pressed from the panel, so leaving Roblox in front
+        afterwards means the user is looking at the game with their own UI
+        behind it -- buttons stop responding to the first click, the log
+        pane is hidden, and it reads as the app having broken. The panel is
+        where the person still is, so the panel gets focus back.
+
+        Best-effort and never fatal: a failure here only means the window
+        order is not what we wanted, which is not worth failing a read over.
+        """
+        try:
+            gui_hwnd = self.gui_hwnd or WindowManager(GUI_TITLE).find()
+            if gui_hwnd and wm.is_window(gui_hwnd):
+                wm.show_window(gui_hwnd)
+                wm.activate_window(gui_hwnd)
+        except Exception:
+            pass
+
+    def debug_capture_screen(self, reason: str = "") -> dict:
+        """One picture of what the game is showing right now. Nothing else.
+
+        Deliberately separate from debug_portal_scan_test_read, which is the
+        PORTAL CALIBRATION tool -- it reads four specific regions, judges
+        them, and its output only makes sense on a portal screen. When the
+        macro is stuck on some unknown screen, none of that applies and all
+        of it is noise; what is wanted is simply "show me what it is looking
+        at". Every diagnosis in this project has started from exactly that
+        picture.
+
+        So this one takes the frame, saves it, and stops. It is safe to call
+        from anywhere, including automatically from the runner when a route
+        gives up, because it clicks nothing and changes no state.
+        """
+        import cv2
+        from core import vision
+
+        hwnd = self._focus_game_for_debug()
+        if not hwnd:
+            self.push_log("[Snapshot] No Roblox window -- nothing to capture.")
+            return {"ok": False, "reason": "no_roblox"}
+        try:
+            frame = vision.capture_game_bgr(hwnd)
+            if frame is None:
+                self.push_log("[Snapshot] The window could not be captured. Is Roblox minimised?")
+                return {"ok": False, "reason": "no_capture"}
+            folder = _debug_dir()
+            os.makedirs(folder, exist_ok=True)
+            tag = re.sub(r"[^A-Za-z0-9_-]+", "_", str(reason or "manual")).strip("_") or "manual"
+            path = os.path.join(folder, f"screen_{tag}_{time.strftime('%Y%m%d_%H%M%S')}.png")
+            cv2.imwrite(path, frame)
+            self.push_log(f"[Snapshot] Saved what the game is showing to {path}"
+                          + (f"  (reason: {reason})" if reason else ""))
+            return {"ok": True, "path": path, "reason": reason}
+        except Exception as exc:
+            self.push_log(f"[Snapshot] Couldn't save the frame: {exc}")
+            return {"ok": False, "reason": str(exc)}
+        finally:
+            self._return_focus_to_panel()
+
+    def debug_portal_scan_test_read(self) -> dict:
+        """Read the two detail regions RIGHT NOW and show exactly what happened.
+
+        This is the calibration tool, and it has to answer three different
+        questions with one press, because they look identical from the
+        outside: is the window being captured at all, is there an OCR engine
+        on this machine, and are the regions pointing at the text? So it
+        always writes the FULL frame (annotated with the regions it read),
+        names the OCR engines it found, and says which of the three failed.
+        "Nothing readable" on its own sent the last calibration attempt
+        looking at the wrong thing.
+        """
+        import cv2
+        from core import portal_scan, vision
+
+        # Roblox has to be in front to be captured (see
+        # _focus_game_for_debug), and the panel gets focus back at the end --
+        # the whole body below is wrapped so that happens however this
+        # returns.
+        hwnd = self._focus_game_for_debug()
+        if not hwnd:
+            return {"ok": False, "reason": "no_roblox"}
+        try:
+            return self._portal_scan_test_read(hwnd)
+        finally:
+            self._return_focus_to_panel()
+
+    def _portal_scan_test_read(self, hwnd) -> dict:
+        import cv2
+        from core import portal_scan, vision
+
+        settings = self.get_portal_scan_settings()
+        engines = portal_scan.engine_status()
+        engine_text = portal_scan.describe_engines(engines)
+        folder = _debug_dir()
+        out = {"ok": True, "regions": {}, "engines": engines,
+               "engine_text": engine_text, "frame": "", "reason": ""}
+
+        # The whole frame first, and unconditionally. Whatever else went
+        # wrong, this is the picture that shows what the game was actually
+        # displaying -- and it is what new regions get measured from.
+        frame = vision.capture_game_bgr(hwnd)
+        if frame is None:
+            out["reason"] = "no_capture"
+            self.push_log("[Portal Scanner] Test Read: the window could not be captured at all "
+                          "-- nothing was read. Is Roblox minimised?")
+            return out
+        try:
+            frame_path = os.path.join(folder, "portal_scan_frame.png")
+            cv2.imwrite(frame_path, frame)
+            out["frame"] = frame_path
+            marked = frame.copy()
+            for key, color in (("name_region", (0, 220, 0)),
+                               ("modifier_region", (0, 160, 255)),
+                               ("chooser_name_region", (255, 200, 0)),
+                               ("chooser_modifier_region", (255, 100, 200))):
+                x, y, w, h = (int(v) for v in settings[key])
+                cv2.rectangle(marked, (x, y), (x + w, y + h), color, 2)
+                cv2.putText(marked, key.replace("_region", ""), (x, max(12, y - 5)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv2.LINE_AA)
+            cv2.imwrite(os.path.join(folder, "portal_scan_frame_regions.png"), marked)
+        except Exception as exc:
+            self.push_log(f"[Portal Scanner] Couldn't save the frame: {exc}")
+
+        any_text = False
+        # Both screens' regions, every time. The button cannot know whether
+        # the inventory or the Portal Selection list is on screen, and the
+        # two panes do not line up -- reading only one pair is how a
+        # perfectly good calibration looks like a failure on the other
+        # screen.
+        for key in ("name_region", "modifier_region",
+                    "chooser_name_region", "chooser_modifier_region"):
+            region = tuple(settings[key])
+            crop = vision.capture_window_region_bgr(hwnd, region)
+            if crop is None:
+                out["regions"][key] = {"text": "", "saved": "", "error": "no capture"}
+                continue
+            path = os.path.join(folder, f"portal_scan_{key}.png")
+            try:
+                cv2.imwrite(path, crop)
+            except Exception:
+                path = ""
+            texts = portal_scan.ocr_variants(crop)
+            if texts:
+                any_text = True
+            out["regions"][key] = {"text": " | ".join(texts), "saved": path}
+            self.push_log(f"[Portal Scanner] {key} {region} read: "
+                          f"{(' | '.join(texts)) or '(nothing)'}"
+                          + (f" -- crop saved to {path}" if path else ""))
+
+        if not any_text:
+            # Two very different problems, and telling them apart is the
+            # whole point of this button.
+            out["reason"] = "no_engine" if engine_text.startswith("none") else "no_text"
+            if out["reason"] == "no_engine":
+                self.push_log("[Portal Scanner] No OCR engine is available on this machine, so "
+                              "nothing can be read no matter where the regions point. Windows "
+                              f"OCR says: {engines.get('windows_reason') or 'unavailable'}. "
+                              "Install Tesseract (Settings > General) or the RapidOCR extra.")
+            else:
+                self.push_log(f"[Portal Scanner] OCR is available ({engine_text}) but both "
+                              "regions read nothing -- so they are almost certainly pointing at "
+                              "the wrong part of the screen. Open "
+                              "debug/portal_scan_frame_regions.png: the boxes drawn on it are "
+                              "where it looked.")
+        else:
+            self.push_log(f"[Portal Scanner] OCR engines: {engine_text}. Full frame saved to "
+                          f"{out['frame']}.")
+        return out
+
+    # ------------------------------------------------------------------
+    # Camera profiles -- Settings > Debug > Camera Profiles
+    #
+    # Per-map Pre Start camera framing. Stored as {name: profile}, where a
+    # name is either a MAP name ("Rose Kingdom") or a MODE name
+    # ("expedition"); the runner looks up map first, then mode, then the
+    # built-in default (see runner._camera_profile_for). Kept in settings
+    # rather than in the task so one calibration of a map serves every task
+    # that runs it.
+    # ------------------------------------------------------------------
+    def get_camera_profiles(self) -> dict:
+        from core import camera
+        stored = cfg.load().get("camera_profiles", {})
+        if not isinstance(stored, dict):
+            stored = {}
+        profiles = camera.load_shared_profiles()
+        profiles.update({str(k): camera.normalize_profile(v) for k, v in stored.items()
+                         if isinstance(v, dict)})
+        # One-time compatibility migration: Expedition's former standalone
+        # zoom control is now represented by the expedition profile.
+        if "expedition" not in profiles and "expedition_camera_o_ms" in cfg.load():
+            profiles["expedition"] = camera.normalize_profile({
+                "tilt": True, "rotate_key": "left", "rotate_ms": 730,
+                "o_ms": cfg.load().get("expedition_camera_o_ms", 100),
+            })
+        return profiles
+
+    def get_builtin_camera_profiles(self) -> dict:
+        """The stock sequences, so the UI can show what a map does today and
+        offer them as a starting point instead of a blank form."""
+        from core import camera
+        return {k: dict(v) for k, v in camera.BUILTIN_PROFILES.items()}
+
+    def set_camera_profile(self, name: str, profile: dict) -> dict:
+        from core import camera
+        name = (name or "").strip()
+        if not name:
+            return {"ok": False, "reason": "no_name"}
+        profiles = camera.set_shared_profile(name, profile)
+        personal = dict(cfg.load().get("camera_profiles", {}) or {})
+        personal.pop(name, None)
+        cfg.update({"camera_profiles": personal})
+        self.push_log(f'[Camera] Saved a camera profile for "{name}": '
+                      f"{camera.describe_profile(profiles[name])}.")
+        return {"ok": True, "profiles": self.get_camera_profiles()}
+
+    def clear_camera_profile(self, name: str) -> dict:
+        from core import camera
+        name = (name or "").strip()
+        camera.clear_shared_profile(name)
+        personal = dict(cfg.load().get("camera_profiles", {}) or {})
+        personal.pop(name, None)
+        cfg.update({"camera_profiles": personal})
+        self.push_log(f'[Camera] Removed the camera profile for "{name}" -- '
+                      "it goes back to the built-in sequence.")
+        return {"ok": True, "profiles": self.get_camera_profiles()}
+
+    def debug_run_camera_profile(self, profile: dict) -> dict:
+        """Run a profile against the live game without saving it, so a
+        framing can be tried before it is committed to a map."""
+        hwnd = self.game_hwnd
+        if not hwnd or not wm.is_window(hwnd):
+            return {"ok": False, "reason": "no_roblox"}
+        # Live input must be run from the Dashboard: Settings obscures the
+        # embedded game on some dock modes. The caller makes that switch;
+        # this remains the backend guard for non-UI callers.
+        wm.show_window(hwnd)
+        wm.activate_window(hwnd)
+
+        def run():
+            from core import camera
+            resolved = camera.normalize_profile(profile)
+            try:
+                camera.run_camera_profile(self.mouse, self.keyboard, hwnd, resolved)
+                self.push_log(f"[Camera] Test done ({camera.describe_profile(resolved)}).")
+            except Exception as exc:
+                self.push_log(f"[Camera] Test failed: {exc}")
+
+        threading.Thread(target=run, daemon=True).start()
         return {"ok": True}
 
     def debug_camera_setup(self) -> dict:
@@ -3881,16 +4295,16 @@ class Api:
         webbrowser.open(updater.RELEASES_PAGE_URL)
         return {"ok": True}
 
-    YOUTUBE_CHANNEL_URL = "https://www.youtube.com/@Cweamya/videos"
+    PROJECT_URL = "https://github.com/PizzaPeli/Anime-Expeditions-Lords-Macro"
     # Where people share routines with each other. The Examples picker points
     # at it, since only a handful can reasonably ship with the app.
-    COMMUNITY_URL = "https://discord.gg/creams"
+    COMMUNITY_URL = "https://github.com/PizzaPeli/Anime-Expeditions-Lords-Macro/issues"
 
-    def open_youtube_channel(self) -> dict:
+    def open_project_page(self) -> dict:
         # The one-time subscribe prompt's button -- opens the creator's
         # channel in the default browser.
         import webbrowser
-        webbrowser.open(self.YOUTUBE_CHANNEL_URL)
+        webbrowser.open(self.PROJECT_URL)
         return {"ok": True}
 
     def open_community(self) -> dict:
@@ -4045,6 +4459,51 @@ class Api:
         if not uri:
             return {"ok": False, "reason": "not_found"}
         return {"ok": True, "data_uri": uri}
+
+    def get_portal_chooser_picker_image(self) -> dict:
+        # Portal-in-chooser coordinate picker: now shares get_roblox_snapshot's
+        # live capture of the docked Roblox window instead of a static
+        # Assets/reference/portal_chooser_picker.png crop, matching how the
+        # Place Unit "Use Roblox Screen" picker already works. No input is
+        # ever sent and focus never changes (see get_roblox_snapshot), so
+        # this is safe to call from the post-run picker same as before.
+        return self.get_roblox_snapshot()
+
+    def get_cursor_game_pos(self) -> dict:
+        """Where the mouse is, in the same 1152x756 client space every
+        Macro Coordinate is expressed in.
+
+        Settings > Debug > "Show mouse position" polls this so a point can be
+        read straight off the game by hovering it, instead of capturing a
+        snapshot and clicking into a picker. Read-only: it never moves the
+        cursor, never clicks, and never touches focus or z-order.
+
+        The docked window is already forced to 1152x756 (see core/config.py),
+        but a window that could not be resized -- or a mid-dock frame -- would
+        otherwise report points in a space the runner does not click in, so
+        the raw client offset is scaled into reference space explicitly and
+        the real size is returned alongside for the UI to show.
+        """
+        hwnd = self.game_hwnd
+        if not hwnd or not wm.is_window(hwnd):
+            return {"ok": False, "reason": "no_roblox"}
+        try:
+            left, top, right, bottom = wm.get_window_rect_screen(hwnd)
+            width, height = max(1, right - left), max(1, bottom - top)
+            cx, cy = self.mouse.position()
+            rel_x, rel_y = cx - left, cy - top
+            inside = 0 <= rel_x < width and 0 <= rel_y < height
+            return {
+                "ok": True,
+                "inside": inside,
+                "x": int(round(rel_x * config.FIXED_WIN_W / width)),
+                "y": int(round(rel_y * config.FIXED_WIN_H / height)),
+                "raw_x": int(rel_x), "raw_y": int(rel_y),
+                "win_w": int(width), "win_h": int(height),
+                "scaled": width != config.FIXED_WIN_W or height != config.FIXED_WIN_H,
+            }
+        except Exception as exc:
+            return {"ok": False, "reason": str(exc)}
 
     def get_roblox_snapshot(self) -> dict:
         # Macro Manager > Place Unit > Set > "Use Roblox Screen": a one-shot,
@@ -4258,9 +4717,6 @@ class Api:
                 time.sleep(0.2)  # let the scroll-snap animation settle
 
                 image_bottom = _capture_game_region(hwnd, region)
-                # Move off the reward box once scrolling is done, same
-                # reasoning as core.runner's automatic post-match read.
-                self.mouse.move_to(game_left + 3, game_top + 3)
         except Exception as exc:
             self.push_log(f"[Rewards] Capture failed: {exc}")
             return {"ok": False, "reason": str(exc)}
@@ -4421,7 +4877,7 @@ def _launch_ui():
     # several untagged fixes have landed since the last real release, and
     # a pasted debug.log with no version context at all wastes a round
     # trip just asking "which build is this from?" every time.
-    api.push_log(f"[Macro] Cream's Macro v{updater.get_current_version()} ({_get_build_info()}) starting...")
+    api.push_log(f"[Macro] Lord's Macro v{updater.get_current_version()} ({_get_build_info()}) starting...")
     # Diagnostic: confirms whether set_dpi_aware() (called at import time,
     # above the wm.set_dpi_aware() call at module scope) actually took --
     # a non-100% value here with docking/clicks still landing wrong would
@@ -4734,7 +5190,7 @@ def _launch_ui():
                         # the cascade the whole close path exists to prevent.
                         if api.stopping.is_set():
                             return
-                        api.docker.dock(hwnd, gui_hwnd, x=0, y=TITLEBAR_H)
+                        api.docker.dock(hwnd, gui_hwnd, x=NAV_RAIL_WIDTH, y=TITLEBAR_H)
                         # Stay hidden until the JS side explicitly shows it for the Task
                         # screen (showDocked() does that) — Info/Settings/Macro Manager are the
                         # default/other screens now, and Roblox is a native window that
@@ -4764,7 +5220,7 @@ def _launch_ui():
                         and api._cutout_game_visible
                         and api.game_hwnd and wm.is_window(api.game_hwnd)
                         and api.gui_hwnd and wm.is_window(api.gui_hwnd)):
-                    api.docker.dock(api.game_hwnd, api.gui_hwnd, x=0, y=TITLEBAR_H)
+                    api.docker.dock(api.game_hwnd, api.gui_hwnd, x=NAV_RAIL_WIDTH, y=TITLEBAR_H)
             except Exception:
                 pass
 
@@ -4813,7 +5269,7 @@ def _launch_ui():
             "skip_waiting": lambda: api.push_ui("skipWaiting"),
             "macro_start": lambda: api.push_ui("startMacro"),
             "macro_pause": lambda: api.push_ui("togglePauseMacro"),
-            "debug_screenshot": lambda: api.push_ui("saveDebugScreenshot"),
+            "screen_snapshot": lambda: api.push_ui("captureScreenSnapshot"),
             "image_manager": lambda: api.push_ui("toggleImageManagerHotkey"),
             "toggle_compact": lambda: api.push_ui("toggleCompactStrip"),
             # NOT routed through push_ui/JS: stopping has to win over

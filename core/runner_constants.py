@@ -17,6 +17,13 @@ need naming explicitly -- star imports skip them).
 # click Back until it's no longer found, rather than leaving the run stuck
 # on whatever screen the failed search happened to end on.
 BACK_SPAM_MAX_CLICKS = 8
+# _spam_back_until_gone closes a corner X when there is no Back button and then
+# looks again. When the click does not take -- a wedged client, a frozen frame --
+# that is a loop, and BACK_SPAM_MAX_CLICKS is the only thing that ends it: the
+# 0.31.5 log has "No Back button, but nav_closeui is on screen" EIGHT times in a
+# row, ~3s apart, all on the same unchanging screen. Three identical closes in a
+# row is already proof it is not working; the other five were spent on nothing.
+CLOSE_X_MAX_CONSECUTIVE = 3
 BACK_SPAM_DELAY = 0.4
 # Nested screens (map detail -> gamemode menu -> lobby) each have their own
 # Back button -- a short poll after each click, not a one-shot check, so
@@ -57,6 +64,19 @@ MAX_CONSECUTIVE_LOSSES_SAME_MAP = 3
 STORY_CLICK = (666, 147)
 
 LOBBY_CHECK_TIMEOUT = 15.0   # how long to wait for the Play button to appear before giving up
+# A second full wait before the deep-link rejoin, which force-closes Roblox.
+# The 0.28.6 log fires that rejoin on a client that was fine -- the lobby was
+# merely still drawing after a stage exit -- and every failure after it is
+# downstream. Patience is cheap here; the rejoin is not.
+LOBBY_CHECK_SECOND_CHANCE = 20.0
+# How long the full-window capture may go byte-identical before the runner
+# stops believing what it shows (see vision.capture_unchanged_seconds for the
+# measured run this comes from). Deliberately generous: a real screen this game
+# renders -- lobby, result panel, mid-match -- animates, so a genuine frame is
+# never identical for minutes, while a stuck one is identical forever. Five
+# minutes is far past any legitimate pause and still six times sooner than
+# MATCH_RESULT_TIMEOUT, which is what used to end these.
+FROZEN_FRAME_SECONDS = 300.0
 STORY_SCREEN_TIMEOUT = 10.0  # Play's menu (Story/Raid) animates in, not instant
 BACK_CONFIRM_TIMEOUT = 8.0   # how long to wait for nav_back after clicking Story, to confirm it landed
 GAMEMODE_CLICK_TIMEOUT = 8.0  # how long to search for the Raid card once the menu's open
@@ -303,40 +323,48 @@ STORY_STAGE_SELECTED_BLUE_MIN_FRACTION = 0.30
 # apart than Story's rows -- same screen (nav_select_stage), same confirm
 # click, just a different row layout (matches TASK_DATA.raid.stages).
 ACT_ORDER = ["1", "2", "3"]
+# Snowy Castle has per-Act title crops that can confirm the selected Act.
+SNOWY_CASTLE_ACT_IMAGES = {
+    "1": ("snowy_castle_act1",),
+    "2": ("snowy_castle_act2",),
+    "3": ("snowy_castle_act3",),
+}
+SNOWY_CASTLE_ACT_VERIFY_TIMEOUT = 3.0
 ACT_CLICK_BASE = (250, 267)  # Act 1's click point
 ACT_ROW_HEIGHT = 129
 
 # Event mode: reached straight from the lobby via its own nav_event button
-# (NOT through Play like Story/Raid/Expedition/Challenge), then the Summer
-# event's nav entry, then its gamemode card, then one of the event kind cards.
-# There's no map carousel and no difficulty picker -- picking the kind IS the
-# whole selection, so it goes straight from there to the Solo/Matchmaking tail
+# (NOT through Play like Story/Raid/Expedition/Challenge), then the
+# event_gamemode card, then one of the Act cards (each a villain). There's no
+# map carousel and no difficulty picker -- picking the Act IS the whole
+# selection, so it goes straight from the Act to the Solo/Matchmaking tail
 # (nav_select_stage + nav_start, or enter_matchmaking) the other modes share.
-# The image folder names are exactly as they ship under Assets/ui/.
-EVENT_SCREEN_TIMEOUT = 10.0  # how long to wait for each Event screen (nav_event / summer_nav / the gamemode + kind cards) to appear
-
-# The Summer event's gamemode screen offers two cards: "Infinite & Fishing"
-# (waves + fishing) and "Portal Mode" (Tiered & Secret Portals). The user
-# picks which one to enter; this maps that choice to the card image(s) to
-# click. Mirrors TOURNAMENT_TYPE_IMAGES: each value is a tuple of candidate
-# crops (any match wins), so a card that renders in more than one visual
-# state can still be matched. Mirrors TASK_DATA.event.stages in ui/app.js.
-EVENT_KIND_ORDER = ["infinite", "portal"]
-EVENT_KIND_IMAGES = {
-    "infinite": ("summer_event_infinite",),
-    # Portal Mode picks and activates a specific portal before entering, and
-    # its result screen offers "Select Portal" instead of "Repeat Stage" --
-    # see EventOps._select_summer_portal, used at both ends of the run.
-    "portal": ("summer_event_portal",),
+# The image folder names are exactly as they ship under Assets/ui/ -- the
+# mixed "villian"/"villain" spelling is intentional, it matches the real
+# folders. Mirrors TASK_DATA.event.stages in ui/app.js.
+# Act 4 (Villian Invasion "Crow - Dawn") is a relic-gated Act: it costs 1 Crow
+# Relic to enter, so its card shows locked ("0/1x Owned", VILLIAN4_CLOSE_IMAGE)
+# until you've banked one. It's selectable now, and farm tasks can auto-divert
+# to it when a relic drops (see runner._run_act4_diversion / DROP_RELIC_IMAGE).
+EVENT_ACT_ORDER = ["1", "2", "3", "4"]
+# Values are a tuple of candidate crops per Act (any match wins), so an Act
+# card that shows in more than one visual state can be matched in whichever
+# it's currently in.
+EVENT_ACT_IMAGES = {
+    "1": ("villian1",),
+    "2": ("villian2",),
+    "3": ("villain3",),
+    "4": ("villian4",),
 }
-# Fixed regions of the 1152x756 client the portal picker's two elements live
-# in -- the search box and the portal-card list. Boxing the searches keeps the
-# tier-card match off the rest of the screen (the picker's cards look alike),
-# and gives PortalsOp a click point for the search box. (x, y, w, h).
-PORTAL_SEARCHES = {
-    "search": (433, 174, 492 - 433, 188 - 174),
-    "portals": (344, 208, 687 - 344, 296 - 208),
-}
+# Acts from this one on can sit below the fold on the Event gamemode screen
+# and only come into view by scrolling the villain list -- picking one of
+# these runs the same wheel-scroll search Story maps use (see
+# _reach_event_act_selected / _scroll_find_and_click). Acts before it are
+# already on screen and get a plain wait-then-click. The scroll search checks
+# what's already visible first, so it's a no-op for an Act that didn't need
+# scrolling anyway.
+EVENT_ACT_SCROLL_FROM_INDEX = 2  # 0-based into EVENT_ACT_ORDER: index 2 == Act "3"
+EVENT_SCREEN_TIMEOUT = 10.0  # how long to wait for each Event screen (nav_event / event_gamemode / the Act card) to appear
 
 # Tournament mode: reached through Play like Story/Raid -- its nav_tournament
 # button sits on the same gamemode menu (picked instead of Story), NOT via its
@@ -351,7 +379,7 @@ PORTAL_SEARCHES = {
 # image folder names ship under Assets/ui/ exactly as written below.
 TOURNAMENT_TYPE_ORDER = ["Solo Tournament"]
 # Values are a tuple of candidate crops per type (any match wins), same shape
-# as EVENT_KIND_IMAGES, so a card shown in more than one visual state can still
+# as EVENT_ACT_IMAGES, so a card shown in more than one visual state can still
 # be matched.
 TOURNAMENT_TYPE_IMAGES = {
     "Solo Tournament": ("solo_tournament",),
@@ -389,6 +417,15 @@ BOUNTY_MYTHIC_MAX_REROLLS = 100
 BOUNTY_MYTHIC_REROLL_SETTLE = 0.8
 BOUNTY_MYTHIC_REROLL_VERIFY_TIMEOUT = 4.0
 BOUNTY_MYTHIC_REROLL_POLL = 0.25
+
+# Villian Invasion Act 4 ("Crow - Dawn") relic gate. DROP_RELIC_IMAGE is the
+# Crow Relic reward shown on the Victory screen (relics only drop on a win) --
+# spotting it is what triggers a farm task's optional auto-divert to Act 4.
+# VILLIAN4_CLOSE_IMAGE is Act 4's locked card ("requires 1 Crow Relic / 0/1x
+# Owned"); seeing it means there's no relic to spend, so the divert backs out.
+DROP_RELIC_IMAGE = "drop_relic"
+VILLIAN4_CLOSE_IMAGE = "villian4_close"
+EVENT_ACT4_STAGE = "4"
 
 # Infinite/Mastery are locked to Hard in-game with no picker shown for them
 # (see ui/app.js's TASK_DATA.story comment) -- no difficulty click happens
@@ -438,7 +475,36 @@ CHALLENGE_MAP_OCR_ALIASES = {
 # Words the map label carries that never identify a map ("Grounds - Act 1").
 # Scored against an alias they are just noise that can out-rank the real
 # match, so they are dropped before comparison.
-CHALLENGE_MAP_OCR_STOPWORDS = frozenset({"act", "stage", "challenge", "daily"})
+CHALLENGE_MAP_OCR_STOPWORDS = frozenset({
+    "act", "stage", "challenge", "daily",
+    # The Regular Challenge label reads "Regular Challenge #1 <Map> - Act N",
+    # and the difficulty tag "Hard Mode" sits just under it inside the same
+    # band. None of these words can ever name a map, so scoring them only
+    # gives noise a chance to out-rank the real one.
+    "regular", "hard", "mode",
+    # Shared by Fairy King Forest and Flower Forest, so it identifies
+    # neither -- their aliases are "fairy" and "flower".
+    "forest",
+})
+# Where the in-match map label actually is, as (x_start, y_start, y_end)
+# fractions of the frame; it runs to the frame's right edge, which is why
+# there is no x_end. Measured off a real Regular Challenge capture -- see
+# _challenge_map_ocr_crops for the before/after reads that set it.
+CHALLENGE_MAP_LABEL_BAND = (0.742, 0.4259, 0.4577)
+# Both, always. psm 7 reads the band as one line, which it is -- until the
+# crop catches a pixel of the row above or below, at which point psm 6
+# ("a block of text") is the one that reads it. Each rescued a frame the
+# other lost; see _challenge_map_ocr_crops.
+CHALLENGE_MAP_OCR_PSM_MODES = (7, 6)
+# How sure the OCR fallback has to be before it NAMES a map. Raised from a
+# bare 0.65 after the 0.28.6 log accepted "es" as "east" at 0.67 out of a read
+# that was pure noise -- and a wrongly-named map runs the wrong macro with
+# full confidence, which is worse than not naming one at all (an unnamed map
+# now just plays on Auto Play). MIN_TOKEN drops fragments too short to be
+# evidence of any alias; every alias is at least four characters.
+CHALLENGE_MAP_OCR_MIN_TOKEN = 4
+CHALLENGE_MAP_OCR_MIN_SCORE = 0.72
+CHALLENGE_MAP_OCR_MARGIN = 0.12
 # Mirrors main.py's CHALLENGE_STAGE_SLOTS.
 CHALLENGE_STAGE_SLOTS = ["1", "2", "3"]
 # Fixed click points for the 3 Regular Challenge stage rows -- no image
@@ -578,6 +644,16 @@ PARTY_OVERLAY_IMAGE_NAMES = NAV_DISBAND_IMAGE_NAMES + ("invite_players_open",)
 # re-clicking Play" retries in a row while the patch notes sat on screen.
 # Optional like nav_disband: no image means the check does nothing.
 LOBBY_OVERLAY_CLOSE_IMAGE_NAMES = ("update_log_close",)
+# Proof that Roblox is still ALIVE, just not showing the lobby yet -- checked
+# only after a full LOBBY_CHECK_TIMEOUT wait for nav_play has already failed,
+# to veto the deep-link rejoin that would otherwise force-close a healthy
+# client (see _ensure_lobby). Anything here means "still in the game": an
+# in-match HUD, a result screen, or a menu with a Back button. Deliberately
+# excludes "reconnect" -- that one is a real disconnect.
+LOBBY_WAIT_ALIVE_IMAGE_NAMES = (
+    "nav_unitmanager", "leave_stage", "victory", "defeat",
+    "result_modal_close", "nav_back", "challenge_loaded",
+)
 # 10 visual variants on file, all inside Assets/ui/priority_upgrade/ --
 # every one tried per search, same folder-variant mechanism as above.
 PRIORITY_UPGRADE_IMAGE_NAMES = ("priority_upgrade",)
@@ -588,12 +664,10 @@ PRIORITY_UPGRADE_IMAGE_NAMES = ("priority_upgrade",)
 PLACE_ID = "84515722934860"
 REJOIN_DEEPLINK = f"roblox://experiences/start?placeId={PLACE_ID}"
 
-# Project links surfaced as link buttons on the match-result webhook (see
-# runner._send_result_webhook) -- the community Discord, the source repo,
-# and the creator's YouTube.
-DISCORD_INVITE_URL = "https://discord.gg/cgua6CZDst"
-GITHUB_REPO_URL = "https://github.com/Cweamy/Anime-Expeditions-Creams-Macro"
-YOUTUBE_URL = "https://www.youtube.com/@Cweamya"
+# Project links surfaced in match-result webhooks (see
+# runner._send_result_webhook).
+ISSUES_URL = "https://github.com/PizzaPeli/Anime-Expeditions-Lords-Macro/issues"
+GITHUB_REPO_URL = "https://github.com/PizzaPeli/Anime-Expeditions-Lords-Macro"
 REJOIN_TIMEOUT = 90.0  # relaunching Roblox from scratch can take a while
 REJOIN_POLL_INTERVAL = 2.0
 
@@ -668,12 +742,6 @@ SCREEN_MIDDLE_CLICK = (576, 378)  # dead center of the 1152x756 game client area
 # selecting a unit needs a beat to actually open its info panel before the
 # upgradeable/not_upgradeable search means anything.
 BATTLE_BLOCK_CLICK_SETTLE = 0.3
-# Drag block (Macro Manager > Setup > Drag): how many interpolated moves the
-# held-button drag makes, and how long the whole drag takes in ms. Defaults
-# mirror ui/app.js's BLOCK_TYPES.drag params; blocks saved before the params
-# existed (or with them unset) fall back to these.
-DRAG_DEFAULT_STEPS = 30
-DRAG_DEFAULT_DURATION_MS = 600
 # How long an Upgrade Unit block waits before retrying after finding
 # not_upgradeable (not enough gold yet, on cooldown, ...) -- not a failure,
 # just not ready, so it keeps its remaining `times` budget and tries again
@@ -876,10 +944,8 @@ DEFAULT_COORDS = {
     "matchmaking_region_x": 277, "matchmaking_region_y": 543,
     "matchmaking_region_w": 437, "matchmaking_region_h": 45,
     "story_click_x": STORY_CLICK[0], "story_click_y": STORY_CLICK[1],
-    "stage_row_x": STAGE_CLICK_BASE[0], "stage_row_y": STAGE_CLICK_BASE[1],
-    "stage_row_height": STAGE_ROW_HEIGHT,
-    "act_row_x": ACT_CLICK_BASE[0], "act_row_y": ACT_CLICK_BASE[1],
-    "act_row_height": ACT_ROW_HEIGHT,
+    "stage_row_x": 245, "stage_row_y": 230, "stage_row_height": 55,
+    "act_row_x": 245, "act_row_y": 230, "act_row_height": 55,
     # MACRO_COORD_DEFAULTS.
     "challenge_stage_1_x": CHALLENGE_STAGE_CLICK["1"][0], "challenge_stage_1_y": CHALLENGE_STAGE_CLICK["1"][1],
     "challenge_stage_2_x": CHALLENGE_STAGE_CLICK["2"][0], "challenge_stage_2_y": CHALLENGE_STAGE_CLICK["2"][1],
@@ -895,7 +961,11 @@ DEFAULT_COORDS = {
     "screen_middle_x": SCREEN_MIDDLE_CLICK[0], "screen_middle_y": SCREEN_MIDDLE_CLICK[1],
     "unit_info_reset_x": UNIT_INFO_RESET_CLICK[0], "unit_info_reset_y": UNIT_INFO_RESET_CLICK[1],
     "daily_challenge_tab_x": 250, "daily_challenge_tab_y": 315,
-    "daily_challenge_stage_x": 650, "daily_challenge_stage_y": 360,
+    # NOTE: no "daily_challenge_stage" point any more. The Daily Challenge's
+    # card sits exactly where the Regular Challenge's first card does, so the
+    # fallback reads "challenge_stage_1" instead -- one point, editable in
+    # Settings > Debug > Macro Coordinates, instead of a hidden second one that
+    # could only be changed by editing code and rebuilding.
 }
 
 # Victory/Defeat: no fixed timeout makes sense for "how long can a battle
@@ -989,4 +1059,3 @@ def fuel_refill_interval_seconds(amount) -> int:
     coverage = units * FUEL_UNIT_SECONDS
     safety = max(FUEL_MIN_SAFETY_SECONDS, int(coverage * FUEL_SAFETY_RATIO))
     return max(FUEL_UNIT_SECONDS, coverage - safety)
-

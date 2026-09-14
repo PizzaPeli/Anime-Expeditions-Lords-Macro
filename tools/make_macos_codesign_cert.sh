@@ -30,11 +30,11 @@
 # a stable code identity that TCC keys permissions to.
 #
 # The bundle identifier must stay pinned too: build_pyinstaller.py already
-# passes --osx-bundle-identifier=com.cweamy.creams-macro-anime-expeditions.
+# passes --osx-bundle-identifier=com.pizzapeli.lords-macro-anime-expeditions.
 # The bundle id is carried here in the OU (organizationalUnit) field of the
 # certificate subject so this identity is visibly paired with that app; the
 # CN stays short on purpose -- X.509 caps commonName at 64 characters, and
-# "Creams Macro Code Signing (com.cweamy.creams-macro-anime-expeditions)"
+# "Lords Macro Code Signing (com.pizzapeli.lords-macro-anime-expeditions)"
 # would be 70 and blow up inside `openssl req`.
 #
 # RUN ONCE, ON ANY MACHINE WITH OpenSSL
@@ -52,7 +52,7 @@
 # a fresh identity (which will make macOS re-prompt all existing users).
 #
 # Where files land (override with OUT_DIR=...):
-#     ~/.creams-macro-codesign/
+#     ~/.lords-macro-codesign/
 #         codesign.key.pem    private key (unencrypted on disk -- chmod 600)
 #         codesign.cert.pem   the self-signed certificate
 #         codesign.p12        PKCS#12 bundle (key + cert), password-protected
@@ -66,17 +66,17 @@ set -euo pipefail
 # macos-asset.yml), so codesign finds this exact cert. Keep it <= 64 chars:
 # X.509 hard-caps commonName at 64, so the bundle identifier rides in OU
 # instead (still part of the subject, still pairs cert <-> app).
-CN="Creams Macro Code Signing"
-OU="com.cweamy.creams-macro-anime-expeditions"
+CN="Lords Macro Code Signing"
+OU="com.pizzapeli.lords-macro-anime-expeditions"
 # Apostrophe-free on purpose: openssl config strips the quote chars, so
-# "Cream's Macro" would land in the subject as "Creams Macro" anyway. This
+# "Lord's Macro" would land in the subject as "Lords Macro" anyway. This
 # matches the exe/build's own EXE_NAME spelling.
-ORG="Creams Macro"
+ORG="Lords Macro"
 COUNTRY="US"
 VALID_DAYS=3650          # 10 years -- re-create only if the key is lost/rotated
 
 # Where the generated material goes.
-OUT_DIR="${OUT_DIR:-$HOME/.creams-macro-codesign}"
+OUT_DIR="${OUT_DIR:-$HOME/.lords-macro-codesign}"
 
 KEY="$OUT_DIR/codesign.key.pem"
 CERT="$OUT_DIR/codesign.cert.pem"
@@ -84,7 +84,7 @@ P12="$OUT_DIR/codesign.p12"
 P12_B64="$OUT_DIR/codesign.p12.b64"
 
 # GitHub repo the secrets belong to (used only in the printed `gh` commands).
-GITHUB_REPO="Cweamy/Anime-Expeditions-Creams-Macro"
+GITHUB_REPO="PizzaPeli/Anime-Expeditions-Lords-Macro"
 
 usage() {
     cat >&2 <<EOF

@@ -516,6 +516,17 @@ def is_foreground(hwnd: int) -> bool:
     return user32.GetForegroundWindow() == hwnd
 
 
+def get_foreground_window() -> int:
+    """Whichever window currently holds the OS foreground, or 0.
+
+    Exposed so callers can ask WHAT has focus rather than only "is it this
+    exact hwnd" -- see MacroRunner._focus_confirmed, which accepts any window
+    of the same process because SendInput does not care which of a process's
+    windows is in front.
+    """
+    return int(user32.GetForegroundWindow() or 0)
+
+
 def is_window_visible(hwnd: int) -> bool:
     return bool(user32.IsWindowVisible(hwnd))
 

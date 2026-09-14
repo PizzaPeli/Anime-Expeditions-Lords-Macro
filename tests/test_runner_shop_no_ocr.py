@@ -100,262 +100,6 @@ def test_visible_purchase_with_uncertain_modal_requires_a_manual_today_reset(mon
     assert saved_items[-1][2]["status"] == auto_shop.STATUS_FAILED_TODAY
 
 
-def test_visible_item_lookup_does_not_scroll_when_the_card_is_clipped(monkeypatch):
-    """Row alignment owns scrolling, so an item miss cannot move later cards."""
-    runner = _runner([])
-    item = _item()
-    clipped = {"x": 429, "y": 445, "w": 61, "h": 55}
-    monkeypatch.setattr(runner, "_checkpoint", lambda _stop: False)
-    monkeypatch.setattr(
-        "core.runner_shop.vision.find_image",
-        lambda *_args, **_kwargs: clipped,
-    )
-
-    assert runner._shop_find_visible_item(1, item, threading.Event()) is None
-    runner._mouse.scroll.assert_not_called()
-
-
-def test_item_lookup_is_restricted_to_its_expected_column(monkeypatch):
-    runner = _runner([])
-    regions = []
-    monkeypatch.setattr(runner, "_checkpoint", lambda _stop: False)
-
-    def find_image(_hwnd, _template, **kwargs):
-        regions.append(kwargs["region"])
-        return {
-            "x": 429, "y": 325, "w": 61, "h": 55,
-        }
-
-    monkeypatch.setattr("core.runner_shop.vision.find_image", find_image)
-
-    runner._shop_find_visible_item(
-        1,
-        {
-            **_item(),
-            "key": "equipment_lock",
-            "name": "Equipment Lock",
-            "daily_maximum": 10,
-        },
-        threading.Event(),
-    )
-    runner._shop_find_visible_item(
-        1,
-        {
-            **_item(),
-            "key": "stat_reroll",
-            "name": "Stat Reroll",
-            "daily_maximum": 10,
-        },
-        threading.Event(),
-    )
-
-    assert regions == [
-        (398, 218, 154, 362),
-        (552, 218, 154, 362),
-    ]
-
-
-def test_no_ocr_sweep_uses_absolute_scroll_position_for_each_due_row(monkeypatch):
-    """Every due row must start from Top and use only its calibrated delta."""
-    runner = _runner([])
-    items = [
-        {**_item(), "key": "stat_lock", "name": "Stat Lock", "daily_maximum": 10},
-        {
-            **_item(),
-            "key": "equipment_lock",
-            "name": "Equipment Lock",
-            "daily_maximum": 10,
-        },
-        {**_item(), "key": "mana_flask", "name": "Mana Flask", "daily_maximum": 150},
-        {**_item(), "key": "frown_fruit", "name": "Frown Fruit", "daily_maximum": 100},
-    ]
-    found = []
-    processed = []
-    runner._shop_find_item = MagicMock(
-        side_effect=AssertionError("The legacy finder resets the list per item")
-    )
-    monkeypatch.setattr(runner, "_checkpoint", lambda _stop: False)
-    monkeypatch.setattr(
-        runner,
-        "_shop_find_slot_out_of_stock",
-        lambda *_args: False,
-    )
-    monkeypatch.setattr(
-        runner,
-        "_shop_find_visible_item",
-        lambda _hwnd, item, _stop: found.append(item["key"]) or {
-            "x": 429, "y": 325, "w": 61, "h": 55,
-        },
-    )
-    monkeypatch.setattr(
-        runner,
-        "_shop_process_visible_item",
-        lambda _hwnd, _shop, item, _match, _stop: processed.append(item["key"]),
-    )
-    monkeypatch.setattr(
-        "core.runner_shop.vision.ref_to_screen",
-        lambda _hwnd, x, y: (x, y),
-    )
-    monkeypatch.setattr("core.runner_shop.time.sleep", lambda _seconds: None)
-
-    runner._shop_run_no_ocr_sweep(1, "gold_shop", items, threading.Event())
-
-    assert found == [
-        "frown_fruit",
-        "mana_flask",
-        "equipment_lock",
-        "stat_lock",
-    ]
-    assert processed == found
-    assert [call.args for call in runner._mouse.scroll.call_args_list] == [
-        (runner_shop.SHOP_SCROLL_RESET_AMOUNT,),
-        (-120,),
-        (runner_shop.SHOP_SCROLL_RESET_AMOUNT,),
-        (-480,),
-        (runner_shop.SHOP_SCROLL_RESET_AMOUNT,),
-        (-960,),
-        (runner_shop.SHOP_SCROLL_RESET_AMOUNT,),
-        (runner_shop.SHOP_BOTTOM_SCROLL_AMOUNT,),
-    ]
-
-
-def test_missing_top_row_never_triggers_search_scrolling(monkeypatch):
-    """A failed identity check must skip the row without moving toward Bottom."""
-    runner = _runner([])
-    items = [
-        _item(),
-        {**_item(), "key": "red_flower", "name": "Red Flower", "daily_maximum": 75},
-    ]
-    processed = []
-    monkeypatch.setattr(runner, "_checkpoint", lambda _stop: False)
-    monkeypatch.setattr(
-        runner,
-        "_shop_find_slot_out_of_stock",
-        lambda *_args: False,
-    )
-    monkeypatch.setattr(
-        "core.runner_shop.vision.find_image",
-        lambda *_args, **_kwargs: None,
-    )
-    monkeypatch.setattr(
-        runner,
-        "_shop_process_visible_item",
-        lambda _hwnd, _shop, item, _match, _stop: processed.append(item["key"]),
-    )
-    monkeypatch.setattr(
-        "core.runner_shop.vision.ref_to_screen",
-        lambda _hwnd, x, y: (x, y),
-    )
-    monkeypatch.setattr("core.runner_shop.time.sleep", lambda _seconds: None)
-
-    runner._shop_run_no_ocr_sweep(1, "gold_shop", items, threading.Event())
-
-    assert processed == []
-    assert [call.args for call in runner._mouse.scroll.call_args_list] == [
-        (runner_shop.SHOP_SCROLL_RESET_AMOUNT,),
-    ]
-
-
-def test_missing_calibrated_item_is_saved_for_a_later_retry(monkeypatch):
-    """A transient identity miss must stay actionable instead of disappearing."""
-    saved_items = []
-    runner = _runner(saved_items)
-    runner._log = MagicMock()
-    item = _item()
-    monkeypatch.setattr(runner, "_checkpoint", lambda _stop: False)
-    monkeypatch.setattr(
-        runner,
-        "_shop_find_slot_out_of_stock",
-        lambda *_args: False,
-    )
-    monkeypatch.setattr(runner, "_shop_find_visible_item", lambda *_args: None)
-    monkeypatch.setattr(
-        "core.runner_shop.vision.ref_to_screen",
-        lambda _hwnd, x, y: (x, y),
-    )
-    monkeypatch.setattr("core.runner_shop.time.sleep", lambda _seconds: None)
-
-    runner._shop_run_no_ocr_sweep(
-        1,
-        "gold_shop",
-        [item],
-        threading.Event(),
-    )
-
-    assert saved_items[-1][1] == "cursed_boba"
-    assert saved_items[-1][2]["status"] == auto_shop.STATUS_RETRY_PENDING
-    messages = [call.args[0] for call in runner._log.call_args_list]
-    assert any("retry on the next Auto Shop pass" in message for message in messages)
-
-
-def test_out_of_stock_slot_finishes_item_without_matching_its_icon(monkeypatch):
-    """A dimmed sold-out card must be terminal even when its icon misses."""
-    saved_items = []
-    runner = _runner(saved_items)
-    item = _item()
-    runner._shop_find_visible_item = MagicMock(
-        side_effect=AssertionError("Out of Stock must be checked before item identity")
-    )
-    monkeypatch.setattr(runner, "_checkpoint", lambda _stop: False)
-    monkeypatch.setattr(
-        runner,
-        "_shop_find_slot_out_of_stock",
-        lambda _hwnd, checked, scroll, _stop: (
-            checked["key"] == "cursed_boba" and scroll == 0
-        ),
-    )
-    monkeypatch.setattr(
-        "core.runner_shop.vision.ref_to_screen",
-        lambda _hwnd, x, y: (x, y),
-    )
-    monkeypatch.setattr("core.runner_shop.time.sleep", lambda _seconds: None)
-
-    runner._shop_run_no_ocr_sweep(
-        1,
-        "gold_shop",
-        [item],
-        threading.Event(),
-    )
-
-    runner._shop_find_visible_item.assert_not_called()
-    assert saved_items[-1][1] == "cursed_boba"
-    assert saved_items[-1][2]["status"] == auto_shop.STATUS_OUT_OF_STOCK
-
-
-def test_out_of_stock_slot_search_uses_the_calibrated_row_and_column(monkeypatch):
-    """The same sold-out label must be attributed only to the expected card."""
-    runner = _runner([])
-    searched = []
-
-    def find_image(_hwnd, name, **kwargs):
-        searched.append((name, kwargs["region"]))
-        return {"x": 430, "y": 230, "w": 65, "h": 14}
-
-    monkeypatch.setattr("core.runner_shop.vision.find_image", find_image)
-
-    assert runner._shop_find_slot_out_of_stock(
-        1,
-        _item(),
-        0,
-        threading.Event(),
-    ) is True
-    assert runner._shop_find_slot_out_of_stock(
-        1,
-        {
-            **_item(),
-            "key": "delicious_pie",
-            "name": "Delicious Pie",
-            "daily_maximum": 125,
-        },
-        -120,
-        threading.Event(),
-    ) is True
-    assert searched == [
-        ("shop_out_of_stock", (398, 218, 154, 90)),
-        ("shop_out_of_stock", (552, 300, 154, 110)),
-    ]
-
-
 def test_auto_shop_run_delegates_enabled_items_to_the_no_ocr_sweep(monkeypatch):
     """The public runner path must not retain the old OCR item processor."""
     item = _item()
@@ -376,6 +120,7 @@ def test_auto_shop_run_delegates_enabled_items_to_the_no_ocr_sweep(monkeypatch):
         MagicMock(),
         get_auto_shop_settings=lambda: settings,
     )
+    runner._recover_to_lobby = MagicMock()
     dispatched = []
     monkeypatch.setattr("core.runner_shop.wm.show_window", lambda _hwnd: None)
     monkeypatch.setattr("core.runner_shop.wm.activate_window", lambda _hwnd: True)
@@ -397,67 +142,12 @@ def test_auto_shop_run_delegates_enabled_items_to_the_no_ocr_sweep(monkeypatch):
     assert dispatched == [("gold_shop", [item])]
 
 
-def test_public_auto_shop_run_never_reaches_stock_ocr(monkeypatch):
-    """The runner integration must retain the no-OCR guarantee after refactors."""
-    item = _item()
-    item["enabled"] = True
-    settings = {
-        "enabled": True,
-        "shops": {
-            "gold_shop": {
-                "enabled": True,
-                "state": auto_shop.fresh_shop_state("2026-07-30"),
-                "items": [item],
-            },
-        },
-    }
-    saved_items = []
-    runner = MacroRunner(
-        MagicMock(),
-        MagicMock(),
-        MagicMock(),
-        get_auto_shop_settings=lambda: settings,
-        save_auto_shop_item_state=lambda shop, key, state: saved_items.append(
-            (shop, key, state)
-        ),
-    )
-    cancel = {"x": 579, "y": 420, "w": 181, "h": 28}
-    runner._shop_read_observation = MagicMock(
-        side_effect=AssertionError("The public Auto Shop path must not use OCR")
-    )
-    monkeypatch.setattr("core.runner_shop.wm.show_window", lambda _hwnd: None)
-    monkeypatch.setattr("core.runner_shop.wm.activate_window", lambda _hwnd: True)
-    monkeypatch.setattr(runner, "_ensure_lobby", lambda *_args: True)
-    monkeypatch.setattr(runner, "_shop_enter_gold_shop", lambda *_args: True)
-    monkeypatch.setattr(
-        runner,
-        "_shop_find_slot_out_of_stock",
-        lambda *_args: False,
-    )
-    monkeypatch.setattr(
-        runner,
-        "_shop_find_visible_item",
-        lambda *_args: {"x": 429, "y": 325, "w": 61, "h": 55},
-    )
-    monkeypatch.setattr(runner, "_shop_find_terminal_label", lambda *_args: None)
-    monkeypatch.setattr(runner, "_shop_open_purchase_modal", lambda *_args: cancel)
-    monkeypatch.setattr(runner, "_shop_configure_amount", lambda *_args: True)
-    monkeypatch.setattr(runner, "_shop_confirm_purchase", lambda *_args: True)
-    monkeypatch.setattr("core.runner_shop.vision.find_image", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr("core.runner_shop.vision.ref_to_screen", lambda _hwnd, x, y: (x, y))
-    monkeypatch.setattr("core.runner_shop.time.sleep", lambda _seconds: None)
-
-    runner._run_auto_shop(1, threading.Event())
-
-    runner._shop_read_observation.assert_not_called()
-    assert saved_items[-1][2]["status"] == auto_shop.STATUS_RETRY_PENDING
-
-
 def test_open_modal_clicks_the_green_buy_region_without_matching_a_price(monkeypatch):
     """Price artwork must not decide whether a known card Buy can be clicked."""
     runner = _runner([])
     item_match = {"x": 429, "y": 245, "w": 61, "h": 55}
     cancel = {"x": 579, "y": 420, "w": 181, "h": 28}
+    monkeypatch.setattr("core.runner_shop.vision.wait_for_image_any", lambda *_a, **_k: (cancel, "shop_cancel"))
     clicked = []
     monkeypatch.setattr(
         "core.runner_shop.vision.capture_game_bgr",
@@ -502,3 +192,54 @@ def test_max_amount_checks_max_and_min_templates_before_clicking(monkeypatch):
 
     assert runner._shop_configure_amount(1, cancel, "max", 50, threading.Event()) is True
     runner._mouse.click.assert_called_once_with(734, 388)
+
+
+def test_dynamic_sweep_resets_once_and_stops_at_the_physical_list_end(monkeypatch):
+    runner = _runner([])
+    items = [_item(), {**_item(), "key": "red_flower", "name": "Red Flower", "daily_maximum": 75}]
+    found = []
+    processed = []
+    signatures = iter([b"top", b"middle", b"bottom", b"bottom"])
+    monkeypatch.setattr(runner, "_checkpoint", lambda _stop: False)
+    monkeypatch.setattr(runner, "_shop_discovery_signature", lambda _hwnd: next(signatures))
+    monkeypatch.setattr(
+        runner,
+        "_shop_find_visible_item",
+        lambda _hwnd, item, _stop: found.append(item["key"]) or (
+            {"x": 429, "y": 325, "w": 61, "h": 55}
+            if item["key"] == "red_flower" and found.count("red_flower") == 2 else None
+        ),
+    )
+    monkeypatch.setattr(
+        runner, "_shop_process_visible_item",
+        lambda _hwnd, _shop, item, _match, _stop: processed.append(item["key"]),
+    )
+    monkeypatch.setattr("core.runner_shop.vision.ref_to_screen", lambda _hwnd, x, y: (x, y))
+    monkeypatch.setattr("core.runner_shop.time.sleep", lambda _seconds: None)
+
+    runner._shop_run_no_ocr_sweep(1, "gold_shop", items, threading.Event())
+
+    assert processed == ["red_flower"]
+    assert [call.args for call in runner._mouse.scroll.call_args_list] == [
+        (runner_shop.SHOP_SCROLL_RESET_AMOUNT,),
+        (runner_shop.SHOP_DISCOVERY_SCROLL_AMOUNT,),
+        (runner_shop.SHOP_DISCOVERY_SCROLL_AMOUNT,),
+    ]
+
+
+def test_dynamic_sweep_keeps_unlocated_item_pending_without_a_fallback_click(monkeypatch):
+    saved_items = []
+    runner = _runner(saved_items)
+    monkeypatch.setattr(runner, "_checkpoint", lambda _stop: False)
+    monkeypatch.setattr(runner, "_shop_discovery_signature", lambda _hwnd: b"same")
+    monkeypatch.setattr(runner, "_shop_find_visible_item", lambda *_args: None)
+    runner._shop_try_fallback_modal = MagicMock(
+        side_effect=AssertionError("dynamic discovery must not manufacture a card match")
+    )
+    monkeypatch.setattr("core.runner_shop.vision.ref_to_screen", lambda _hwnd, x, y: (x, y))
+    monkeypatch.setattr("core.runner_shop.time.sleep", lambda _seconds: None)
+
+    runner._shop_run_no_ocr_sweep(1, "gold_shop", [_item()], threading.Event())
+
+    runner._shop_try_fallback_modal.assert_not_called()
+    assert saved_items[-1][2]["status"] == auto_shop.STATUS_PENDING_NOT_LOCATED

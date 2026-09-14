@@ -1,19 +1,21 @@
 :root {
-  --bg-deep:    #11131c;
-  --bg-card:    #171a26;
-  --bg-surface: #1c2030;
-  --border:     #2a2e42;
-  --text:       #e2e4ef;
-  --text-dim:   #90939f;
-  --text-muted: #565a6e;
+  --bg-deep:    #000000;
+  --bg-card:    #0a0a0a;
+  --bg-surface: #121212;
+  --border:     #282828;
+  --text:       #f0f0f0;
+  --text-dim:   #a0a0a0;
+  --text-muted: #606060;
 
-  --brand:  #7c9dff;  /* header / brand name */
-  --teal:   #45c9b5;  /* Start / Wins */
+  /* Balanced red: decorative/interactive accents share a red family while
+     success and warning colors remain distinct at a glance. */
+  --brand:  #e53935;  /* primary actions / selected navigation */
+  --teal:   #45c98f;  /* Start / Wins */
   --amber:  #e3b158;  /* Pause */
-  --slate:  #8b93b8;  /* Target */
-  --lilac:  #b58ce0;  /* Queue / game tag / All Time */
-  --rose:   #d9667a;  /* close button hover / Losses */
-  --sky:    #5aa9e6;  /* Detect / Logic blocks */
+  --slate:  #a78b8a;  /* Target */
+  --lilac:  #d84a46;  /* Queue / game tag / All Time */
+  --rose:   #ef5350;  /* close button hover / Losses */
+  --sky:    #c83b38;  /* Detect / Logic blocks */
 }
 
 /* ---- Theme (Settings > General > Theme) ----
@@ -35,7 +37,7 @@
 :root[data-theme-accent="sakura"]   { --brand: #e87a9e; }
 :root[data-theme-accent="violet"]   { --brand: #a878f0; }
 :root[data-theme-accent="sunset"]   { --brand: #e8935a; }
-:root[data-theme-accent="crimson"]  { --brand: #e05a6d; }
+:root[data-theme-accent="crimson"]  { --brand: #e53935; }
 :root[data-theme-accent="mono"]     { --brand: #aab2c8; }
 
 /* Black: true-black (AMOLED-friendly) variant of the same dark UI --
@@ -216,10 +218,89 @@ h1, h2, h3, .brand-font { font-family: 'Sora', 'Inter', system-ui, sans-serif; }
 .log-toolbar-btn:hover { color: var(--text); }
 .log-toolbar-btn:active { transform: scale(0.92); }
 
-.nav-btn { width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; border-radius: 0.4rem; color: var(--text-muted); transition: background 0.15s, color 0.15s, transform 0.12s; }
+.nav-btn { width: 100%; min-height: 36px; padding: 0 9px; gap: 9px; display: flex; align-items: center; justify-content: flex-start; border-radius: 0.4rem; color: var(--text-muted); font-size: 11px; font-weight: 600; white-space: nowrap; transition: background 0.15s, color 0.15s, transform 0.12s; }
+.nav-btn svg { width: 16px; height: 16px; flex-shrink: 0; }
 .nav-btn:hover { background: var(--bg-surface); color: var(--text-dim); }
 .nav-btn:active { transform: scale(0.9); }
 .nav-btn.active { background: color-mix(in srgb, var(--brand) 18%, transparent); color: var(--brand); }
+
+/* The former 44px horizontal titlebar is now a dedicated left rail. Its
+   width is added to the native window, so existing screens and the fixed
+   1152px Roblox slot do not surrender any space. */
+#titlebar {
+  width: 160px;
+  height: 100% !important;
+  padding: 14px 10px !important;
+  flex-direction: column;
+  align-items: stretch !important;
+  justify-content: flex-start !important;
+  gap: 16px;
+  border-right: 1px solid var(--border);
+  border-bottom: 0 !important;
+  box-sizing: border-box;
+}
+/* Keep every pre-existing content rectangle at its original y=44 position.
+   The rail occupies only newly added horizontal space; this reserved top
+   inset replaces the old bar's vertical footprint without moving content. */
+body.nav-rail-active > [id^="screen-"] {
+  padding-top: 44px;
+  box-sizing: border-box;
+}
+.titlebar-brand { flex-direction: column; gap: 8px !important; padding: 3px 2px 12px; }
+.window-controls {
+  position: fixed;
+  z-index: 20;
+  top: 8px;
+  right: 10px;
+  padding: 0;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+.window-controls .titlebar-btn { width: 32px; height: 28px; padding: 0; justify-content: center !important; }
+.window-controls .titlebar-btn > span:first-child { width: auto; }
+.cat-logo {
+  width: 108px;
+  height: 108px;
+  object-fit: contain;
+  image-rendering: auto;
+  filter: drop-shadow(0 3px 4px #000) drop-shadow(0 0 5px color-mix(in srgb, var(--brand) 35%, transparent));
+}
+.titlebar-brand { align-items: center !important; gap: 5px !important; }
+.app-name {
+  width: 100%;
+  padding: 0;
+  text-align: center;
+  font-family: 'Cinzel Decorative', 'Palatino Linotype', Georgia, serif;
+  font-size: 18px !important;
+  font-weight: 700 !important;
+  font-variant: small-caps;
+  letter-spacing: 0.09em;
+  color: #db403a !important;
+  -webkit-text-stroke: 0.35px #080808;
+  text-shadow: 0 1px 0 #000, 0 2px 2px #000, 0 0 5px color-mix(in srgb, var(--brand) 25%, transparent);
+}
+.titlebar-timers {
+  width: 100%;
+  box-sizing: border-box;
+  justify-content: space-between;
+  padding: 10px 6px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.titlebar-timers > div {
+  flex: 1;
+  align-items: center;
+  text-align: center;
+}
+.titlebar-timers > div + div {
+  border-left: 1px solid var(--border);
+}
+.titlebar-nav { flex-direction: column; align-items: stretch !important; gap: 4px !important; }
+.titlebar-footer { margin-top: auto; flex-direction: column; align-items: stretch !important; gap: 10px !important; }
+.footer-wordmark { align-items: center !important; padding: 0 6px; text-align: center; }
+.titlebar-btn { width: 100%; height: 32px; padding: 0 9px; gap: 9px; justify-content: flex-start !important; font-size: 11px !important; font-weight: 600; }
+.titlebar-btn > span:first-child { width: 16px; text-align: center; font-size: 14px; }
 
 /* ---- Dashboard right rail: "telemetry readout" panels ----
    Deliberately its own visual language: framed panels with a header strip,
@@ -951,7 +1032,7 @@ h1, h2, h3, .brand-font { font-family: 'Sora', 'Inter', system-ui, sans-serif; }
 .palette-chip:active { cursor: grabbing; transform: scale(0.98); }
 
 .block-row {
-  display: flex; align-items: center; gap: 9px; flex-wrap: wrap;
+  display: flex; align-items: center; gap: 9px;
   padding: 8px 10px 8px 12px; border-radius: 8px; border: 1px solid var(--border);
   border-left: 3px solid var(--blk, var(--border));
   background: var(--bg-card); margin-bottom: 6px; cursor: grab;
@@ -1776,7 +1857,7 @@ body.compact-mode #compact-strip {
   align-items: center;
   gap: 10px;
   position: fixed;
-  left: 0;
+  left: 160px;
   right: 0;
   bottom: 0;
   height: 50px;

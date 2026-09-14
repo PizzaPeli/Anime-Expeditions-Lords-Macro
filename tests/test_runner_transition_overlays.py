@@ -22,7 +22,7 @@ def _runner():
     return runner
 
 
-def test_party_overlay_uses_zero_hold_then_parks_and_verifies(monkeypatch):
+def test_party_overlay_uses_zero_hold_and_verifies_without_cursor_park(monkeypatch):
     runner = _runner()
     detections = iter(((PARTY_MATCH, "invite_players_open"), (None, None)))
 
@@ -51,7 +51,7 @@ def test_party_overlay_uses_zero_hold_then_parks_and_verifies(monkeypatch):
 
     assert runner._dismiss_party_overlay(123, threading.Event()) is True
     runner._mouse.click.assert_called_once_with(724, 195, hold=0.0)
-    runner._mouse.move_to.assert_called_once_with(103, 203)
+    runner._mouse.move_to.assert_not_called()
 
 
 def test_party_overlay_stops_after_two_failed_dismissals(monkeypatch):
@@ -77,7 +77,7 @@ def test_party_overlay_stops_after_two_failed_dismissals(monkeypatch):
 
     assert runner._dismiss_party_overlay(123, threading.Event()) is False
     assert runner._mouse.click.call_count == 2
-    assert runner._mouse.move_to.call_count == 2
+    runner._mouse.move_to.assert_not_called()
 
 
 def test_gamemode_click_retries_after_party_overlay(monkeypatch):
@@ -99,7 +99,7 @@ def test_gamemode_click_retries_after_party_overlay(monkeypatch):
     runner._dismiss_party_overlay.assert_called_once()
 
 
-def test_play_click_parks_cursor_before_gamemode_transition(monkeypatch):
+def test_play_click_does_not_park_cursor_before_gamemode_transition(monkeypatch):
     runner = _runner()
     runner._set_status = MagicMock()
     play_match = {"score": 1.0, "cx": 575, "cy": 675}
@@ -121,7 +121,7 @@ def test_play_click_parks_cursor_before_gamemode_transition(monkeypatch):
 
     assert runner._click_play(123, threading.Event()) is True
     click_match.assert_called_once_with(runner._mouse, 123, play_match)
-    runner._mouse.move_to.assert_called_once_with(103, 203)
+    runner._mouse.move_to.assert_not_called()
 
 
 def test_invite_decline_variant_survives_small_ui_scale_shift(tmp_path):

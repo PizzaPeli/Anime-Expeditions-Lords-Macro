@@ -11,6 +11,8 @@ import sys
 import threading
 import time
 
+import numpy as np
+
 from . import detect
 from . import input_record
 from . import keys
@@ -22,6 +24,26 @@ from .runner_constants import *  # noqa: F401,F403 -- the shared constants names
 
 
 class BlockOps:
+    def _macro_is_usable(self, macro_name: str) -> bool:
+        """Is this saved macro actually there, with blocks in it?
+
+        The same check main.py's _story_macro_setup makes, but asked at the
+        moment it matters rather than as a precondition for turning a feature
+        on. A name that no longer resolves is not a reason to refuse to run
+        -- it is a reason to run the map on Auto Play (see
+        _run_challenge_battle).
+        """
+        from . import templates as tpl
+        name = str(macro_name or "").strip()
+        if not name:
+            return False
+        try:
+            if not tpl.template_exists(name):
+                return False
+            return isinstance(tpl.load_template(name).get("blocks"), dict)
+        except Exception:
+            return False
+
     def _load_battle_blocks(self, task: dict) -> list:
         macro_name = task.get("macro")
         if not macro_name:
@@ -125,6 +147,12 @@ class BlockOps:
                 break
         self._battle_block_index, self._battle_block_state = saved_index, saved_state
 
+    def _current_task_mode(self) -> str:
+        """The running task's mode, for skip_modes checks in the Battle/Loop
+        tick (which, unlike Pre Start, isn't handed the task dict)."""
+        task = getattr(self, "_current_task", None)
+        return (task.get("mode") if isinstance(task, dict) else None) or "story"
+
     def _run_battle_blocks_tick(self, hwnd, stop_event: threading.Event, battle_blocks: list, first_repeat: bool,
                                   macro_name: str = None, persistent_detects=None) -> None:
         """Advances the Battle-phase block list by one step, called once per
@@ -150,6 +178,20 @@ class BlockOps:
             if btype == "_jump":
                 self._battle_block_index += block.get("_offset", 1)
                 continue
+            # skip_modes, same contract as in _run_prestart_blocks: a block
+            # the template declares as not applicable to the running task's
+            # mode. It matters in Battle/Loop A/B too, not just Pre Start --
+            # the portal templates' Loop A watches for the post-run chooser
+            # and clicks Select on it, which is exactly the click a Portals
+            # TASK makes itself (and counts). Left in, the two would race for
+            # the same button and the task's count would be wrong.
+            skip_modes = block.get("skip_modes")
+            if skip_modes and (self._current_task_mode() in {str(m) for m in skip_modes}):
+                self._release_quick_place_shift()
+                self._battle_block_index += (block.get("_else_offset", 1)
+                                             if btype == "detect" else 1)
+                self._battle_block_state = {}
+                return
             if btype == "detect":
                 detect_index = self._battle_block_index
                 if persistent_detects is not None and detect_index in persistent_detects:
@@ -283,12 +325,12 @@ class BlockOps:
                 self._run_setting_block(hwnd, stop_event, block, self._battle_block_index + 1)
                 done = True
                 self._battle_block_state = {}
-            elif btype == "click":
-                self._run_click_block(hwnd, stop_event, block, self._battle_block_index + 1)
-                done = True
-                self._battle_block_state = {}
             elif btype == "drag":
                 self._run_drag_block(hwnd, stop_event, block, self._battle_block_index + 1)
+                done = True
+                self._battle_block_state = {}
+            elif btype == "click":
+                self._run_click_block(hwnd, stop_event, block, self._battle_block_index + 1)
                 done = True
                 self._battle_block_state = {}
             elif btype == "send_key":
@@ -360,23 +402,63 @@ class BlockOps:
         works for this block unchanged. For any button/UI element no
         dedicated block covers -- deliberately no image search or
         verification: it clicks where told, whatever is (or isn't) there,
-        which is exactly what makes it a useful escape hatch."""
+        which is exactly what makes it a useful escape hatch.
+
+        params.coord_key (0.21) resolves x/y from the runner's coords
+        map (Settings > Debug > Macro Coordinates) instead of the block's
+        own x/y -- pass "portal_activate" and the block reads
+        portal_activate_x / portal_activate_y from settings, so a bundled
+        template stays valid across users without every user re-picking
+        the same points. Same 0/0 = "no position set -- skipping" rule
+        applies, so an unpicked coord logs the skip instead of clicking
+        blind."""
         label = f"{phase_label} block #{block_num} (Click)"
         params = block.get("params", {})
-        try:
-            x, y = int(params.get("x") or 0), int(params.get("y") or 0)
-        except (TypeError, ValueError):
-            self._log(f"[Macro] {label}: bad x/y -- skipping.")
-            return
+        coord_key = params.get("coord_key")
+        if coord_key:
+            base = str(coord_key)
+            try:
+                x = int(self._coords.get(f"{base}_x") or 0)
+                y = int(self._coords.get(f"{base}_y") or 0)
+            except (TypeError, ValueError):
+                self._log(f"[Macro] {label}: coord_key {base!r} resolved to "
+                         f"non-numeric values -- skipping.")
+                return
+        else:
+            try:
+                x, y = int(params.get("x") or 0), int(params.get("y") or 0)
+            except (TypeError, ValueError):
+                self._log(f"[Macro] {label}: bad x/y -- skipping.")
+                return
         if not x and not y:
             # (0, 0) is the unset default straight from the palette -- a
             # deliberate top-left-corner click is not a real use case, but a
             # forgotten Set button absolutely is.
-            self._log(f"[Macro] {label}: no position set -- skipping.")
+            if coord_key:
+                self._log(f"[Macro] {label}: coord_key {coord_key!r} not set "
+                         f"in Settings > Debug > Macro Coordinates -- skipping.")
+            else:
+                self._log(f"[Macro] {label}: no position set -- skipping.")
             return
         self._log(f"[Macro] {label}: clicking ({x}, {y}).")
         left, top, _, _ = wm.get_window_rect_screen(hwnd)
-        self._mouse.click(left + x, top + y)
+        # _hover_click, not a bare mouse.click. Two things a bare click skips,
+        # and this block is the one place users point at arbitrary in-match
+        # buttons, so it hits both: the window has to actually have focus, and
+        # some Roblox buttons only register after genuine hover-IN movement
+        # rather than a cursor that teleports onto them (the same reason
+        # vision.click_match shuffles, added for the lobby Event button).
+        #
+        # The Auto Play button is one of those. A 0.29.0 run has this block
+        # clicking (1093, 474) right after a Detect found `autoplay_off` there
+        # at 0.96 -- the point was right, the button was there, and Auto Play
+        # stayed off. The same log shows Start Game needing "attempt 2/3"
+        # moments later, which is the same swallowed-first-click signature.
+        #
+        # Still no image search and no verification afterwards: this block
+        # clicks where it is told, whatever is or isn't there. That is what
+        # makes it the escape hatch. It just clicks the way the game accepts.
+        self._hover_click(left + x, top + y, hwnd)
 
     def _run_drag_block(self, hwnd, stop_event: threading.Event, block: dict, block_num: int,
                         phase_label: str = "Battle") -> None:
@@ -402,10 +484,10 @@ class BlockOps:
             self._log(f"[Macro] {label}: no positions set -- skipping.")
             return
         try:
-            steps = max(1, int(params.get("steps") or DRAG_DEFAULT_STEPS))
-            duration_ms = max(0, int(params.get("duration_ms") or DRAG_DEFAULT_DURATION_MS))
+            steps = max(1, int(params.get("steps") or 30))
+            duration_ms = max(0, int(params.get("duration_ms") or 600))
         except (TypeError, ValueError):
-            steps, duration_ms = DRAG_DEFAULT_STEPS, DRAG_DEFAULT_DURATION_MS
+            steps, duration_ms = 30, 600
         self._log(f"[Macro] {label}: dragging ({x1}, {y1}) -> ({x2}, {y2}) "
                   f"({steps} steps, {duration_ms}ms).")
         left, top, _, _ = wm.get_window_rect_screen(hwnd)
@@ -687,7 +769,33 @@ class BlockOps:
             image = vision.capture_window_region_bgr(hwnd, self._wave_region)
             if image is None or image.size == 0:
                 raise RuntimeError("Roblox window capture returned no pixels")
-            current, maximum = wave_module.read_wave(image)
+            # Reading this badge is the expensive part of Wait for Wave: on
+            # a Tesseract-only setup it launches a full multi-mask OCR vote.
+            # The game redraws the badge when its number changes, so an
+            # identical later crop can safely reuse a *valid* earlier read.
+            # We still capture the tiny HUD rectangle every poll, which means
+            # a real wave advance is noticed immediately.  Never reuse a
+            # target-reaching read: that path deliberately demands a second,
+            # independent OCR frame before releasing later blocks.
+            cached = state.get("wave_read_cache")
+            must_confirm = bool(state.get("wave_target_confirmation"))
+            if (
+                not must_confirm
+                and cached is not None
+                and np.array_equal(image, cached["image"])
+            ):
+                current, maximum = cached["result"]
+            else:
+                current, maximum = wave_module.read_wave(image)
+                if current is not None:
+                    state["wave_read_cache"] = {
+                        "image": image.copy(),
+                        "result": (current, maximum),
+                    }
+                else:
+                    # Never cache a miss: a transient OCR failure must keep
+                    # receiving the full retry behavior below.
+                    state.pop("wave_read_cache", None)
         except Exception as exc:
             self._log(f'{label}: OCR failed ({exc}) -- retrying in {WAIT_WAVE_POLL_INTERVAL:.0f}s.')
             state["next_check"] = time.time() + WAIT_WAVE_POLL_INTERVAL
@@ -1009,6 +1117,7 @@ class BlockOps:
         self._set_status(action=f'Running "{macro_name}" Pre Start blocks...')
         self._last_unit_ordinal = 0
         self._quick_place_shift_down = False
+        self._placement_mode_active = False
         try:
             # An index loop (not enumerate) so detect/_jump control blocks can
             # jump over the branch not taken. `step` numbers only real,
@@ -1024,6 +1133,27 @@ class BlockOps:
                     idx += block.get("_offset", 1)
                     continue
                 step += 1
+                # skip_modes (0.22): a block the template declares as
+                # irrelevant to certain task modes. The bundled portal
+                # templates open with a Detect that waits for the Activate
+                # screen -- correct when the template is driving the whole
+                # run (Macro Manager, or the pre-0.22 "open a portal then
+                # press Play" workflow), but a Portals TASK has already
+                # clicked Activate before Pre Start begins, so that Detect
+                # would sit out its full retry budget staring at a screen
+                # that is gone. Declared on the block rather than hardcoded
+                # here so any template can opt a block out of any mode.
+                #
+                # A skipped Detect takes its ELSE branch (same as "not
+                # found") rather than falling through into THEN -- skipping
+                # the block must skip what it guards, not run it unguarded.
+                skip_modes = block.get("skip_modes")
+                if skip_modes and (task.get("mode") or "story") in {str(m) for m in skip_modes}:
+                    self._release_quick_place_shift()
+                    self._log(f'[Macro] Skipping block #{step} -- the template marks it as not '
+                              f'applicable to "{task.get("mode") or "story"}" tasks.')
+                    idx += block.get("_else_offset", 1) if btype == "detect" else 1
+                    continue
                 if btype == "detect":
                     found = self._run_prestart_detect(hwnd, stop_event, block, step)
                     if found is None:
@@ -1060,6 +1190,12 @@ class BlockOps:
             # it. Whatever else happens, Shift never leaves this function
             # still held.
             self._release_quick_place_shift()
+            # ...and the game never leaves it still in placing mode. A single
+            # Place Unit block holds no Shift at all, so the release above
+            # does nothing for it -- but the hotkey it pressed still put the
+            # game in placing mode, and Start Game cannot be clicked through
+            # that. See _exit_placement_mode.
+            self._exit_placement_mode()
 
     def _run_prestart_single_block(self, hwnd, stop_event: threading.Event, task: dict, default_walk_paths: dict,
                                      block: dict, i: int, macro_name: str, first_repeat: bool, next_block: dict) -> None:
@@ -1083,10 +1219,10 @@ class BlockOps:
             self._run_walk_block_tick(stop_event, block, i, phase_label="Pre Start")
         elif btype == "record":
             self._run_record_macro_tick(hwnd, stop_event, block, i, phase_label="Pre Start")
-        elif btype == "click":
-            self._run_click_block(hwnd, stop_event, block, i, phase_label="Pre Start")
         elif btype == "drag":
             self._run_drag_block(hwnd, stop_event, block, i, phase_label="Pre Start")
+        elif btype == "click":
+            self._run_click_block(hwnd, stop_event, block, i, phase_label="Pre Start")
         elif btype == "wait_ms":
             self._run_wait_ms_tick(stop_event, block, i, phase_label="Pre Start")
         elif btype == "send_key":
@@ -1143,16 +1279,13 @@ class BlockOps:
         if block.get("mode") == "custom" and block.get("pathName"):
             path_name = block["pathName"]
         else:
-            # A Raid map's Acts can each need a different walk (e.g. Spirit
-            # City Act 3 -- see ACT_ORDER) -- looked up as "<map> Act<n>"
-            # first, falling back to the plain map-name entry other Acts and
-            # Story share, so only the Acts that actually need a different
-            # walk need their own default_walk_paths entry. Event stays in
-            # this branch but no longer has Acts (its stage names a kind,
-            # 'infinite'/'portal'), so it always takes the fallback -- the
-            # leftover "Event Act1"/"Event Act2" entries in
-            # Assets/default_walk_paths.json were the retired Villian
-            # Invasion's and nothing looks them up any more.
+            # A Raid map's Acts (and Event's) can each need a different walk
+            # (e.g. Spirit City Act 3, or each Event villain -- see ACT_ORDER/
+            # EVENT_ACT_ORDER) -- looked up as "<map> Act<n>" first, falling
+            # back to the plain map-name entry other Acts/Story share, so only
+            # the Acts that actually need a different walk need their own
+            # default_walk_paths entry. Event ships "Event Act1"/"Event Act2"
+            # -> Villian1/Villian2 (see Assets/default_walk_paths.json).
             path_name = None
             if map_name:
                 if task.get("mode") in ("raid", "event"):
@@ -1174,10 +1307,41 @@ class BlockOps:
         walk_paths.replay_events(events, self._keyboard, stop_event, sprint=sprint)
         self._log(f'[Macro] Walk finished{" (sprinting)" if sprint else ""}.')
 
+    # Set the moment a unit hotkey is pressed, cleared by the Z tap that
+    # leaves placing mode. Class-level so every path can read it even if a
+    # run never reaches _run_prestart_blocks' own reset.
+    _placement_mode_active = False
+
     def _release_quick_place_shift(self) -> None:
         if self._quick_place_shift_down:
             self._keyboard.key_up(keys.VK_SHIFT)
             self._quick_place_shift_down = False
+            # 0.23.5: Shift first, THEN Z. Releasing Shift ends the chain but
+            # leaves the game in placing mode with the unit still in hand.
+            self._exit_placement_mode()
+
+    def _exit_placement_mode(self) -> None:
+        """Tap Z to leave the game's placing/multi-place mode.
+
+        Pressing a unit's hotkey puts the game INTO placing mode and nothing
+        takes it back out on its own -- not a placement that failed its
+        white-tile search, not one that hit the placement cap, not a Pre
+        Start list that simply ended after its last Place Unit block. The
+        game then swallows everything that comes next (Start Game included)
+        as clicks aimed at placing the unit still in hand, which reads as
+        "the macro stopped doing anything after multi-place".
+
+        Gated on _placement_mode_active rather than fired blindly, so a run
+        with no Place Unit blocks never sends a stray Z into the game, and
+        so the tap happens exactly once no matter how many callers on the
+        way out ask for it (the quick-place release, the end of Pre Start,
+        and the Battle tick's chain break all do).
+        """
+        if not self._placement_mode_active:
+            return
+        self._placement_mode_active = False
+        self._keyboard.tap(ord("Z"))
+        time.sleep(0.1)
 
     def _capture_place_search_region(self, hwnd, left: int, top: int, region: tuple):
         """Capture the frame that contains Roblox's placement highlight.
@@ -1404,6 +1568,7 @@ class BlockOps:
             time.sleep(0.1)
             self._log(f'[Macro] Place Unit "{name}": pressing hotkey "{hotkey}" -- entering placing mode.')
             self._keyboard.tap(vk)
+            self._placement_mode_active = True
             time.sleep(PLACE_HOTKEY_SETTLE)
 
             if next_is_same_unit:
@@ -1534,6 +1699,7 @@ class BlockOps:
             self._keyboard.tap(ord("Z"))
             time.sleep(0.1)
             self._keyboard.tap(vk)
+            self._placement_mode_active = True
             time.sleep(PLACE_HOTKEY_SETTLE)
 
             if block.get("ignoreHighlight"):
@@ -1719,4 +1885,3 @@ class BlockOps:
             return
 
         self._log(f'[Macro] Setting "{name}" ({kind or "?"}) -- unsupported kind, skipping.')
-

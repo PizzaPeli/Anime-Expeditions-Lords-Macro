@@ -52,6 +52,7 @@ def test_auto_shop_catalog_has_every_gold_shop_item_and_asset():
         ("frown_fruit", "Frown Fruit", 100),
         ("delicious_pie", "Delicious Pie", 125),
         ("mana_flask", "Mana Flask", 150),
+        ("meat", "Meat", 200),
         ("trait_crystal", "Trait Crystal", 25),
         ("sprite_grey", "Sprite (Grey)", 25),
         ("equipment_reroll", "Equipment Reroll", 10),

@@ -59,7 +59,7 @@ else:
 if IS_FROZEN and sys.platform == "darwin":
     APP_DIR = os.path.join(
         os.path.expanduser("~/Library/Application Support"),
-        "Creams Macro - Anime Expeditions",
+        "Lords Macro - Anime Expeditions",
     )
     try:
         os.makedirs(APP_DIR, exist_ok=True)

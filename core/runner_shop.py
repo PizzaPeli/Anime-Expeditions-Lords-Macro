@@ -1,5 +1,6 @@
 """Daily Gold Shop automation executed only from lobby-safe runner boundaries."""
 
+import hashlib
 import threading
 import time
 
@@ -35,21 +36,40 @@ SHOP_OUT_OF_STOCK_BANDS = {
 }
 SHOP_OUT_OF_STOCK_DEFAULT_BAND = (218, 110)
 SHOP_LIST_ACTION_VIEWPORT = (390, 218, 316, 362)
+SHOP_DISCOVERY_VIEWPORT = (390, 180, 316, 440)
+SHOP_DISCOVERY_SCROLL_AMOUNT = -120
+SHOP_DISCOVERY_MAX_SCROLLS = 24
 SHOP_SETTLE_DELAY = 1.2
 SHOP_LIST_SETTLE_DELAY = 1.2
 SHOP_MODAL_POST_CLOSE_DELAY = 0.8
 SHOP_CAPTURE_INTERVAL = 0.12
+# The Gold Shop is a two-column list, two items per row, in a fixed order.
+# These four tables ARE that layout, so they must agree with each other and
+# with AUTO_SHOP_ITEMS' order in core/auto_shop.py. Row positions belong to the
+# ROW INDEX, not to the items in it -- when Meat was added as the 6th food it
+# did not add a row (11 items in 6 rows became 12 in 6), so the scroll amounts
+# below are unchanged from before it and only the item-to-row mapping moved.
+# Verified against the live shop, rows overlapping so each pair is confirmed
+# twice:
+#
+#   row 0  scroll     0   Cursed Boba (L)       Red Flower (R)
+#   row 1  scroll  -120   Frown Fruit (L)       Delicious Pie (R)
+#   row 2  scroll  -480   Mana Flask (L)        Meat (R)          <- Meat here
+#   row 3  scroll  -720   Trait Crystal (L)     Sprite (Grey) (R)
+#   row 4  scroll  -960   Equipment Reroll (L)  Equipment Lock (R)
+#   row 5  bottom         Stat Reroll (L)       Stat Lock (R)
 SHOP_ITEM_SCROLL_STEPS = {
     "cursed_boba": 0,
     "red_flower": 0,
     "frown_fruit": 1,
     "delicious_pie": 1,
     "mana_flask": 1,
-    "trait_crystal": 1,
+    "meat": 1,
+    "trait_crystal": 2,
     "sprite_grey": 2,
-    "equipment_reroll": 2,
+    "equipment_reroll": 3,
     "equipment_lock": 3,
-    "stat_reroll": 3,
+    "stat_reroll": 4,
     "stat_lock": 4,
 }
 SHOP_ITEM_SCROLL_AMOUNTS = {
@@ -58,12 +78,13 @@ SHOP_ITEM_SCROLL_AMOUNTS = {
     "frown_fruit": -120,
     "delicious_pie": -120,
     "mana_flask": -480,
-    "trait_crystal": -480,
+    "meat": -480,
+    "trait_crystal": -720,
     "sprite_grey": -720,
-    "equipment_reroll": -720,
+    "equipment_reroll": -960,
     "equipment_lock": -960,
-    "stat_reroll": -960,
-    "stat_lock": -4800,
+    "stat_reroll": SHOP_BOTTOM_SCROLL_AMOUNT,
+    "stat_lock": SHOP_BOTTOM_SCROLL_AMOUNT,
 }
 SHOP_ITEM_COLUMNS = {
     "cursed_boba": "left",
@@ -71,20 +92,21 @@ SHOP_ITEM_COLUMNS = {
     "frown_fruit": "left",
     "delicious_pie": "right",
     "mana_flask": "left",
-    "trait_crystal": "right",
-    "sprite_grey": "left",
-    "equipment_reroll": "right",
-    "equipment_lock": "left",
-    "stat_reroll": "right",
-    "stat_lock": "left",
+    "meat": "right",
+    "trait_crystal": "left",
+    "sprite_grey": "right",
+    "equipment_reroll": "left",
+    "equipment_lock": "right",
+    "stat_reroll": "left",
+    "stat_lock": "right",
 }
 SHOP_SWEEP_POSITIONS = (
     (0, ("cursed_boba", "red_flower")),
     (-120, ("frown_fruit", "delicious_pie")),
-    (-480, ("mana_flask", "trait_crystal")),
-    (-720, ("sprite_grey", "equipment_reroll")),
-    (-960, ("equipment_lock", "stat_reroll")),
-    (SHOP_BOTTOM_SCROLL_AMOUNT, ("stat_lock",)),
+    (-480, ("mana_flask", "meat")),
+    (-720, ("trait_crystal", "sprite_grey")),
+    (-960, ("equipment_reroll", "equipment_lock")),
+    (SHOP_BOTTOM_SCROLL_AMOUNT, ("stat_reroll", "stat_lock")),
 )
 
 _TERMINAL_ITEM_STATUSES = {
@@ -229,54 +251,29 @@ class ShopOps:
 
     def _shop_find_visible_item(
             self, hwnd, item: dict, stop_event: threading.Event):
-        """Find one actionable card with 1-notch refinement if slightly off."""
+        """Find a card by its own icon, never by a calibrated row or column."""
         if self._checkpoint(stop_event):
             return None
-        template = auto_shop.item_definition(item["key"])["template"]
-        column = SHOP_ITEM_COLUMNS[item["key"]]
-        scroll_amount = SHOP_ITEM_SCROLL_AMOUNTS.get(item["key"], 0)
-        allow_top = (scroll_amount == 0)
-        for attempt in range(2):
-            if self._checkpoint(stop_event):
-                return None
-            try:
-                match = vision.find_image(
-                    hwnd,
-                    template,
-                    region=SHOP_LIST_SLOT_VIEWPORTS[column],
-                )
-            except vision.TemplateNotFound as exc:
-                self._log(f"[Shop] {exc}")
-                return None
-            if match is not None:
-                stock_region = auto_shop_vision.stock_status_region_from_item_match(match)
-                buy_region = auto_shop_vision.initial_buy_region_from_item_match(match)
-                if (
-                        self._shop_region_is_visible(stock_region, allow_top_clip=allow_top)
-                        and self._shop_region_is_visible(buy_region)):
-                    return match
-            if attempt == 0:
-                time.sleep(0.3)
-
-        # Refinement search: if scroll slightly undershot, try a 1-notch adjustment (-120px)
-        if scroll_amount != 0 and scroll_amount != SHOP_BOTTOM_SCROLL_AMOUNT:
-            self._mouse.scroll(SHOP_SCROLL_REFINEMENT_AMOUNT)
-            time.sleep(0.4)
-            try:
-                match = vision.find_image(
-                    hwnd,
-                    template,
-                    region=SHOP_LIST_SLOT_VIEWPORTS[column],
-                )
-            except vision.TemplateNotFound:
-                match = None
-            if match is not None:
-                stock_region = auto_shop_vision.stock_status_region_from_item_match(match)
-                buy_region = auto_shop_vision.initial_buy_region_from_item_match(match)
-                if (
-                        self._shop_region_is_visible(stock_region, allow_top_clip=allow_top)
-                        and self._shop_region_is_visible(buy_region)):
-                    return match
+        definition = auto_shop.item_definition(item["key"])
+        template = definition["template"]
+        try:
+            match = vision.find_image(
+                hwnd,
+                template,
+                region=SHOP_DISCOVERY_VIEWPORT,
+                template_dir=definition.get("template_dir", vision.UI_ASSETS_DIR),
+            )
+        except vision.TemplateNotFound as exc:
+            self._log(f"[Shop] {exc}")
+            return None
+        if match is not None:
+            # The item icon is its identity proof.  The Buy rectangle is only
+            # accepted when it is still visibly attached to that same card.
+            buy_region = auto_shop_vision.initial_buy_region_from_item_match(match)
+            if (self._shop_region_is_visible(buy_region)
+                    and auto_shop_vision.verify_card_identity(
+                        vision.capture_game_bgr(hwnd), item["key"], match)):
+                return match
         return None
 
     def _shop_find_slot_out_of_stock(
@@ -307,15 +304,8 @@ class ShopOps:
         period = self._shop_state_period(state)
         retry = auto_shop.normalize_item_state(state, period)
         if retry["status"] != auto_shop.STATUS_PENDING_VERIFICATION:
-            # Increment attempts to avoid infinite retry loop
-            retry["attempts"] = min(
-                auto_shop.AUTO_SHOP_MAX_ITEM_ATTEMPTS,
-                retry["attempts"] + 1,
-            )
-            if retry["attempts"] >= auto_shop.AUTO_SHOP_MAX_ITEM_ATTEMPTS:
-                retry["status"] = auto_shop.STATUS_FAILED_TODAY
-            else:
-                retry["status"] = auto_shop.STATUS_RETRY_PENDING
+            retry["attempts"] = 0
+            retry["status"] = auto_shop.STATUS_RETRY_PENDING
             retry["verification"] = None
         return retry
 
@@ -349,75 +339,66 @@ class ShopOps:
     def _shop_run_no_ocr_sweep(
             self, hwnd, shop_key: str, items: list,
             stop_event: threading.Event) -> None:
-        """Process each enabled row from its calibrated absolute position."""
-        due_by_key = {item["key"]: item for item in items}
-        for scroll_amount, row_keys in SHOP_SWEEP_POSITIONS:
-            row_items = [
-                due_by_key[item_key]
-                for item_key in row_keys
-                if item_key in due_by_key
-            ]
-            if not row_items:
-                continue
-            names = ", ".join(item["name"] for item in row_items)
-            self._log(
-                f"[Shop] Positioning {names}: reset Top, "
-                f"then scroll {scroll_amount}."
-            )
-            if not self._shop_move_to_scroll_position(
-                    hwnd, scroll_amount, stop_event):
+        """Sweep the live list once, discovering cards by icon at each scroll.
+
+        No row, column, synthetic match, stock OCR, or saved scroll offset is
+        trusted here.  A card can only own a Buy click in the same viewport in
+        which its item image was freshly found.
+        """
+        pending = {item["key"]: item for item in items}
+        seen = set()
+        x, y = vision.ref_to_screen(hwnd, *SHOP_LIST_CENTER)
+        self._mouse.move_to(x, y)
+        self._mouse.nudge()
+        self._mouse.scroll(SHOP_SCROLL_RESET_AMOUNT)
+        time.sleep(SHOP_LIST_SETTLE_DELAY)
+
+        for _step in range(SHOP_DISCOVERY_MAX_SCROLLS + 1):
+            if self._checkpoint(stop_event):
                 return
-
-            for item in row_items:
-                if self._checkpoint(stop_event):
-                    return
-                self._set_status(action=f'Checking {item["name"]}...')
-                if self._shop_find_slot_out_of_stock(
-                        hwnd, item, scroll_amount, stop_event):
-                    self._shop_save_item_state(
-                        shop_key,
-                        item["key"],
-                        self._shop_out_of_stock_state(item),
-                    )
-                    self._log(f'[Shop] "{item["name"]}" is out of stock.')
+            for item_key, item in tuple(pending.items()):
+                if item_key in seen or self._checkpoint(stop_event):
                     continue
+                self._set_status(action=f'Looking for {item["name"]}...')
                 match = self._shop_find_visible_item(hwnd, item, stop_event)
-                cancel_match = None
                 if match is None:
-                    synthetic = self._shop_synthetic_item_match(item, scroll_amount)
-                    cancel_match = self._shop_try_fallback_modal(hwnd, item, synthetic, stop_event)
-                    if cancel_match is not None:
-                        match = synthetic
-
-                if match is None:
-                    self._shop_save_item_state(
-                        shop_key,
-                        item["key"],
-                        self._shop_retry_item_state(item),
-                    )
-                    self._log(
-                        f'[Shop] "{item["name"]}" was not found at its '
-                        f"calibrated scroll position ({scroll_amount}); "
-                        "it will retry on the next Auto Shop pass."
-                    )
                     continue
-                if cancel_match is not None:
-                    self._shop_process_visible_item(
-                        hwnd,
-                        shop_key,
-                        item,
-                        match,
-                        stop_event,
-                        cancel_match=cancel_match,
-                    )
-                else:
-                    self._shop_process_visible_item(
-                        hwnd,
-                        shop_key,
-                        item,
-                        match,
-                        stop_event,
-                    )
+                seen.add(item_key)
+                self._shop_process_visible_item(
+                    hwnd, shop_key, item, match, stop_event,
+                )
+
+            if len(seen) == len(pending) or self._checkpoint(stop_event):
+                break
+            before = self._shop_discovery_signature(hwnd)
+            self._mouse.scroll(SHOP_DISCOVERY_SCROLL_AMOUNT)
+            time.sleep(SHOP_LIST_SETTLE_DELAY)
+            after = self._shop_discovery_signature(hwnd)
+            if before is not None and before == after:
+                self._log("[Shop] Reached the end of the Gold Shop list.")
+                break
+
+        for item_key, item in pending.items():
+            if item_key in seen or self._checkpoint(stop_event):
+                continue
+            period = self._shop_state_period(item.get("state") or {})
+            self._shop_save_item_state(
+                shop_key,
+                item_key,
+                auto_shop.mark_item_not_located(item.get("state"), period),
+            )
+            self._log(
+                f'[Shop] "{item["name"]}" was not found in the full list; '
+                "it remains pending for a later Auto Shop pass."
+            )
+
+    @staticmethod
+    def _shop_discovery_signature(hwnd):
+        """Return a compact viewport fingerprint for physical-end detection."""
+        frame = vision.capture_game_bgr(hwnd, SHOP_DISCOVERY_VIEWPORT)
+        if frame is None or not frame.size:
+            return None
+        return hashlib.sha256(frame[::12, ::12].tobytes()).digest()
 
     def _shop_synthetic_item_match(self, item: dict, scroll_amount: int) -> dict:
         """Construct synthetic item match coordinates from calibrated slot position."""
@@ -459,11 +440,18 @@ class ShopOps:
         try:
             cancel_match = vision.wait_for_image(
                 hwnd,
-                auto_shop.AUTO_SHOP_UI_TEMPLATES["modal_cancel"],
+                # Was "modal_cancel", a key that has never existed in
+                # AUTO_SHOP_UI_TEMPLATES -- so this raised KeyError, the bare
+                # except below swallowed it, and this whole fallback path
+                # could never once have succeeded.
+                auto_shop.AUTO_SHOP_UI_TEMPLATES["cancel"],
                 timeout=SHOP_MODAL_TIMEOUT,
                 stop_event=stop_event,
             )
-        except Exception:
+        except vision.TemplateNotFound:
+            # A missing crop is the only expected failure here. Catching
+            # everything is what hid the KeyError above for as long as it
+            # existed.
             cancel_match = None
         if cancel_match is not None:
             self._log(f'[Shop] Fallback modal opened for "{item["name"]}"!')
@@ -574,21 +562,53 @@ class ShopOps:
             "cy": y + height // 2,
         }
         vision.click_match(self._mouse, hwnd, buy_match)
+        # "Did the modal open?" and "where is its Cancel button?" are two
+        # different questions, and answering the first with the second is
+        # what made this report insufficient Gold for a missing template.
+        # The modal's own art answers the first; Cancel is still needed for
+        # the second, because every other part of this flow is measured FROM
+        # it (amount toggle, final Buy, the cancel click itself all derive
+        # their regions from cancel_match).
+        cancel_name = auto_shop.AUTO_SHOP_UI_TEMPLATES["cancel"]
+        modal_name = auto_shop.AUTO_SHOP_UI_TEMPLATES["purchase_modal"]
         try:
-            cancel_match = vision.wait_for_image(
+            opened, opened_by = vision.wait_for_image_any(
                 hwnd,
-                auto_shop.AUTO_SHOP_UI_TEMPLATES["cancel"],
+                (cancel_name, modal_name),
                 timeout=SHOP_MODAL_TIMEOUT,
                 stop_event=stop_event,
             )
         except vision.TemplateNotFound as exc:
             self._log(f"[Shop] {exc}")
             return None
-        if cancel_match is None and not self._checkpoint(stop_event):
-            self._log(
-                "[Shop] Buy was clicked, but the purchase modal did not open; "
-                "the button may be disabled by insufficient Gold."
-            )
+        if opened is None:
+            if not self._checkpoint(stop_event):
+                self._log(
+                    "[Shop] Buy was clicked, but the purchase modal did not open "
+                    f'(watched for "{cancel_name}" and "{modal_name}"). The button may be '
+                    "disabled by insufficient Gold -- or neither crop matches your screen; "
+                    "add one through Settings > General > Image Manager."
+                )
+            return None
+        if opened_by == cancel_name:
+            return opened
+        # The modal is definitely up. Cancel just has not been found yet --
+        # give it its own look now rather than treating a slow or slightly
+        # off Cancel crop as "the purchase failed".
+        try:
+            cancel_match = vision.wait_for_image(
+                hwnd, cancel_name, timeout=SHOP_MODAL_TIMEOUT, stop_event=stop_event)
+        except vision.TemplateNotFound:
+            cancel_match = None
+        if cancel_match is None:
+            if not self._checkpoint(stop_event):
+                self._log(
+                    f'[Shop] The purchase modal IS open ("{modal_name}" matched) but '
+                    f'"{cancel_name}" was not found on it -- and every part of the purchase '
+                    "(amount toggle, final Buy) is positioned from Cancel, so this pass "
+                    f'cannot continue. Recut "{cancel_name}" from a docked capture.'
+                )
+            return None
         return cancel_match
 
     def _shop_configure_amount(
@@ -663,7 +683,8 @@ class ShopOps:
             return False
         if self._wait_for_image_gone(
                 hwnd,
-                (auto_shop.AUTO_SHOP_UI_TEMPLATES["cancel"],),
+                (auto_shop.AUTO_SHOP_UI_TEMPLATES["cancel"],
+                 auto_shop.AUTO_SHOP_UI_TEMPLATES["purchase_modal"]),
                 SHOP_MODAL_CLOSE_TIMEOUT,
                 stop_event,
         ):
@@ -1097,9 +1118,15 @@ class ShopOps:
         if loaded is None:
             return False
         time.sleep(1.5)
-        if not wm.activate_window(hwnd):
-            self._log("[Shop] Couldn't confirm Roblox focus before opening Gold Shop.")
-            return False
+        # Advisory, like the one at the top of _run_auto_shop and for the same
+        # reason -- and with the 0.28.6 log as proof the check itself is the
+        # unreliable part, not the clicks. That run reports "couldn't confirm
+        # focus" on nav_area, nav_shop AND area_gold_shop, and yet each one is
+        # found and clicked and the NEXT screen appears: the input was landing
+        # the whole time. A refused SetForegroundWindow is a hint, never a
+        # verdict, so it must not be the thing that ends a shop run.
+        if not self._force_focus(hwnd):
+            self._log("[Shop] Couldn't confirm Roblox focus before opening Gold Shop -- continuing anyway.")
         time.sleep(0.3)
         camera.tilt_camera_top_down(self._mouse, hwnd)
         time.sleep(0.5)
@@ -1157,10 +1184,18 @@ class ShopOps:
             macro="-",
             play_mode="-",
         )
-        wm.show_window(hwnd)
-        if not wm.activate_window(hwnd):
-            self._log("[Shop] Couldn't confirm Roblox took focus.")
-            return
+        # Advisory, NOT fatal. This used to `return` on a single refused
+        # SetForegroundWindow, which is how "Stopped. (was: Preparing Gold
+        # Shop...)" ends three separate runs in the 0.28.5 log -- every one
+        # of them within ~15s of a rejoin, i.e. while a freshly relaunched
+        # Roblox was still refusing the foreground. Nothing else in the app
+        # treats a refused activation as a reason to abandon the task: the
+        # runner's own start-up path logs it and carries on. _force_focus
+        # now waits the client out; if it still cannot be confirmed, say so
+        # and keep going rather than killing the whole shop run.
+        if not self._force_focus(hwnd):
+            self._log("[Shop] Couldn't confirm Roblox took focus -- continuing anyway; "
+                       "clicks may not register until it does.")
         time.sleep(0.5)
         if not self._ensure_lobby(hwnd, stop_event):
             return

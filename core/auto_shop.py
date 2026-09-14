@@ -8,10 +8,12 @@ land without rebasing its safety-critical calculations.
 from collections import Counter
 from datetime import datetime, timezone
 import re
+from pathlib import Path
 from typing import Iterable, Mapping, Optional, Union
 
 import cv2
 import numpy as np
+from .constants import ASSETS_DIR
 
 
 AUTO_SHOP_RESET_SCHEDULE = "utc_midnight_v1"
@@ -21,6 +23,7 @@ AUTO_SHOP_CANCEL_RIGHT_PADDING = 6
 
 STATUS_PENDING = "pending"
 STATUS_RETRY_PENDING = "retry_pending"
+STATUS_PENDING_NOT_LOCATED = "pending_not_located"
 STATUS_PENDING_VERIFICATION = "pending_verification"
 STATUS_COMPLETED = "completed"
 STATUS_OUT_OF_STOCK = "out_of_stock"
@@ -45,6 +48,13 @@ AUTO_SHOP_UI_TEMPLATES = {
     "amount_min": "shop_amount_min",
     "amount_input": "shop_amount_input",
     "cancel": "shop_cancel",
+    # The purchase/amount window as a whole. DETECTION ONLY -- it is never
+    # clicked, so its crop may be the entire modal. It exists because "did
+    # the modal open?" was answered only by finding the Cancel BUTTON, and a
+    # Cancel crop that misses is indistinguishable from a Buy that never
+    # worked: the log blamed insufficient Gold for what was actually a
+    # missing template. See runner_shop._shop_open_purchase_modal.
+    "purchase_modal": "shop_purchase_modal",
     "out_of_stock": "shop_out_of_stock",
     "max_inventory": "shop_max_inventory",
 }
@@ -55,6 +65,13 @@ AUTO_SHOP_ITEMS = (
     {"key": "frown_fruit", "name": "Frown Fruit", "stock": 100, "template": "shop_frown_fruit"},
     {"key": "delicious_pie", "name": "Delicious Pie", "stock": 125, "template": "shop_delicious_pie"},
     {"key": "mana_flask", "name": "Mana Flask", "stock": 150, "template": "shop_mana_flask"},
+    # Meat is the 6th food, added to the game after this catalog was written.
+    # ORDER IS LOAD-BEARING: runner_shop navigates the Gold Shop by scroll
+    # position and column, two items per row, so inserting here shifts every
+    # item below it one slot -- which is exactly what broke Auto Shop right
+    # after the fifth food. runner_shop's four layout tables are updated to
+    # match; change one and you must change all of them.
+    {"key": "meat", "name": "Meat", "stock": 200, "template": "shop_meat"},
     {"key": "trait_crystal", "name": "Trait Crystal", "stock": 25, "template": "shop_trait_crystal"},
     {"key": "sprite_grey", "name": "Sprite (Grey)", "stock": 25, "template": "shop_sprite_grey"},
     {
@@ -73,12 +90,32 @@ AUTO_SHOP_ITEMS = (
     {"key": "stat_lock", "name": "Stat Lock", "stock": 10, "template": "shop_stat_lock"},
 )
 
+def discover_items(root=None):
+    """Extend the catalog from item folders; no row or scroll metadata."""
+    root = Path(root or Path(ASSETS_DIR) / "ui" / "shop")
+    result = {item["key"]: dict(item) for item in AUTO_SHOP_ITEMS}
+    if root.is_dir():
+        for folder in sorted(root.iterdir()):
+            if not folder.is_dir() or not (folder / "icon.png").is_file():
+                continue
+            definition = result.get(folder.name, {
+                "key": folder.name, "name": folder.name.replace("_", " ").title(),
+                "stock": 9999,
+            })
+            definition.update(template="icon", template_dir=str(folder),
+                              identity=str(folder / "identity.png"))
+            result[folder.name] = definition
+    return tuple(result.values())
+
+
+AUTO_SHOP_ITEMS = discover_items()
 AUTO_SHOP_ITEMS_BY_KEY = {item["key"]: item for item in AUTO_SHOP_ITEMS}
 
 _LEFT_COUNT_PATTERN = re.compile(r"(?<!\d)(\d{1,3})(?!\d)")
 _VALID_STATUSES = {
     STATUS_PENDING,
     STATUS_RETRY_PENDING,
+    STATUS_PENDING_NOT_LOCATED,
     STATUS_PENDING_VERIFICATION,
     STATUS_COMPLETED,
     STATUS_OUT_OF_STOCK,
@@ -334,6 +371,19 @@ def record_item_failure(saved: Optional[Mapping], period: str) -> dict:
         if state["attempts"] >= AUTO_SHOP_MAX_ITEM_ATTEMPTS
         else STATUS_PENDING
     )
+    return state
+
+
+def mark_item_not_located(saved: Optional[Mapping], period: str) -> dict:
+    """Keep an enabled item due when a complete shop sweep cannot find it.
+
+    Absence from the visible list says nothing about stock.  In particular it
+    must not consume an attempt or turn into an Out-of-Stock/failed result.
+    """
+    state = normalize_item_state(saved, period)
+    state["status"] = STATUS_PENDING_NOT_LOCATED
+    state["attempts"] = 0
+    state["verification"] = None
     return state
 
 

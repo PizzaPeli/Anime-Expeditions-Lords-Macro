@@ -43,7 +43,7 @@ import requests
 
 from . import constants
 
-GITHUB_REPO = "Cweamy/Anime-Expeditions-Creams-Macro"
+GITHUB_REPO = "PizzaPeli/Anime-Expeditions-Lords-Macro"
 RELEASES_LATEST_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 RELEASES_PAGE_URL = f"https://github.com/{GITHUB_REPO}/releases/latest"
 # The packaged release zip (exe + the loose Assets/ folder side by side,
@@ -65,8 +65,8 @@ RELEASES_PAGE_URL = f"https://github.com/{GITHUB_REPO}/releases/latest"
 # platform's zip automatically. The Windows zip briefly shipped unsuffixed
 # (v0.3.0-v0.4.0 as published) -- renamed for symmetry once the mac zip
 # joined it.
-RELEASE_ZIP_NAME = ("Creams-Macro-Anime-Expeditions-macOS.zip" if sys.platform == "darwin"
-                     else "Creams-Macro-Anime-Expeditions-Windows.zip")
+RELEASE_ZIP_NAME = ("Lords-Macro-Anime-Expeditions-macOS.zip" if sys.platform == "darwin"
+                     else "Lords-Macro-Anime-Expeditions-Windows.zip")
 # BUNDLE_DIR, not APP_DIR -- VERSION ships as part of the app itself (it's
 # what identifies which release you're running), not user-owned data.
 VERSION_FILE = os.path.join(constants.BUNDLE_DIR, "VERSION")
@@ -171,7 +171,7 @@ def check_for_update(timeout: float = 6.0, log=None) -> dict:
     suffix = "-macos.zip" if sys.platform == "darwin" else "-windows.zip"
     release_zip_asset = (
         next((a for a in assets if a.get("name", "").lower().endswith(suffix)), None)
-        or next((a for a in assets if a.get("name", "").lower() == "creams-macro-anime-expeditions.zip"), None))
+        or next((a for a in assets if a.get("name", "").lower() == "lords-macro-anime-expeditions.zip"), None))
     return {
         "available": True,
         "version": tag,
@@ -551,7 +551,7 @@ def _get_release_zip_with_fallback(release_zip_url: str, log):
     the real name shouldn't get retried into confusion on legacy names)."""
     base, _, name = release_zip_url.rpartition("/")
     candidates = [release_zip_url]
-    for legacy in (RELEASE_ZIP_NAME, "Creams-Macro-Anime-Expeditions.zip"):
+    for legacy in (RELEASE_ZIP_NAME, "Lords-Macro-Anime-Expeditions.zip"):
         alt = f"{base}/{legacy}"
         if alt not in candidates:
             candidates.append(alt)
@@ -868,7 +868,7 @@ def stage_exe_update(new_exe_path: str) -> str:
 setlocal enabledelayedexpansion
 set LOG="{log_path}"
 echo ---- %date% %time% ---- > %LOG%
-echo Updating Cream's Macro -- please wait, this window closes itself...
+echo Updating Lord's Macro -- please wait, this window closes itself...
 echo [1/5] Waiting for the app to close itself (image: {exe_name})... >> %LOG%
 rem taskkill is the SAFETY NET for a shutdown that hangs, not the way the app
 rem normally closes -- so wait for the app to go on its own FIRST and only

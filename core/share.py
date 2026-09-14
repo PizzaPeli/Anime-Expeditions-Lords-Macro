@@ -3,9 +3,13 @@ import json
 import urllib.request
 import zlib
 
-HEADER_PREFIX_V1 = "CREAM:v1:"   # legacy: standard zlib, no preset dictionary
-HEADER_PREFIX_V2 = "CREAM:v2:"   # current: raw deflate + the shared _ZDICT below
+HEADER_PREFIX_V1 = "LORD:v1:"    # standard zlib, no preset dictionary
+HEADER_PREFIX_V2 = "LORD:v2:"    # current: raw deflate + the shared _ZDICT below
 HEADER_PREFIX = HEADER_PREFIX_V2  # what new codes are emitted as
+# Old exported codes remain importable so renaming the project does not break
+# templates people already saved or shared. New exports never use these names.
+LEGACY_HEADER_PREFIX_V1 = "CREAM:v1:"
+LEGACY_HEADER_PREFIX_V2 = "CREAM:v2:"
 MAX_URL_SIZE = 5 * 1024 * 1024  # 5 MB safety limit
 # Codes come from other people, so the decompressed size is capped: a tiny
 # zlib stream can otherwise expand to gigabytes (a "zip bomb") and OOM the app.
@@ -33,13 +37,13 @@ _ZDICT = (
 
 
 def encode_template_code(data: dict) -> str:
-    """Encodes a template dict or template pack dict into a compressed CREAM:v1: code string.
+    """Encode a template or template pack into a compressed LORD:v2 code.
 
     Args:
         data: Dict containing single template or multi-template pack structure.
 
     Returns:
-        Encoded string starting with 'CREAM:v1:'.
+        Encoded string starting with 'LORD:v2:'.
     """
     json_bytes = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     # Raw DEFLATE (wbits=-15, no zlib header) + the shared preset dictionary.
@@ -53,7 +57,7 @@ def decode_template_code(input_str: str) -> dict:
     """Decodes a code string, URL, or raw JSON into structured template data.
 
     Args:
-        input_str: CREAM:v1: string, raw JSON string, or http/https URL.
+        input_str: LORD share code, legacy share code, raw JSON, or URL.
 
     Returns:
         dict with format {"ok": bool, "type": "single"|"pack", "templates": dict, "reason": str (optional)}
@@ -68,7 +72,7 @@ def decode_template_code(input_str: str) -> dict:
         try:
             req = urllib.request.Request(
                 raw_str,
-                headers={"User-Agent": "CreamsMacro-TemplateImporter/1.0"},
+                headers={"User-Agent": "LordsMacro-TemplateImporter/1.0"},
             )
             with urllib.request.urlopen(req, timeout=10) as resp:
                 content = resp.read(MAX_URL_SIZE + 1)
@@ -78,12 +82,15 @@ def decode_template_code(input_str: str) -> dict:
         except Exception as exc:
             return {"ok": False, "reason": f"Failed to download URL: {exc}"}
 
-    # Case 2: CREAM compressed code -- v2 (raw deflate + _ZDICT) or legacy v1
-    # (standard zlib, no dictionary). Both still import; only the container
-    # differs, so branch on the prefix and hand the right window/dict to zlib.
-    is_v2 = raw_str.startswith(HEADER_PREFIX_V2)
-    if is_v2 or raw_str.startswith(HEADER_PREFIX_V1):
-        prefix = HEADER_PREFIX_V2 if is_v2 else HEADER_PREFIX_V1
+    # Case 2: compressed share code. LORD is the current brand; the old prefix
+    # is accepted strictly for backwards compatibility with saved templates.
+    v2_prefixes = (HEADER_PREFIX_V2, LEGACY_HEADER_PREFIX_V2)
+    v1_prefixes = (HEADER_PREFIX_V1, LEGACY_HEADER_PREFIX_V1)
+    prefix = next((candidate for candidate in v2_prefixes if raw_str.startswith(candidate)), None)
+    is_v2 = prefix is not None
+    if prefix is None:
+        prefix = next((candidate for candidate in v1_prefixes if raw_str.startswith(candidate)), None)
+    if prefix is not None:
         b64_str = raw_str[len(prefix):].strip()
         try:
             # Re-add base64 padding if needed
@@ -126,7 +133,7 @@ def count_template_blocks(blocks) -> int:
     if isinstance(blocks, list):
         return _count_block_list(blocks)
     if isinstance(blocks, dict):
-        # Known block phases in Creams Macro templates
+        # Known block phases in Lords Macro templates
         prestart = blocks.get("prestart") if isinstance(blocks.get("prestart"), list) else (blocks.get("before") if isinstance(blocks.get("before"), list) else [])
         battle = blocks.get("battle") if isinstance(blocks.get("battle"), list) else []
         legacy = (blocks.get("during") if isinstance(blocks.get("during"), list) else []) + (blocks.get("after") if isinstance(blocks.get("after"), list) else [])

@@ -7,6 +7,7 @@ Methods here run with MacroRunner's full self: shared state and helpers
 (_log, _coords, _checkpoint, _click_found_image, ...) resolve normally.
 """
 import difflib
+import os
 import re
 import threading
 import time
@@ -15,6 +16,16 @@ import cv2
 
 from . import ocr
 from . import vision
+
+# Daily Challenge availability. The two states are one card, so these are
+# read as a COMPARISON, never as a single hit -- see
+# _enter_daily_challenge_stage.
+#   LOOSE      the "is it worth looking at" bar for either state
+#   CONFIDENT  what the greyed-out state must score to skip the day ALONE
+#   MARGIN     how far ahead it must be when both states match
+DAILY_STATE_LOOSE_THRESHOLD = 0.75
+DAILY_UNAVAILABLE_CONFIDENT = 0.88
+DAILY_STATE_MARGIN = 0.05
 from . import ocr_windows
 from . import window as wm
 from .runner_constants import *  # noqa: F401,F403 -- the shared constants namespace
@@ -40,6 +51,54 @@ class ChallengeOps:
             return map_name
         return self._detect_challenge_map_ocr(hwnd)
 
+    def _report_challenge_map_miss(self, hwnd, label: str) -> None:
+        """Say WHY the map search came up empty, and keep the frame.
+
+        "never recognized a map -- stopping" is the least actionable line in
+        the log: it cannot distinguish "the art is close but under
+        threshold" (a re-cut fixes it) from "nothing on this screen looks
+        remotely like a map" (we are not where we think we are) from "OCR is
+        missing entirely". All three have happened. So on the way out, run
+        ONE more pass at a deliberately generous threshold and print the
+        best score each map actually reached, then write the frame to
+        debug/ -- unconditionally, not behind the Debug Screenshots toggle,
+        because this path already ends the run and one PNG per stopped run
+        is not the flood that toggle exists to prevent.
+        """
+        try:
+            best = []
+            haystack = vision.capture_game_gray(hwnd)
+            if haystack is not None:
+                for map_name in CHALLENGE_STORY_MAPS:
+                    try:
+                        vision.load_template_grays(map_name)
+                    except vision.TemplateNotFound:
+                        best.append(f"{map_name}: no reference image")
+                        continue
+                    # The diagnostic matcher, not the polling one: it reports
+                    # the strongest candidate across every variant and scale
+                    # even when nothing clears threshold, which is the whole
+                    # point of asking here.
+                    probe = vision.find_in_gray_multiscale_diagnostic(haystack, map_name)
+                    top = probe.get("best")
+                    best.append(f"{map_name}: {top['score']:.2f}" if top
+                                else f"{map_name}: no score")
+            if best:
+                self._log(f"[Macro] {label}: best map scores this frame -- " + "; ".join(best))
+        except Exception as exc:
+            self._log(f"[Macro] {label}: couldn't score the map templates ({exc}).")
+        try:
+            frame = vision.capture_game_bgr(hwnd)
+            if frame is not None:
+                os.makedirs(vision.DEBUG_DIR, exist_ok=True)
+                path = os.path.join(
+                    vision.DEBUG_DIR,
+                    f"challenge_map_miss_{time.strftime('%Y%m%d_%H%M%S')}.png")
+                cv2.imwrite(path, frame)
+                self._log(f"[Macro] {label}: saved the unrecognized screen to {path}")
+        except Exception as exc:
+            self._log(f"[Macro] {label}: couldn't save the map-miss frame ({exc}).")
+
     def _challenge_map_ocr_crops(self, frame):
         """Daily Challenge map label crops, HUD-anchored first and fixed relative fallback second."""
         crops = []
@@ -55,14 +114,31 @@ class ChallengeOps:
             if crop.size:
                 crops.append(crop)
 
+        # MEASURED off a real Regular Challenge frame
+        # (debug/challenge_map_miss_20260907_044327.png), not guessed. The
+        # label is one right-aligned line -- "<icon> Regular Challenge #1
+        # Flower Forest - Act 2" -- sitting at y 322-350, x 860 to the right
+        # edge in reference space (1152x756).
+        #
+        # The old fallback band (x 0.58-0.98, y 0.42-0.52) is 461x76: it
+        # contains the label, but also about 100px of grass, tree and rock
+        # around it, and Tesseract reads that as noise. Measured on that one
+        # frame, side by side: the old band's best read is
+        #   "@-= ad -_ | 86 Ss 7 | _ 7 ~ 45 = @ Recnilar Challenae #1 Flower Forest - Ac"
+        # while the band below reads "Flower Forest" cleanly on EVERY
+        # variant and both PSM modes. Same OCR, same frame -- the crop was
+        # the whole problem, and it is why "never recognized a map" happened
+        # on a screen where the map name is plainly written.
+        #
+        # Right edge is the frame's own, not 0.98w: the label is flush to it,
+        # and 0.98 clipped "Act 2" off.
         h, w = frame.shape[:2]
-        x1 = max(0, int(w * 0.58))
-        y1 = max(0, int(h * 0.42))
-        x2 = min(w, int(w * 0.98))
-        y2 = min(h, int(h * 0.52))
-        fallback = frame[y1:y2, x1:x2]
-        if fallback.size:
-            crops.append(fallback)
+        x1 = max(0, int(w * CHALLENGE_MAP_LABEL_BAND[0]))
+        y1 = max(0, int(h * CHALLENGE_MAP_LABEL_BAND[1]))
+        y2 = min(h, int(h * CHALLENGE_MAP_LABEL_BAND[2]))
+        band = frame[y1:y2, x1:w]
+        if band.size:
+            crops.append(band)
         return crops
 
     def _detect_challenge_map_ocr(self, hwnd) -> str:
@@ -86,17 +162,33 @@ class ChallengeOps:
                 cv2.resize(crop, None, fx=8, fy=8, interpolation=cv2.INTER_LANCZOS4),
             ]
             candidates.extend(ocr.candidate_masks(crop, upscale=8))
-            texts = [ocr.ocr_mask(pytesseract, candidate, "--psm 7") for candidate in candidates]
+            texts = []
+            for candidate in candidates:
+                # BOTH psm modes. 7 is "one line", which is what this band is
+                # -- but a band that catches a pixel of the row above or
+                # below stops being one line to Tesseract, and psm 6 ("a
+                # block") reads it where 7 returns noise. Measured on the two
+                # saved miss frames: psm 7 alone gets "inrChallende #2 Kins
+                # TOBAGO" off the King's Tomb screen while psm 6 on the same
+                # image reads "Reguiar, Challenge #2 King's Tomb - Act 4".
+                for psm in CHALLENGE_MAP_OCR_PSM_MODES:
+                    text = ocr.ocr_mask(pytesseract, candidate, f"--psm {psm}")
+                    if text:
+                        texts.append(text)
+            # Score EVERY read and take the best, rather than returning on
+            # the first one that clears the bar. Order was doing real damage:
+            # on the King's Tomb frame an early garbage read scores 0.75
+            # ("toba" against "tomb") and cleared, while a later read of the
+            # actual label scores 1.00. First-past-the-post picked the fluke;
+            # best-of picks the one that is obviously right, and a fluke can
+            # now only win when nothing better exists.
+            ranked = []
             for text in texts:
-                # The label reads "<Map> - Act N", so every read carries the
-                # same boilerplate word alongside the part that identifies the
-                # map. Left in, it competes for the best score -- "act" sits
-                # about as close to "east" as a garbled "Tornb" does to "tomb",
-                # which collapses the runner-up margin below and rejects a read
-                # that was perfectly legible. Score only the words that can
-                # actually name a map.
                 tokens = [t for t in re.findall(r"[a-z]+", text.lower())
-                          if t not in CHALLENGE_MAP_OCR_STOPWORDS]
+                          if t not in CHALLENGE_MAP_OCR_STOPWORDS
+                          and len(t) >= CHALLENGE_MAP_OCR_MIN_TOKEN]
+                if not tokens:
+                    continue
                 scores = sorted(
                     (
                         max((difflib.SequenceMatcher(None, alias, token).ratio() for token in tokens), default=0),
@@ -106,10 +198,15 @@ class ChallengeOps:
                 )
                 best_score, best_map = scores[-1]
                 runner_up = scores[-2][0]
-                if best_score >= 0.65 and best_score - runner_up >= 0.12:
-                    self._log(
-                        f'[Macro] Challenge map OCR: "{text.strip()}" -> "{best_map}" (score {best_score:.2f}).')
-                    return best_map
+                ranked.append((best_score - runner_up, best_score, best_map, text))
+            if not ranked:
+                continue
+            ranked.sort(reverse=True)
+            margin, best_score, best_map, text = ranked[0]
+            if best_score >= CHALLENGE_MAP_OCR_MIN_SCORE and margin >= CHALLENGE_MAP_OCR_MARGIN:
+                self._log(f'[Macro] Challenge map OCR: "{text.strip()}" -> "{best_map}" '
+                          f'(score {best_score:.2f}, margin {margin:.2f}).')
+                return best_map
         return None
 
     def _challenge_has_ready_stage(self) -> bool:
@@ -188,6 +285,15 @@ class ChallengeOps:
 
         # Daily can be enabled independently of the rotating Regular slots.
         if not challenge.get("enabled"):
+            # Every exit from a Challenge pass goes through Leave Stage +
+            # Return to Lobby, so the lobby is where the Task Queue starts --
+            # even when this pass ran no stage at all. Told to
+            # _reach_portal_activated explicitly: on this setup the lobby can
+            # still be drawing 13s later, and a Portals task that mistook it
+            # for a post-run screen clicked the chooser's calibrated point
+            # into empty ground three times and stopped the farm. See
+            # 0.31.5's known bug.
+            self._portal_expect_lobby = True
             self._log("[Macro] Challenge pass finished -- moving on to the Task Queue.")
             return
 
@@ -248,6 +354,15 @@ class ChallengeOps:
                 if not self._recover_failed_challenge(hwnd, stop_event):
                     return
 
+        # Every exit from a Challenge pass goes through Leave Stage +
+        # Return to Lobby, so the lobby is where the Task Queue starts --
+        # even when this pass ran no stage at all. Told to
+        # _reach_portal_activated explicitly: on this setup the lobby can
+        # still be drawing 13s later, and a Portals task that mistook it
+        # for a post-run screen clicked the chooser's calibrated point
+        # into empty ground three times and stopped the farm. See
+        # 0.31.5's known bug.
+        self._portal_expect_lobby = True
         self._log("[Macro] Challenge pass finished -- moving on to the Task Queue.")
 
     def _recover_failed_challenge(self, hwnd, stop_event: threading.Event) -> bool:
@@ -376,14 +491,57 @@ class ChallengeOps:
                 break
             time.sleep(MATCH_RESULT_POLL_INTERVAL)
         if not detected_map:
-            self._log(f"[Macro] {label}: never recognized a map -- stopping.")
-            return None
-
-        macro_name = (challenge.get("maps", {}).get(detected_map) or {}).get("macro") or ""
-        if macro_name:
-            self._log(f'[Macro] {label} landed on "{detected_map}" -- running "{macro_name}".')
+            # NOT fatal any more. Identifying the map only ever decided WHICH
+            # Macro Operation to run; it was never a precondition for playing
+            # the round, and the round is what the user actually wants. This
+            # single `return None` is why Auto Challenge "broke" between the
+            # build where it worked flawlessly and this one -- a stage that
+            # was entered, loaded and playable got abandoned on the spot,
+            # which then dropped the run into the leave/rejoin path and took
+            # the rest of the session down with it.
+            #
+            # Unrecognized now means "no macro assigned", which the line below
+            # already knows how to handle: play it on Auto Play. That is the
+            # same fallback an unassigned map gets, and it is strictly better
+            # than stopping.
+            self._log(f"[Macro] {label}: couldn't tell which map this is -- "
+                       "playing it on Auto Play instead of stopping.")
+            self._report_challenge_map_miss(hwnd, label)
+            detected_map = ""
+            macro_name = ""
+            want_autoplay = True
         else:
-            self._log(f'[Macro] {label} landed on "{detected_map}" -- no Macro Operation assigned for it.')
+            map_cfg = challenge.get("maps", {}).get(detected_map) or {}
+            macro_name = map_cfg.get("macro") or ""
+            # Auto Play is its OWN per-map setting now, not something inferred
+            # from whether a macro is assigned. Those two were entangled, and
+            # the entanglement is what forced people to write a template whose
+            # only job was to click the Auto Play button in Pre Start -- which
+            # then fought _ensure_autoplay on every entry, one turning it off
+            # and the other back on. A map can legitimately want its walk path
+            # and unit placements AND want the game to play the round.
+            #
+            # No macro still implies Auto Play: something has to play it.
+            want_autoplay = not macro_name
+            # A macro NAMED here but missing from disk (renamed, deleted,
+            # imported from someone else's build) used to be a setup error
+            # that refused to enable Auto Challenge at all. Now it is just
+            # another map with nothing to run it, which has an obvious
+            # answer: drop the dead name and let Auto Play play it. Silently
+            # entering with no blocks and no Auto Play was the one outcome
+            # nobody wanted.
+            if macro_name and not self._macro_is_usable(macro_name):
+                self._log(f'[Macro] {label}: "{detected_map}" is assigned the macro '
+                          f'"{macro_name}", which no longer exists (or has no blocks) -- '
+                          "running it on Auto Play instead.")
+                macro_name = ""
+                want_autoplay = True
+            if macro_name:
+                self._log(f'[Macro] {label} landed on "{detected_map}" -- running "{macro_name}"'
+                          + (" with Auto Play on." if want_autoplay else "."))
+            else:
+                self._log(f'[Macro] {label} landed on "{detected_map}" -- no Macro Operation '
+                          "assigned for it, playing it on Auto Play.")
 
         # mode="story" (not "challenge") deliberately -- this reuses the
         # EXACT SAME Pre Start/Start Game/Victory-Defeat pipeline a real
@@ -396,8 +554,15 @@ class ChallengeOps:
             "mode": "story", "is_challenge": True, "is_daily_challenge": is_daily,
             "map": detected_map, "difficulty": "Hard" if is_daily else "Normal",
             "macro": macro_name, "play_mode": play_mode, "repeat": 1, "team": "", "equipment": "include",
+            # Was never set at all, and _settle_autoplay_for_match reads a
+            # missing key as "off" -- so a Challenge map with no macro did not
+            # merely run blockless, it got Auto Play switched OFF and nothing
+            # played. It now comes from the map's own setting (see
+            # want_autoplay above), with "no macro" still implying Auto Play.
+            "auto_play": "autoplay" if want_autoplay else "macro",
         }
-        self._set_status(map=detected_map, action="Battle...", difficulty=task["difficulty"], macro=macro_name or "-")
+        self._set_status(map=detected_map or "?", action="Battle...",
+                          difficulty=task["difficulty"], macro=macro_name or "-")
         battle_started = time.time()
         result = self._play_one_match(hwnd, stop_event, task, default_walk_paths, first_repeat=True,
                                         webhook=webhook)
@@ -440,15 +605,56 @@ class ChallengeOps:
         """Enter Daily Challenge, or report its gray unavailable state."""
         if not self._open_challenge_screen(hwnd, stop_event):
             return None
+        # Available and unavailable are the SAME card in two states, and a
+        # loose bar cannot tell them apart on its own -- convention 3b. This
+        # used to accept the first `unavailable` hit over 0.75 and skip the
+        # whole day's daily on it; a real log shows it doing exactly that at
+        # **0.78** on a day the daily was plainly available.
+        #
+        # So look for both and compare, and lean the tie toward TRYING. The
+        # two mistakes are not equal: a wrong "unavailable" silently costs
+        # the daily every single day and looks like normal operation, while a
+        # wrong "available" costs one failed entry that the recovery path
+        # already handles and logs.
+        def _score(name):
+            try:
+                match = vision.find_image(hwnd, name, threshold=DAILY_STATE_LOOSE_THRESHOLD)
+            except vision.TemplateNotFound:
+                return None
+            return match["score"] if match is not None else None
+
         try:
-            unavailable = vision.find_image(hwnd, "daily_challenge_unavailable", threshold=0.75)
-        except vision.TemplateNotFound as exc:
+            unavailable_score = _score("daily_challenge_unavailable")
+        except Exception as exc:  # pragma: no cover - defensive, as before
             self._log(f"[Macro] Can't check Daily Challenge availability: {exc}")
             return None
-        if unavailable is not None:
+        available_score = _score("daily_challenge_available")
+
+        skip_daily = False
+        if unavailable_score is not None:
+            if available_score is None:
+                # Only the greyed-out state matched. Believe it, but only at
+                # a real score -- 0.75 is a "look here" bar, not proof.
+                skip_daily = unavailable_score >= DAILY_UNAVAILABLE_CONFIDENT
+                if not skip_daily:
+                    self._log(
+                        f'[Macro] "daily_challenge_unavailable" matched at only '
+                        f"{unavailable_score:.2f} and nothing says it IS available -- too weak "
+                        "to skip a whole day on, so trying to enter it anyway.")
+            else:
+                # Both matched. Whichever scores higher wins, and it has to
+                # win by a margin; a near-tie means neither template is
+                # actually telling us anything.
+                margin = unavailable_score - available_score
+                skip_daily = margin >= DAILY_STATE_MARGIN
+                self._log(
+                    f"[Macro] Daily Challenge state: unavailable {unavailable_score:.2f} vs "
+                    f"available {available_score:.2f} -- "
+                    + ("skipping." if skip_daily else "too close to call, trying to enter it."))
+        if skip_daily:
             self._log(
                 f'[Macro] Daily Challenge is unavailable for this game day '
-                f'(score {unavailable["score"]:.2f}) -- skipping.')
+                f'(score {unavailable_score:.2f}) -- skipping.')
             # We opened a menu but did not enter a stage; return to the lobby
             # before Regular Challenge or the Task Queue continues.
             return "unavailable" if self._recover_to_lobby(hwnd, stop_event) else None
@@ -474,9 +680,21 @@ class ChallengeOps:
         if stage_match is None:
             if stop_event is not None and stop_event.is_set():
                 return None
-            # Fallback: click Daily Challenge stage card on right panel
-            card_x, card_y = self._cxy("daily_challenge_stage")
-            self._log(f'[Macro] "daily_challenge_stage" template missed -- using fallback card click at ({card_x}, {card_y}).')
+            # Fallback: click the stage card on the right panel.
+            #
+            # This deliberately reuses "Challenge: Stage Slot 1" rather than a
+            # daily-only point. The Daily Challenge's single card sits in the
+            # same place as the first card of the Regular Challenge's three, so
+            # a separate coordinate was two things to keep calibrated that can
+            # never legitimately differ -- and the daily one had no Settings
+            # row, no entry in MACRO_COORD_DEFAULTS and no place in
+            # MACRO_COORD_KEYS, so it could not be corrected without editing
+            # code and rebuilding. Slot 1 is already on the Settings > Debug
+            # page with a Pick button, so fixing one fixes both.
+            card_x, card_y = self._cxy("challenge_stage_1")
+            self._log(f'[Macro] "daily_challenge_stage" template missed -- using the '
+                      f'"Challenge: Stage Slot 1" point at ({card_x}, {card_y}) '
+                      f'(the daily card sits where slot 1 does).')
             left, top, _, _ = wm.get_window_rect_screen(hwnd)
             self._mouse.click(left + card_x, top + card_y)
             time.sleep(0.5)
@@ -543,4 +761,3 @@ class ChallengeOps:
             if not self._click_start_and_wait_teleport(hwnd, stop_event, webhook, challenge_task_stub):
                 return False
         return not self._checkpoint(stop_event)
-

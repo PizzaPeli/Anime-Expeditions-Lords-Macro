@@ -1,5 +1,5 @@
 """
-Diagnostic module for Creams Macro.
+Diagnostic module for Lords Macro.
 Provides structured failure reporting and recovery actions.
 """
 

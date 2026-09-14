@@ -210,7 +210,7 @@ def test_export_custom_selected_templates_list(tmp_path, monkeypatch):
 
 
 def test_decode_rejects_decompression_bomb():
-    """A tiny CREAM code that expands past the size cap is rejected, not OOM'd --
+    """A tiny LORD code that expands past the size cap is rejected, not OOM'd --
     checked on both the v2 (dict) and legacy v1 containers."""
     import base64
     import zlib

@@ -81,9 +81,9 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force package | Out-Null
-          Copy-Item "dist/Creams Macro - Anime Expeditions.exe" package/
+          Copy-Item "dist/Lords Macro - Anime Expeditions.exe" package/
           Copy-Item Assets package/Assets -Recurse
-          Compress-Archive -Path package/* -DestinationPath "dist/Creams-Macro-Anime-Expeditions-Windows.zip"
+          Compress-Archive -Path package/* -DestinationPath "dist/Lords-Macro-Anime-Expeditions-Windows.zip"
 
       - name: Get changelog from the tag message
         # A curated summary, not GitHub's raw commit-list changelog --
@@ -120,7 +120,7 @@ jobs:
       # updater (<= v0.3.0) self-updates by downloading the release's bare
       # .exe and swapping it in place -- dropping that asset stranded all
       # of them on a 404 ("[Update] Failed to prepare update: 404 ... for
-      # Creams.Macro.-.Anime.Expeditions.exe", seen live). Shipping it
+      # Lords.Macro.-.Anime.Expeditions.exe", seen live). Shipping it
       # keeps the upgrade chain unbroken: their old updater swaps in this
       # exe, whose own updater then uses the zips from the next release on.
       - name: Create GitHub Release
@@ -129,8 +129,8 @@ jobs:
           name: ${{ github.ref_name }}
           body: ${{ steps.changelog.outputs.body }}
           files: |
-            dist/Creams-Macro-Anime-Expeditions-Windows.zip
-            dist/Creams Macro - Anime Expeditions.exe
+            dist/Lords-Macro-Anime-Expeditions-Windows.zip
+            dist/Lords Macro - Anime Expeditions.exe
 
       # Python script, not inline bash+jq -- the jq version sent Discord
       # invalid JSON (HTTP 400, code 50109) on the real runner the first
@@ -216,18 +216,18 @@ jobs:
           # The identity is the cert common name (same CN baked into
           # tools/make_macos_codesign_cert.sh); build_pyinstaller.py reads
           # this env var and signs with it instead of ad-hoc.
-          echo "MACOS_CODESIGN_IDENTITY=Creams Macro Code Signing" >> "$GITHUB_ENV"
+          echo "MACOS_CODESIGN_IDENTITY=Lords Macro Code Signing" >> "$GITHUB_ENV"
 
       - name: Build app (PyInstaller)
         run: python build_pyinstaller.py
 
       - name: Verify Intel application binary
-        run: file "dist/Creams Macro - Anime Expeditions.app/Contents/MacOS/Creams Macro - Anime Expeditions" | grep -q x86_64
+        run: file "dist/Lords Macro - Anime Expeditions.app/Contents/MacOS/Lords Macro - Anime Expeditions" | grep -q x86_64
 
       - name: Package macOS zip (.app + editable Assets folder)
         run: |
           mkdir -p package
-          cp -R "dist/Creams Macro - Anime Expeditions.app" package/
+          cp -R "dist/Lords Macro - Anime Expeditions.app" package/
           cp -R Assets package/Assets
           # ditto, not zip -- preserves the .app bundle's resource forks/
           # permissions the way macOS expects; a plain zip of a .app can
@@ -236,9 +236,9 @@ jobs:
           # made manual extraction awkward and silently broke the updater's Assets
           # merge on mac (it looked for Assets/ at the zip root). The updater still
           # tolerates old wrapped zips -- see core/updater.py.
-          cd package && ditto -c -k --sequesterRsrc . ../dist/Creams-Macro-Anime-Expeditions-macOS.zip
+          cd package && ditto -c -k --sequesterRsrc . ../dist/Lords-Macro-Anime-Expeditions-macOS.zip
 
       - name: Upload macOS asset to the release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/Creams-Macro-Anime-Expeditions-macOS.zip
+          files: dist/Lords-Macro-Anime-Expeditions-macOS.zip

@@ -152,7 +152,7 @@ def test_updater_no_longer_exposes_detached_process():
 def test_relaunch_env_drops_pyinstaller_bootloader_state(monkeypatch):
     from core import updater
 
-    monkeypatch.setenv("_PYI_ARCHIVE_FILE", r"C:\App\Creams Macro.exe")
+    monkeypatch.setenv("_PYI_ARCHIVE_FILE", r"C:\App\Lords Macro.exe")
     monkeypatch.setenv("_PYI_APPLICATION_HOME_DIR", r"C:\Temp\_MEI302922")
     monkeypatch.setenv("_PYI_PARENT_PROCESS_LEVEL", "1")
     monkeypatch.setenv("_MEIPASS2", r"C:\Temp\_MEI99")  # PyInstaller 5.x's name

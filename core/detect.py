@@ -115,15 +115,33 @@ def evaluate(runner, hwnd, block):
     `matches` are location dicts (as vision.find_image returns) for the
     single-image path, best score first -- used only for logging where it
     matched. Multi-image and expression conditions return an empty match list
-    (their "where" isn't a single point)."""
+    (their "where" isn't a single point).
+
+    mode="counter" (added 0.20.9) attaches a per-runner counter map so a
+    Detect block can branch on "have I been hit N times yet?" instead of
+    on an image match. Empty/zero/missing limit means infinite (branch
+    stays TRUE forever, same shape as a plain always-true detect). See
+    _eval_counter for the semantics. 0.22 also passes the runner's current
+    task through, so a counter block can take its limit from the task's own
+    field (`limit_from_task`) instead of a number baked into the template."""
     log = getattr(runner, "_log", None)
-    ctx = _Ctx(hwnd, _region_tuple(block.get("region")), block.get("threshold"), log)
+    if not hasattr(runner, "_detect_counters"):
+        runner._detect_counters = {}
+    ctx = _Ctx(hwnd, _region_tuple(block.get("region")), block.get("threshold"), log,
+               counters=runner._detect_counters,
+               task=getattr(runner, "_current_task", None))
     return _evaluate_context(ctx, block, log)
 
 
 def _evaluate_context(ctx, block, log=None):
     """Evaluate a block against any context exposing find/count helpers."""
     mode = block.get("mode") or "single"
+
+    if mode == "counter":
+        # Counter-based branch (0.20.9): no image search, just a hit count.
+        # Empty/zero/missing limit is infinite -> branch stays TRUE forever.
+        # See _eval_counter for the full semantics + log format.
+        return bool(_eval_counter(ctx, block, log)), []
 
     if mode == "expr":
         return bool(_eval_expr(block.get("expr") or "", ctx, log)), []
@@ -187,13 +205,24 @@ class _Ctx:
     """Holds the search parameters for one detect evaluation and exposes the
     find/count helpers the expression evaluator calls. A missing reference
     image is warned about once, then treated as "not found" so a typo'd name
-    can never hard-fail a run."""
+    can never hard-fail a run.
 
-    def __init__(self, hwnd, region, threshold, log):
+    `counters` (added 0.20.9) is a dict shared with the runner
+    (runner._detect_counters) so mode="counter" blocks can carry a hit
+    count across a full macro session -- reset naturally on the next
+    macro start when the runner re-creates its state."""
+
+    def __init__(self, hwnd, region, threshold, log, counters=None, task=None):
         self.hwnd = hwnd
         self.region = region
         self.threshold = threshold
         self.log = log
+        self.counters = counters if counters is not None else {}
+        # The task dict the runner is currently executing, or None outside a
+        # task (Macro Manager test runs, diagnostics). Only read by
+        # mode="counter" blocks carrying `limit_from_task` -- see
+        # _counter_limit.
+        self.task = task if isinstance(task, dict) else None
         self._missing = set()
 
     def _dir_and_thr(self, name):
@@ -236,7 +265,10 @@ class _FrameCtx(_Ctx):
     """The Detect context used by ``diagnose_frame``."""
 
     def __init__(self, frame_gray, region, threshold, log):
-        super().__init__(None, region, threshold, log)
+        # No counter map for diagnostics -- diagnose_frame evaluates a
+        # single frame in isolation, so a counter branch would be
+        # meaningless. An empty dict is fine.
+        super().__init__(None, region, threshold, log, counters={})
         self.frame_gray = frame_gray
         self.details = {}
 
@@ -345,6 +377,106 @@ def render_diagnostic(frame_bgr, report):
     cv2.putText(image, status, (8, 19), cv2.FONT_HERSHEY_SIMPLEX, 0.55,
                 (0, 220, 80) if report.get("found") else (80, 170, 255), 1, cv2.LINE_AA)
     return image
+
+
+# ---------------------------------------------------------------------------
+# counter mode (0.20.9) -- branch on hit count instead of image match
+# ---------------------------------------------------------------------------
+def _counter_limit(ctx, block, log=None):
+    """The hit limit for one counter block, as a non-negative int (0 = none).
+
+    Normally just the block's own `limit`. When the block sets
+    `limit_from_task` (0.22), that names a field on the task the runner is
+    currently running -- e.g. "extract_after", which the Portals task type
+    reuses as "how many portals before exiting". The task value wins when it
+    resolves to a number; anything else (no task at all, because this is a
+    Macro Manager test run; a missing field; junk in a hand-edited task file)
+    falls back to the block's `limit`, so a template stays runnable outside a
+    task instead of erroring.
+
+    Everything unparseable ends at 0 = infinite, matching the pre-0.22
+    behaviour of an empty limit: a counter that can't resolve a bound should
+    keep the loop going, never silently exit on the first pass.
+    """
+    def _as_limit(raw):
+        if raw is None or isinstance(raw, bool):
+            return None
+        if isinstance(raw, str) and not raw.strip():
+            return None
+        try:
+            value = int(str(raw).strip())
+        except (TypeError, ValueError):
+            return None
+        return max(0, value)
+
+    field = block.get("limit_from_task")
+    if field:
+        field = str(field)
+        if not isinstance(ctx.task, dict):
+            if log:
+                log(f"[Macro] Counter: `limit_from_task`={field!r} but no task is "
+                    f"running -- falling back to the block's own limit.")
+        else:
+            from_task = _as_limit(ctx.task.get(field))
+            if from_task is None:
+                if log:
+                    log(f"[Macro] Counter: task field {field!r} is "
+                        f"{ctx.task.get(field)!r}, not a whole number -- falling "
+                        f"back to the block's own limit.")
+            else:
+                return from_task
+
+    own = _as_limit(block.get("limit"))
+    if own is None:
+        raw = block.get("limit")
+        if raw not in (None, "", 0, "0") and log:
+            log(f"[Macro] Counter: `limit`={raw!r} is not a whole number -- "
+                f"treating as infinite.")
+        return 0
+    return own
+
+
+def _eval_counter(ctx, block, log=None):
+    """Increment the block's hit count and return True while it's <= limit.
+
+    Semantics chosen to match what the user asked for ("empty -> infinite,
+    number N -> N runs then exit"): the THEN branch fires for the first N
+    hits, the ELSE branch fires from hit N+1 onward. Callers put the
+    "keep looping" click (e.g. Select next portal) in THEN and the "stop"
+    click (e.g. Exit to lobby) in ELSE, and the counter is naturally
+    persistent across loop_a/loop_b wraparounds because it lives on the
+    runner (runner._detect_counters), not on the per-phase state dict
+    that gets reset each wraparound.
+
+    Empty/zero/missing limit means infinite -- branch stays TRUE forever
+    so an empty-limit template behaves the same as the pre-0.20.9
+    "continuous portals" example.
+
+    counter_id (optional) lets two blocks share one counter (e.g. one in
+    loop_a, one in loop_b for a dual-check). Falls back to id(block) so
+    each block has its own count by default.
+
+    limit_from_task (optional, 0.22) names a field on the running task to
+    read the limit from instead of the block's own `limit` -- see
+    _counter_limit. That is how one bundled template serves every
+    "N portals then exit" value without the user editing the template.
+    """
+    key = str(block.get("counter_id") or id(block))
+    ctx.counters[key] = ctx.counters.get(key, 0) + 1
+    hits = ctx.counters[key]
+
+    limit = _counter_limit(ctx, block, log)
+
+    label = str(block.get("label") or block.get("counter_id") or "counter")
+    if limit <= 0:
+        if log:
+            log(f"[Macro] Counter '{label}': hit {hits} (no limit).")
+        return True
+    keep_going = hits <= limit
+    if log:
+        state = "continuing" if keep_going else "limit reached -> else branch"
+        log(f"[Macro] Counter '{label}': {hits}/{limit} -- {state}.")
+    return keep_going
 
 
 # ---------------------------------------------------------------------------

@@ -18,7 +18,7 @@ def test_camera_settle_runs_before_the_drag(monkeypatch):
     calls = []
     monkeypatch.setattr(runner_module.time, "sleep", lambda _s: None)
     monkeypatch.setattr(
-        runner_module.camera, "run_camera_setup",
+        runner_module.camera, "run_camera_profile",
         lambda *_a, **_kw: calls.append("camera"))
 
     runner = _runner()
@@ -39,7 +39,7 @@ def test_stop_during_camera_settle_skips_the_drag_immediately(monkeypatch):
     not block for the full settle duration nor still run the camera drag."""
     calls = []
     monkeypatch.setattr(
-        runner_module.camera, "run_camera_setup",
+        runner_module.camera, "run_camera_profile",
         lambda *_a, **_kw: calls.append("camera"))
 
     runner = _runner()

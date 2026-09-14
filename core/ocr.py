@@ -5,6 +5,8 @@ and turning a tiny colorful crop into a handful of binarized candidates so
 Tesseract has a real shot at it.
 """
 import re
+import os
+import shutil
 import subprocess
 import numpy as np
 import cv2
@@ -13,10 +15,41 @@ import cv2
 # install isn't on PATH until the shell/session restarts, so check this
 # explicit path as a fallback instead of making every user restart their
 # terminal (or the whole macro's launch environment) just to pick it up.
-_FALLBACK_TESSERACT_PATHS = (
-    r"C:\Program Files\Tesseract-OCR\tesseract.exe",
-    r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
-)
+def _fallback_tesseract_paths() -> tuple:
+    """Every place a Windows Tesseract install actually puts the binary.
+
+    This list was two entries -- Program Files and Program Files (x86) --
+    and that is why Settings' "Install Tesseract" could report success while
+    OCR stayed broken: **winget installs UB-Mannheim's package into
+    %LOCALAPPDATA%\\Programs\\Tesseract-OCR when it runs without admin**,
+    which is the normal case. The binary was on disk, just not anywhere this
+    looked, and winget does not put it on PATH either (and a PATH change
+    would not reach an already-running process anyway).
+
+    Built at call time rather than at import: LOCALAPPDATA has to be read
+    from the environment, and an install that happens WHILE the app is
+    running has to be findable without a restart.
+    """
+    local = os.environ.get("LOCALAPPDATA", "")
+    program_files = os.environ.get("ProgramFiles", r"C:\Program Files")
+    program_files_x86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
+    paths = [
+        shutil.which("tesseract"),
+        os.path.join(program_files, "Tesseract-OCR", "tesseract.exe"),
+        os.path.join(program_files_x86, "Tesseract-OCR", "tesseract.exe"),
+    ]
+    if local:
+        paths += [
+            os.path.join(local, "Programs", "Tesseract-OCR", "tesseract.exe"),
+            os.path.join(local, "Tesseract-OCR", "tesseract.exe"),
+        ]
+    paths.append("tesseract")  # last resort: whatever PATH resolves at run time
+    seen, out = set(), []
+    for path in paths:
+        if path and path not in seen:
+            seen.add(path)
+            out.append(path)
+    return tuple(out)
 
 # get_pytesseract() runs on every single OCR read (every stat grab -- reward
 # reading no longer uses OCR at all, see core.rewards' module docstring),
@@ -47,6 +80,51 @@ def _tesseract_runs(cmd: str) -> bool:
 class TesseractNotAvailable(Exception):
     """The pytesseract *package* is present but the Tesseract OCR *engine*
     (a separate native binary, not something pip installs) isn't found."""
+
+
+def find_tesseract_binary() -> str:
+    """The path of a Tesseract that actually RUNS, or "" if there is none.
+
+    Used by the installer to verify its own work: winget returning 0 means
+    winget finished, not that OCR now functions, and reporting the former as
+    the latter is exactly what made "Installed successfully" a lie.
+
+    Memoized through the same _resolved_tesseract_cmd every other caller
+    uses. Each probe is a real `tesseract --version` subprocess, and this is
+    called from get_ocr_status, which the Settings screen polls -- probing
+    six paths on every poll is exactly the repeated-subprocess cost the
+    memoization above this was written to kill. reset_tesseract_cache()
+    forces a fresh look, which is what the installer calls before asking.
+    """
+    global _resolved_tesseract_cmd
+    if _resolved_tesseract_cmd:
+        return _resolved_tesseract_cmd
+    if _resolved_tesseract_cmd == "":
+        return ""
+    for candidate in _fallback_tesseract_paths():
+        if _tesseract_runs(candidate):
+            _resolved_tesseract_cmd = candidate
+            return candidate
+    _resolved_tesseract_cmd = ""
+    return ""
+
+
+def set_tesseract_cmd(path: str) -> bool:
+    """Point pytesseract at a specific binary and remember it.
+
+    A freshly installed Tesseract is usually NOT on PATH, so the resolved
+    path has to be carried explicitly rather than rediscovered by luck.
+    """
+    if not path or not _tesseract_runs(path):
+        return False
+    global _resolved_tesseract_cmd
+    _resolved_tesseract_cmd = path
+    try:
+        import pytesseract
+        pytesseract.pytesseract.tesseract_cmd = path
+    except ImportError:
+        return False
+    return True
 
 
 def reset_tesseract_cache() -> None:
@@ -80,7 +158,7 @@ def get_pytesseract():
             "pytesseract.pytesseract.tesseract_cmd to its full path."
         )
 
-    for candidate in (pytesseract.pytesseract.tesseract_cmd, *_FALLBACK_TESSERACT_PATHS):
+    for candidate in (pytesseract.pytesseract.tesseract_cmd, *_fallback_tesseract_paths()):
         if _tesseract_runs(candidate):
             _resolved_tesseract_cmd = candidate
             pytesseract.pytesseract.tesseract_cmd = candidate

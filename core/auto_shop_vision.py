@@ -9,8 +9,57 @@ from collections import Counter
 from typing import Iterable, Mapping, Optional
 
 import numpy as np
+import cv2
+from functools import lru_cache
+from pathlib import Path
 
-from . import auto_shop, ocr
+from . import auto_shop
+
+IDENTITY_FROM_CENTER = (-68, -25, 140, 110)
+
+
+@lru_cache(maxsize=128)
+def _identity_references(item_key):
+    from . import vision, image_io
+    definition = auto_shop.item_definition(item_key)
+    explicit = definition.get("identity")
+    if explicit:
+        frame = image_io.read_image(explicit)
+        return [frame] if frame is not None else []
+    references = []
+    root = Path(auto_shop.ASSETS_DIR) / "reference" / "auto_shop"
+    for path in sorted(root.glob("gold_shop_*.png")):
+        frame = image_io.read_image(str(path))
+        if frame is None:
+            continue
+        gray = cv2.cvtColor(frame[:, :, :3], cv2.COLOR_BGR2GRAY)
+        match = vision.find_in_gray_multiscale(gray, definition["template"])
+        if match is None:
+            continue
+        try:
+            references.append(crop_region(frame, _region_from_item_match(match, IDENTITY_FROM_CENTER)))
+        except ValueError:
+            continue
+    return references
+
+
+def verify_card_identity(frame, item_key, match):
+    """Verify the icon/name portion of the card, excluding price and stock."""
+    try:
+        actual = crop_region(frame, _region_from_item_match(match, IDENTITY_FROM_CENTER))
+    except ValueError:
+        return False
+    actual = cv2.cvtColor(actual[:, :, :3], cv2.COLOR_BGR2GRAY)
+    for reference in _identity_references(item_key):
+        if reference.shape[:2] != actual.shape[:2]:
+            continue
+        mask = reference[:, :, 3] if reference.shape[2] == 4 else None
+        expected = cv2.cvtColor(reference[:, :, :3], cv2.COLOR_BGR2GRAY)
+        method = cv2.TM_CCORR_NORMED if mask is not None else cv2.TM_CCOEFF_NORMED
+        score = cv2.matchTemplate(actual, expected, method, mask=mask)[0, 0]
+        if np.isfinite(score) and score >= 0.90:
+            return True
+    return False
 
 
 STOCK_REGION_FROM_CENTER = (-42, -48, 64, 24)
@@ -167,6 +216,7 @@ def classify_modal_transition(was_open: bool, is_open: Optional[bool]) -> str:
 
 
 def _ocr_values(crop_bgr: np.ndarray, daily_maximum: int) -> list:
+    from . import ocr  # Legacy helper only; never imported by the shop sweep.
     try:
         engine = ocr.get_pytesseract()
     except ocr.TesseractNotAvailable:

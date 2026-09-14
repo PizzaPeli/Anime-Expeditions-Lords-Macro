@@ -23,7 +23,7 @@ def _runner():
     return runner
 
 
-def test_result_obtainment_modal_uses_zero_hold_then_parks(monkeypatch):
+def test_result_obtainment_modal_uses_zero_hold_without_cursor_park(monkeypatch):
     runner = _runner()
     detections = iter((MODAL_MATCH, None))
 
@@ -47,7 +47,7 @@ def test_result_obtainment_modal_uses_zero_hold_then_parks(monkeypatch):
 
     assert runner._clear_result_obtainment_modal(123, threading.Event()) is True
     runner._mouse.click.assert_called_once_with(586, 582, hold=0.0)
-    runner._mouse.move_to.assert_called_once_with(103, 203)
+    runner._mouse.move_to.assert_not_called()
 
 
 def test_result_obtainment_modal_stops_after_two_failed_closes(monkeypatch):
@@ -73,7 +73,7 @@ def test_result_obtainment_modal_stops_after_two_failed_closes(monkeypatch):
 
     assert runner._clear_result_obtainment_modal(123, threading.Event()) is False
     assert runner._mouse.click.call_count == 2
-    assert runner._mouse.move_to.call_count == 2
+    runner._mouse.move_to.assert_not_called()
 
 
 @pytest.mark.parametrize(

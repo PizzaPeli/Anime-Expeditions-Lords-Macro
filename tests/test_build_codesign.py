@@ -20,8 +20,8 @@ REPO = pathlib.Path(__file__).resolve().parents[1]
 # (or fails) -- exactly the loop this work exists to stop. (The bundle id
 # is carried in the cert's OU field instead of the CN, because X.509 caps
 # commonName at 64 chars -- the full "CN (bundle-id)" form is 70.)
-CERT_CN = "Creams Macro Code Signing"
-BUNDLE_ID = "com.cweamy.creams-macro-anime-expeditions"
+CERT_CN = "Lords Macro Code Signing"
+BUNDLE_ID = "com.pizzapeli.lords-macro-anime-expeditions"
 
 
 def _read(name):

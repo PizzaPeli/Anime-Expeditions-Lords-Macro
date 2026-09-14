@@ -10,14 +10,14 @@ Requires:
     py -3.12 -m pip install pyinstaller
     py -3.12 build_bootstrap.py
 
-Output: dist/Cream's Macro - Anime Expeditions Bootstrapper.exe
+Output: dist/Lord's Macro - Anime Expeditions Bootstrapper.exe
 """
 import subprocess
 import sys
 import os
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-EXE_NAME = "Creams Macro - Anime Expeditions Bootstrapper"  # see build_pyinstaller.py's EXE_NAME comment
+EXE_NAME = "Lords Macro - Anime Expeditions Bootstrapper"  # see build_pyinstaller.py's EXE_NAME comment
 
 cmd = [
     sys.executable, "-m", "PyInstaller",

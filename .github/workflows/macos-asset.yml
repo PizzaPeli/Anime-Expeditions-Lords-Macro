@@ -76,28 +76,28 @@ jobs:
           # The identity is the cert common name (same CN baked into
           # tools/make_macos_codesign_cert.sh); build_pyinstaller.py reads
           # this env var and signs with it instead of ad-hoc.
-          echo "MACOS_CODESIGN_IDENTITY=Creams Macro Code Signing" >> "$GITHUB_ENV"
+          echo "MACOS_CODESIGN_IDENTITY=Lords Macro Code Signing" >> "$GITHUB_ENV"
 
       - name: Build app (PyInstaller)
         run: python build_pyinstaller.py
 
       - name: Verify Intel application binary
-        run: file "dist/Creams Macro - Anime Expeditions.app/Contents/MacOS/Creams Macro - Anime Expeditions" | grep -q x86_64
+        run: file "dist/Lords Macro - Anime Expeditions.app/Contents/MacOS/Lords Macro - Anime Expeditions" | grep -q x86_64
 
       # Same packaging as release.yml's macos job -- see its comments.
       - name: Package macOS zip (.app + editable Assets folder)
         run: |
           mkdir -p package
-          cp -R "dist/Creams Macro - Anime Expeditions.app" package/
+          cp -R "dist/Lords Macro - Anime Expeditions.app" package/
           cp -R Assets package/Assets
           # No --keepParent: it wrapped everything in a "package/" folder, which both
           # made manual extraction awkward and silently broke the updater's Assets
           # merge on mac (it looked for Assets/ at the zip root). The updater still
           # tolerates old wrapped zips -- see core/updater.py.
-          cd package && ditto -c -k --sequesterRsrc . ../dist/Creams-Macro-Anime-Expeditions-macOS.zip
+          cd package && ditto -c -k --sequesterRsrc . ../dist/Lords-Macro-Anime-Expeditions-macOS.zip
 
       - name: Upload macOS asset to the release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.tag }}
-          files: dist/Creams-Macro-Anime-Expeditions-macOS.zip
+          files: dist/Lords-Macro-Anime-Expeditions-macOS.zip

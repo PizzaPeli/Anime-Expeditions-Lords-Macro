@@ -1,6 +1,6 @@
 # Contributing Guidelines
 
-Guidelines for contributing code, documentation, and assets to Creams Macro.
+Guidelines for contributing code, documentation, and assets to Lords Macro.
 
 ---
 
@@ -16,8 +16,8 @@ Install prerequisites before starting development:
 
 1. Clone repository:
    ```bash
-   git clone https://github.com/Cweamy/Anime-Expeditions-Creams-Macro.git
-   cd Anime-Expeditions-Creams-Macro
+   git clone https://github.com/PizzaPeli/Anime-Expeditions-Lords-Macro.git
+   cd Anime-Expeditions-Lords-Macro
    ```
 
 2. Create virtual environment:
@@ -46,7 +46,7 @@ Run local checks before opening a Pull Request.
 Run unit tests:
 
 ```bash
-python -m pytest tests/
+RUN_TESTS.bat
 ```
 
 ### Frontend Syntax Check
@@ -103,7 +103,7 @@ GitHub Actions automates release builds when pushing an annotated Git tag adheri
    ```
 2. Commit changes cleanly.
 3. Run tests and syntax checks locally:
-   - `python -m pytest tests/`
+   - `RUN_TESTS.bat` (or `python -m pytest tests/` on non-Windows systems)
    - `node --check ui/app.js`
 4. Push branch to fork:
    ```bash

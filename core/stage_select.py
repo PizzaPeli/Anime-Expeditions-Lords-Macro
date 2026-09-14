@@ -23,6 +23,9 @@ from . import window as wm
 # moving again.
 
 MATCH_THRESHOLD = 0.78
+# Snowy Castle's supplied card-label crops were captured at a slightly
+# different UI scale. Keep the usual threshold for every other map.
+SNOWY_CASTLE_MATCH_THRESHOLD = 0.68
 
 SCROLL_CENTER = (576, 390)        # middle of the card row -- where the wheel-scroll is aimed
 DEFAULT_SCROLL_POWER = 3          # multiplier on one wheel notch -- the carousel barely moved at 1x
@@ -85,8 +88,12 @@ def find_and_click_map(mouse, hwnd, map_name: str, log, stop_event=None, scroll_
             # one map name (see vision.template_variant_paths) -- no more
             # separately-searched " 2" name.
             try:
+                match_threshold = (
+                    SNOWY_CASTLE_MATCH_THRESHOLD
+                    if map_name == "Snowy Castle" else MATCH_THRESHOLD
+                )
                 match, found_name = vision.find_image_any(
-                    hwnd, (map_name,), threshold=MATCH_THRESHOLD,
+                    hwnd, (map_name,), threshold=match_threshold,
                     template_dir=vision.MAPS_DIR)
             except vision.TemplateNotFound as exc:
                 log(f"[Macro] {exc}")
@@ -96,7 +103,10 @@ def find_and_click_map(mouse, hwnd, map_name: str, log, stop_event=None, scroll_
                     hwnd, found_name, match, log=log) if debug_screenshots else None
                 suffix = f" Debug: {debug_path}" if debug_path else ""
                 log(f'[Macro] Found "{found_name}" (score {match["score"]:.2f}) -- clicking it.{suffix}')
-                vision.click_match(mouse, hwnd, match)
+                # The Snowy Castle title is on a decorative card label. A
+                # short hover-style approach helps Roblox register its click.
+                vision.click_match(mouse, hwnd, match,
+                                   shuffle=(map_name == "Snowy Castle"))
                 return True
             if nudge < scroll_nudges:
                 mouse.scroll(scroll_step)

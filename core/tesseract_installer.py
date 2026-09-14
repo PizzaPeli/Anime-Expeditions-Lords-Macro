@@ -30,10 +30,21 @@ _NO_UPDATE_APPLICABLE = {
 }
 
 
-def install_tesseract(log=None) -> bool:
-    """Blocking -- run this off the UI thread. Returns whether the install
-    actually succeeded. `log`, if given, is called with progress/result
-    strings (same convention as core.updater.check_for_update)."""
+def install_tesseract(log=None):
+    """Blocking -- run this off the UI thread.
+
+    Returns the PATH of a Tesseract that actually runs, or "" if there
+    isn't one. Not a bool, and not winget's exit code: winget returning 0
+    means winget finished, which is not the same as OCR working. It reported
+    "Installed successfully" while every read still failed, because winget
+    without admin installs into %LOCALAPPDATA%\\Programs\\Tesseract-OCR and
+    puts nothing on PATH -- so the engine was genuinely on disk and genuinely
+    unusable. The install is now only called a success once the binary has
+    been found and run.
+
+    `log`, if given, is called with progress/result strings (same convention
+    as core.updater.check_for_update).
+    """
     log = log or (lambda msg: None)
 
     try:
@@ -44,7 +55,7 @@ def install_tesseract(log=None) -> bool:
     except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
         log("[Tesseract] winget isn't available on this system -- install manually from "
             "https://github.com/UB-Mannheim/tesseract/wiki instead.")
-        return False
+        return _verify(log, "winget is unavailable")
 
     log("[Tesseract] Installing via winget -- this can take a minute...")
     try:
@@ -56,10 +67,10 @@ def install_tesseract(log=None) -> bool:
         )
     except subprocess.TimeoutExpired:
         log(f"[Tesseract] Install timed out after {INSTALL_TIMEOUT:.0f}s.")
-        return False
+        return _verify(log, "the install timed out")
     except OSError as exc:
         log(f"[Tesseract] Couldn't launch winget: {exc}")
-        return False
+        return _verify(log, f"winget couldn't be launched ({exc})")
 
     output = (result.stdout or "").strip() or (result.stderr or "").strip()
     output_lower = output.lower()
@@ -68,43 +79,40 @@ def install_tesseract(log=None) -> bool:
     # installed, no update available" -- tesseract.exe is already on disk,
     # so that counts as success too.
     if result.returncode == 0:
-        log("[Tesseract] Installed successfully.")
-        return True
+        return _verify(log, "winget reported success", installed=True)
 
     if result.returncode in _NO_UPDATE_APPLICABLE or any(phrase in output_lower for phrase in (
         "pacote existente", "already installed", "no available upgrade",
         "nenhuma atualização disponível", "no upgrade found", "ja instalado", "já instalado"
     )):
-        log("[Tesseract] Already installed and up to date.")
-        return True
+        return _verify(log, "winget says it is already installed", installed=True)
 
-    # Fallback check: if winget returned another code but Tesseract binary is already executable
-    local_appdata = os.environ.get("LOCALAPPDATA", "")
-    fallback_paths = [
-        r"C:\Program Files\Tesseract-OCR\tesseract.exe",
-        r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
-        os.path.join(local_appdata, r"Programs\Tesseract-OCR\tesseract.exe"),
-        os.path.join(local_appdata, r"Tesseract-OCR\tesseract.exe"),
-        "tesseract",
-    ]
-    which_tess = shutil.which("tesseract")
-    if which_tess:
-        fallback_paths.insert(0, which_tess)
+    return _verify(log, f"winget exited {result.returncode}: {output or 'no output'}")
 
-    for path in fallback_paths:
-        if not path:
-            continue
-        try:
-            res = subprocess.run(
-                [path, "--version"], capture_output=True, timeout=5,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
-            if res.returncode == 0:
-                log("[Tesseract] Already installed and operational.")
-                return True
-        except Exception:
-            pass
 
-    log(f"[Tesseract] winget install failed (exit {result.returncode}): {output or 'no output'}")
-    return False
+def _verify(log, context: str, installed: bool = False) -> str:
+    """Did this machine end up with a Tesseract that RUNS?
 
+    The one question that matters, asked the same way whatever winget did.
+    core.ocr owns the list of places Windows installs actually land (winget's
+    per-user %LOCALAPPDATA% path included), so ask it rather than keeping a
+    second copy of that list here to drift out of sync.
+    """
+    from core import ocr
+
+    ocr.reset_tesseract_cache()
+    path = ocr.find_tesseract_binary()
+    if path:
+        ocr.set_tesseract_cmd(path)
+        log(f"[Tesseract] Ready -- verified working at {path}.")
+        return path
+    if installed:
+        log("[Tesseract] winget reported success but no working tesseract.exe could be found "
+            "afterwards. Looked in Program Files, Program Files (x86), "
+            "%LOCALAPPDATA%\\Programs\\Tesseract-OCR and on PATH. Install it by hand from "
+            "https://github.com/UB-Mannheim/tesseract/wiki and it will be picked up "
+            "automatically.")
+    else:
+        log(f"[Tesseract] Not installed ({context}), and no existing tesseract.exe was found. "
+            "Install it from https://github.com/UB-Mannheim/tesseract/wiki.")
+    return ""

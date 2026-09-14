@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Cream's Macro | Anime Expeditions</title>
+<title>Lord's Macro | Anime Expeditions</title>
 <!-- Tailwind is VENDORED locally (ui/tailwind.js), not loaded from
      cdn.tailwindcss.com. The whole layout is Tailwind utility classes, and a
      synchronous <script> to an unreachable CDN (offline, school/work firewall,
@@ -13,7 +13,7 @@
 <script src="tailwind.js"></script>
 <link rel="stylesheet" href="style.css">
 </head>
-<body class="h-full w-full flex flex-col">
+<body class="h-full w-full flex">
   <!-- Liquid Glass theme's animated backdrop (see #glass-aurora in
        style.css) -- FIRST child on purpose: later siblings paint above it
        with no z-index involvement. display:none outside the theme. -->
@@ -32,81 +32,97 @@
   </svg>
 
 
-  <!-- Custom titlebar (frameless window, no native OS chrome). Hidden while the
+  <!-- Custom left navigation rail (frameless window, no native OS chrome). Hidden while the
        waiting screen shows (see showWaiting()/showDocked() in app.js) so the
        loading state reads as just the spinner, not a half-built app shell. -->
   <div id="titlebar" class="pywebview-drag-region flex items-center justify-between px-4 border-b flex-shrink-0"
        style="height: 44px; background: var(--bg-card); border-color: var(--border); display: none;">
-    <div class="flex items-center gap-3">
-      <div class="flex flex-col items-center" style="line-height: 1;">
-        <span class="logo-anime text-[8px] uppercase tracking-widest font-bold">Anime</span>
-        <span class="logo-expeditions brand-font text-base font-bold" style="line-height: 1.1;">Expeditions</span>
-      </div>
-      <span style="color: var(--border);">|</span>
-      <span class="text-sm font-semibold" style="color: var(--text-dim);">Cream's Macro</span>
-      <button type="button" id="ver-badge" class="ver-badge-btn flex items-center gap-1.5 text-[10px] px-2 py-0.5 rounded-md border font-medium no-drag" style="color: var(--brand); border-color: var(--border); background: var(--bg-surface); cursor: pointer;" title="Click to check for updates" onclick="manualCheckForUpdate()">
-        <svg class="w-3 h-3 ver-badge-icon flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/>
-          <path d="M3 21v-5h5"/>
-          <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/>
-          <path d="M21 3v5h-5"/>
-        </svg>
-        <span id="ver-badge-text">v0.0.1</span>
+    <div class="window-controls flex items-center gap-1 no-drag" aria-label="Window controls">
+      <button onclick="pywebview.api.minimize_window()" class="titlebar-btn no-drag tooltip-right flex items-center justify-center rounded text-sm" style="color: var(--text-dim);" data-tooltip="Minimize" aria-label="Minimize">
+        <span aria-hidden="true">&#8211;</span>
+      </button>
+      <button onclick="pywebview.api.maximize_window()" class="titlebar-btn no-drag tooltip-right flex items-center justify-center rounded text-sm" style="color: var(--text-dim);" data-tooltip="Maximize" aria-label="Maximize">
+        <span aria-hidden="true">&#9633;</span>
+      </button>
+      <button onclick="pywebview.api.close_window()" class="titlebar-btn no-drag tooltip-right flex items-center justify-center rounded text-sm" style="color: var(--text-dim);" data-tooltip="Close" aria-label="Close" onmouseover="this.style.background='var(--rose)'; this.style.color='#fff';" onmouseout="this.style.background=''; this.style.color='var(--text-dim)';">
+        <span aria-hidden="true">&#10005;</span>
       </button>
     </div>
 
-    <div class="flex items-center gap-1 no-drag">
-      <button id="nav-dashboard" onclick="switchScreen('dashboard')" class="nav-btn active no-drag" data-tooltip="Dashboard">
+    <div class="titlebar-brand flex items-center gap-3" aria-label="Application logo">
+      <img class="cat-logo" src="cat-logo-transparent.png" alt="Crowned black cat logo">
+      <span class="app-name text-sm font-semibold" style="color: var(--text-dim);">Lord's Macro</span>
+    </div>
+
+    <div class="titlebar-timers flex items-center gap-3 tooltip-left no-drag" data-tooltip="Time this session / all-time total">
+      <div class="flex flex-col" style="line-height: 1;">
+        <span class="text-[8px] uppercase tracking-wider" style="color: var(--text-muted);">All Time</span>
+        <span id="alltime-time" class="text-xs font-semibold" style="color: var(--lilac);">00:00</span>
+      </div>
+      <div class="flex flex-col" style="line-height: 1;">
+        <span class="text-[8px] uppercase tracking-wider" style="color: var(--text-muted);">Session</span>
+        <span id="session-time" class="text-xs font-semibold" style="color: var(--text-dim);">00:00</span>
+      </div>
+    </div>
+
+    <div class="titlebar-nav flex items-center gap-1 no-drag">
+      <button id="nav-dashboard" onclick="switchScreen('dashboard')" class="nav-btn active no-drag">
         <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
           <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
         </svg>
+        <span>Dashboard</span>
       </button>
-      <button id="nav-task" onclick="switchScreen('task')" class="nav-btn no-drag" data-tooltip="Task">
+      <button id="nav-task" onclick="switchScreen('task')" class="nav-btn no-drag">
         <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M9 11l3 3L22 4"/>
           <path stroke-linecap="round" stroke-linejoin="round" d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
         </svg>
+        <span>Tasks</span>
       </button>
-      <button id="nav-creation" onclick="switchScreen('creation')" class="nav-btn no-drag" data-tooltip="Macro Manager">
+      <button id="nav-creation" onclick="switchScreen('creation')" class="nav-btn no-drag">
         <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16M4 12h16"/>
         </svg>
+        <span>Macro Manager</span>
       </button>
-      <button id="nav-resource" onclick="switchScreen('resource')" class="nav-btn no-drag" data-tooltip="Resource">
+      <button id="nav-resource" onclick="switchScreen('resource')" class="nav-btn no-drag">
         <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 2l9 5-9 5-9-5 9-5zM3 12l9 5 9-5M3 17l9 5 9-5"/>
         </svg>
+        <span>Resources</span>
       </button>
-      <button id="nav-settings" onclick="switchScreen('settings')" class="nav-btn no-drag" data-tooltip="Settings">
+      <button id="nav-settings" onclick="switchScreen('settings')" class="nav-btn no-drag">
         <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <circle cx="12" cy="12" r="3"/>
           <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
         </svg>
+        <span>Settings</span>
       </button>
-      <button id="nav-faq" onclick="openFaqModal()" class="nav-btn no-drag" data-tooltip="Help & FAQ">
+      <button id="nav-faq" onclick="openFaqModal()" class="nav-btn no-drag">
         <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="10"/>
           <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
           <line x1="12" y1="17" x2="12.01" y2="17"/>
         </svg>
+        <span>Help &amp; FAQ</span>
       </button>
     </div>
 
-    <div class="flex items-center gap-4 no-drag">
-      <div class="flex items-center gap-3 tooltip-left" data-tooltip="Time this session / all-time total">
-        <div class="flex flex-col items-end" style="line-height: 1;">
-          <span class="text-[8px] uppercase tracking-wider" style="color: var(--text-muted);">Session</span>
-          <span id="session-time" class="text-xs font-semibold" style="color: var(--text-dim);">00:00</span>
-        </div>
-        <div class="flex flex-col items-end" style="line-height: 1;">
-          <span class="text-[8px] uppercase tracking-wider" style="color: var(--text-muted);">All Time</span>
-          <span id="alltime-time" class="text-xs font-semibold" style="color: var(--lilac);">00:00</span>
-        </div>
-      </div>
-      <div class="flex items-center gap-1 no-drag">
-        <button onclick="pywebview.api.minimize_window()" class="titlebar-btn no-drag tooltip-left w-8 h-7 flex items-center justify-center rounded text-sm" style="color: var(--text-dim);" data-tooltip="Minimize">&#8211;</button>
-        <button onclick="pywebview.api.close_window()" class="titlebar-btn no-drag tooltip-left w-8 h-7 flex items-center justify-center rounded text-sm" style="color: var(--text-dim);" data-tooltip="Close" onmouseover="this.style.background='var(--rose)'; this.style.color='#fff';" onmouseout="this.style.background=''; this.style.color='var(--text-dim)';">&#10005;</button>
+    <div class="titlebar-footer flex items-center gap-4 no-drag">
+      <div class="footer-wordmark flex flex-col items-start" style="line-height: 1;">
+        <span class="logo-anime text-[8px] uppercase tracking-widest font-bold">Anime</span>
+        <span class="logo-expeditions brand-font text-base font-bold" style="line-height: 1.1;">Expeditions</span>
+        <button type="button" id="ver-badge" class="ver-badge-btn flex items-center gap-1.5 text-[10px] px-2 py-0.5 rounded-md border font-medium no-drag mt-2" style="color: var(--brand); border-color: var(--border); background: var(--bg-surface); cursor: pointer;" title="Click to check for updates" onclick="manualCheckForUpdate()">
+          <svg class="w-3 h-3 ver-badge-icon flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/>
+            <path d="M3 21v-5h5"/>
+            <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/>
+            <path d="M21 3v5h-5"/>
+          </svg>
+          <span>Updates</span>
+          <span id="ver-badge-text">v0.0.1</span>
+        </button>
       </div>
     </div>
   </div>
@@ -175,7 +191,7 @@
       </div>
 
       <div class="loading-tag" style="margin-top: 8px;">
-        <span class="loading-tag-dot"></span>Cream's Macro
+        <span class="loading-tag-dot"></span>Lord's Macro
       </div>
 
       <div class="flex items-center gap-1.5 text-sm font-semibold" style="color: var(--text); margin-top: 18px;">
@@ -850,7 +866,7 @@
           </details>
 
           <!-- Auto Bounty -->
-          <details id="resource-card-bounty" class="resource-card">
+          <details id="resource-card-bounty" class="resource-card" style="display: none;">
             <summary class="resource-card-head">
               <span class="resource-card-icon">B</span>
               <span class="resource-card-copy">
@@ -1126,12 +1142,12 @@
             </div>
             <div class="setting-row">
               <div>
-                <div class="setting-label">Debug Screenshot</div>
-                <div class="setting-desc">Same as Settings &gt; Debug &gt; Screenshot's Capture button.</div>
+                <div class="setting-label">Screen Snapshot</div>
+                <div class="setting-desc">Focuses Roblox, saves a reliable window capture, then returns here.</div>
               </div>
               <div class="keybind-group">
-                <button id="keybind-clear-debug_screenshot" class="keybind-clear-btn" onclick="clearHotkey('debug_screenshot')" title="Reset to default key (press Esc while capturing to unbind)">&times;</button>
-                <button id="keybind-debug_screenshot" class="keybind-btn" onclick="startRebind('debug_screenshot', this)">F3</button>
+                <button id="keybind-clear-screen_snapshot" class="keybind-clear-btn" onclick="clearHotkey('screen_snapshot')" title="Reset to default key (press Esc while capturing to unbind)">&times;</button>
+                <button id="keybind-screen_snapshot" class="keybind-btn" onclick="startRebind('screen_snapshot', this)">F3</button>
               </div>
             </div>
             <div class="setting-row">
@@ -1241,10 +1257,10 @@
 
           <div class="setting-row" style="padding: 14px;">
             <div>
-              <div class="setting-label">Debug Screenshot</div>
-              <div class="setting-desc">Captures Roblox, saves it to the debug folder.</div>
+              <div class="setting-label">Screen Snapshot</div>
+              <div class="setting-desc">Stuck or something not recognised? This brings Roblox forward, saves one picture of exactly what it is showing to <code>debug/</code>, and comes straight back here. Nothing is clicked and nothing changes &mdash; it is safe to press mid-run.</div>
             </div>
-            <button id="btn-debug-screenshot" onclick="saveDebugScreenshot(this)" class="text-xs font-semibold px-3 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);">Capture</button>
+            <button id="btn-screen-snapshot" onclick="captureScreenSnapshot(this)" class="text-xs font-semibold px-3 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);">Snapshot</button>
           </div>
 
           <!-- Off by default: every match the runner finds while actually
@@ -1642,45 +1658,45 @@
             <span class="rp-head-rule"></span>
           </header>
 
-          <div class="setting-row" style="padding: 14px;">
-            <div>
-              <div class="setting-label">Camera Setup</div>
-              <div class="setting-desc">Right-click drag down to tilt the camera fully, then holds O for 2s to zoom out.</div>
-            </div>
-            <button id="btn-camera-setup" onclick="runCameraSetup(this)" class="text-xs font-semibold px-3 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);">Run</button>
-          </div>
+        </section>
+      </div>
 
-          <div class="setting-row" style="padding: 14px;">
-            <div>
-              <div class="setting-label">Camera Setup 2</div>
-              <div class="setting-desc">Same as above, but with a custom O-hold time (ms) instead of the fixed 2s.</div>
-            </div>
-            <div class="flex items-center gap-2" style="flex-shrink: 0;">
-              <input type="number" id="camera-setup-2-ms" value="2000" min="0" step="100"
-                     class="block-input" style="width: 70px;" placeholder="ms">
-              <button id="btn-camera-setup-2" onclick="runCameraSetup2(this)" class="text-xs font-semibold px-3 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);">Run</button>
-            </div>
-          </div>
 
-          <div class="setting-row" style="padding: 14px;">
-            <div>
-              <div class="setting-label">Camera Setup 3</div>
-              <div class="setting-desc">Experimental: right-click drag down, release, then hold the Left arrow key for the time below.</div>
-            </div>
-            <div class="flex items-center gap-2" style="flex-shrink: 0;">
-              <input type="number" id="camera-setup-3-ms" value="2500" min="0" step="100"
-                     class="block-input" style="width: 70px;" placeholder="ms">
-              <button id="btn-camera-setup-3" onclick="runCameraSetup3(this)" class="text-xs font-semibold px-3 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);">Run</button>
-            </div>
-          </div>
+      <div class="settings-category" data-cat="debug" style="margin-top: 20px;">
+        <section class="rp-panel">
+          <header class="rp-panel-head">
+            <span class="rp-head-tag" style="--rp-tag: var(--slate);">Control</span>
+            <span class="rp-head-title">Camera Profiles</span>
+            <span class="rp-head-rule"></span>
+          </header>
 
-          <div class="setting-row" style="padding: 14px; border-bottom: none;">
+          <div class="setting-row" style="padding: 14px; border-bottom: none; flex-direction: column; align-items: stretch; gap: 10px;">
             <div>
-              <div class="setting-label">Expedition Camera Zoom</div>
-              <div class="setting-desc">How long O is held during Expedition's Pre Start camera setup (the small zoom step after the rotate). Applies from the next Start.</div>
+              <div class="setting-label">Per-map camera framing</div>
+              <div class="setting-desc">Pre Start puts the camera in the same place for every map. Save a profile here and that map gets its own framing instead &mdash; tilt down, hold an arrow key to swing the view, hold O to zoom out. Pick a map, set it up, Test it against the live game, then Save. Maps with no profile keep the built-in sequence.</div>
             </div>
-            <input type="number" id="setting-expedition-o-ms" min="0" max="3000" step="50"
-                   class="block-input" style="width: 90px; flex-shrink: 0;" onchange="saveExpeditionOZoom(this)">
+
+            <div class="flex items-center gap-2" style="flex-wrap: wrap;">
+              <select id="camera-profile-map" class="block-input" style="min-width: 200px;"></select>
+              <label class="flex items-center gap-1 text-xs" style="color: var(--text-muted);">
+                <input type="checkbox" id="camera-profile-tilt" checked> Tilt down
+              </label>
+              <select id="camera-profile-rotate" class="block-input" style="width: 120px;">
+                <option value="">No rotate</option>
+                <option value="left">Left arrow</option>
+                <option value="right">Right arrow</option>
+                <option value="up">Up arrow</option>
+                <option value="down">Down arrow</option>
+              </select>
+              <input type="number" id="camera-profile-rotate-ms" min="0" max="10000" step="10" value="0"
+                     class="block-input" style="width: 90px;" placeholder="rotate ms">
+              <input type="number" id="camera-profile-o-ms" min="0" max="10000" step="50" value="2000"
+                     class="block-input" style="width: 90px;" placeholder="zoom ms">
+              <button type="button" onclick="testCameraProfile(this)" class="text-xs font-semibold px-3 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);">Test</button>
+              <button type="button" onclick="saveCameraProfile(this)" class="text-xs font-semibold px-3 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--brand); border-color: var(--border);">Save</button>
+            </div>
+
+            <div id="camera-profile-list" class="text-xs" style="color: var(--text-muted);"></div>
           </div>
         </section>
       </div>
@@ -1721,6 +1737,17 @@
             </div>
             <div id="default-walk-list" class="flex flex-col gap-1"></div>
           </div>
+
+          <div class="setting-row" style="padding: 14px; border-bottom: none; flex-direction: column; align-items: stretch; gap: 10px;">
+            <div>
+              <div class="setting-label">Record map walking path</div>
+              <div class="setting-desc">Choose an existing map or type a new one, then Record. Stop from the floating bar; the path is saved under the map name and becomes its Default Auto Walk route.</div>
+            </div>
+            <div class="flex items-center gap-2" style="flex-wrap: wrap;">
+              <input id="map-walk-name" class="block-input" style="flex: 1; min-width: 200px;" type="text" placeholder="Known or new map name">
+              <button id="btn-record-map-walk" type="button" onclick="toggleMapWalkRecording(this)" class="text-xs font-semibold px-3 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--brand); border-color: var(--border);">Record</button>
+            </div>
+          </div>
         </section>
       </div>
 
@@ -1739,8 +1766,17 @@
           <p class="text-[11px] px-3 pt-3 pb-1" style="color: var(--text-muted);">
             Every fixed click point the macro uses, in the docked window's 1152&times;756 space. Each
             <b>Pick</b> button captures the Roblox screen and lets you click the spot on it -- navigate the
-            game to the screen the button lives on first (e.g. open the stage list before picking a stage row).
+            game to the screen the button lives on first (e.g. open the stage list before picking a stage row). Use
+            <b>Paste</b> to use a copied <code>x, y</code> point from Mouse Coordinates.
           </p>
+
+          <div class="setting-row" style="padding: 14px;">
+            <div>
+              <div class="setting-label">Mouse Coordinates</div>
+              <div class="setting-desc">Open a small live coordinate viewer. Hover over Roblox, copy its <code>x, y</code> value, then use Paste beside any coordinate picker below.</div>
+            </div>
+            <button type="button" onclick="popOutMousePosition()" class="text-xs font-semibold px-3 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--teal); border-color: var(--border);">Open Viewer</button>
+          </div>
 
           <div class="setting-row" style="padding: 14px;">
             <div>
@@ -1784,18 +1820,6 @@
 
           <div class="setting-row" style="padding: 14px;">
             <div>
-              <div class="setting-label">Event Gamemode Card</div>
-              <div class="setting-desc">Click point on the Event (Villian Invasion) gamemode card. The click lands here instead of the matched crop's center -- pick this if the card's center click doesn't register.</div>
-            </div>
-            <div class="flex items-center gap-2 flex-shrink-0">
-              <input id="coord-event_gamemode_x" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('event_gamemode_x', this.value)">
-              <input id="coord-event_gamemode_y" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('event_gamemode_y', this.value)">
-              <button onclick="openCoordPicker('event_gamemode')" class="text-xs font-semibold px-2 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);" title="Capture the Roblox screen and click the Event gamemode card">Pick</button>
-            </div>
-          </div>
-
-          <div class="setting-row" style="padding: 14px;">
-            <div>
               <div class="setting-label">Challenge Stage Slots</div>
               <div class="setting-desc">Click points for the 3 Regular Challenge stage rows.</div>
             </div>
@@ -1824,6 +1848,18 @@
               <input id="coord-expedition_difficulty_x" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('expedition_difficulty_x', this.value)">
               <input id="coord-expedition_difficulty_y" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('expedition_difficulty_y', this.value)">
               <button onclick="openCoordPicker('expedition_difficulty')" class="text-xs font-semibold px-2 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);" title="Capture the Roblox screen and click the + button">Pick</button>
+            </div>
+          </div>
+
+          <div class="setting-row" style="padding: 14px;">
+            <div>
+              <div class="setting-label">Daily Challenge Tab</div>
+              <div class="setting-desc">Fallback click used only when the Daily Challenge tab image cannot be found.</div>
+            </div>
+            <div class="flex items-center gap-2 flex-shrink-0">
+              <input id="coord-daily_challenge_tab_x" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('daily_challenge_tab_x', this.value)">
+              <input id="coord-daily_challenge_tab_y" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('daily_challenge_tab_y', this.value)">
+              <button onclick="openCoordPicker('daily_challenge_tab')" class="text-xs font-semibold px-2 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);" title="Capture the Roblox screen and click the Daily Challenge tab">Pick</button>
             </div>
           </div>
 
@@ -1888,7 +1924,7 @@
             </div>
           </div>
 
-          <div class="setting-row" style="padding: 14px; border-bottom: none;">
+          <div class="setting-row" style="padding: 14px;">
             <div>
               <div class="setting-label">Enter Matchmaking Region</div>
               <div class="setting-desc">Search region (x y w h) the Enter Matchmaking button is found in.</div>
@@ -1899,6 +1935,102 @@
               <input id="coord-matchmaking_region_w" class="block-input" style="width: 52px;" type="number" onchange="setMacroCoord('matchmaking_region_w', this.value)">
               <input id="coord-matchmaking_region_h" class="block-input" style="width: 52px;" type="number" onchange="setMacroCoord('matchmaking_region_h', this.value)">
               <button onclick="saveMatchmakingRegionDebug(this)" class="text-xs font-semibold px-3 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);">Capture</button>
+            </div>
+          </div>
+
+          <div class="setting-row" style="padding: 14px;">
+            <div>
+              <div class="setting-label">Portal: Lobby Items Button</div>
+              <div class="setting-desc">Click point on the Items button on the main lobby HUD (fallback path when the portal templates enter through Items -> Portals tab).</div>
+            </div>
+            <div class="flex items-center gap-2 flex-shrink-0">
+              <input id="coord-nav_items_x" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('nav_items_x', this.value)">
+              <input id="coord-nav_items_y" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('nav_items_y', this.value)">
+              <button onclick="openCoordPicker('nav_items')" class="text-xs font-semibold px-2 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);" title="Capture the Roblox screen and click the lobby Items button">Pick</button>
+            </div>
+          </div>
+
+          <div class="setting-row" style="padding: 14px;">
+            <div>
+              <div class="setting-label">Portal: Portals Sub-Tab</div>
+              <div class="setting-desc">Click point on the Portals sub-tab inside the Items panel.</div>
+            </div>
+            <div class="flex items-center gap-2 flex-shrink-0">
+              <input id="coord-portal_tab_x" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('portal_tab_x', this.value)">
+              <input id="coord-portal_tab_y" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('portal_tab_y', this.value)">
+              <button onclick="openCoordPicker('portal_tab')" class="text-xs font-semibold px-2 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);" title="Capture the Roblox screen and click the Portals sub-tab">Pick</button>
+            </div>
+          </div>
+
+          <div class="setting-row" style="padding: 14px;">
+            <div>
+              <div class="setting-label">Portal: Activate Button</div>
+              <div class="setting-desc">Click point on the Activate portal button on the confirmation screen.</div>
+            </div>
+            <div class="flex items-center gap-2 flex-shrink-0">
+              <input id="coord-portal_activate_x" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('portal_activate_x', this.value)">
+              <input id="coord-portal_activate_y" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('portal_activate_y', this.value)">
+              <button onclick="openCoordPicker('portal_activate')" class="text-xs font-semibold px-2 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);" title="Capture the Roblox screen and click the Activate button">Pick</button>
+            </div>
+          </div>
+
+          <div class="setting-row" style="padding: 14px;">
+            <div>
+              <div class="setting-label">Portal: Start Run</div>
+              <div class="setting-desc">Click point on the green Start button on the party screen Activate opens. Nothing teleports until this is pressed. Normally found by image; this is the fallback. Default (681, 519).</div>
+            </div>
+            <div class="flex items-center gap-2 flex-shrink-0">
+              <input id="coord-portal_start_x" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('portal_start_x', this.value)">
+              <input id="coord-portal_start_y" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('portal_start_y', this.value)">
+              <button onclick="openCoordPicker('portal_start')" class="text-xs font-semibold px-2 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);" title="Capture the Roblox screen and click the party screen's Start button">Pick</button>
+            </div>
+          </div>
+
+          <div class="setting-row" style="padding: 14px;">
+            <div>
+              <div class="setting-label">Portal: Open Portal List (after a run)</div>
+              <div class="setting-desc">Click point on the grey <b>Select Portal</b> button on the Victory screen &mdash; the one that opens the Portal Selection list so the next portal can be picked. Normally found by image; this is the fallback.</div>
+            </div>
+            <div class="flex items-center gap-2 flex-shrink-0">
+              <input id="coord-portal_select_x" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('portal_select_x', this.value)">
+              <input id="coord-portal_select_y" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('portal_select_y', this.value)">
+              <button onclick="openCoordPicker('portal_select')" class="text-xs font-semibold px-2 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);" title="Capture the Roblox screen and click the Select button">Pick</button>
+            </div>
+          </div>
+
+          <div class="setting-row" style="padding: 14px;">
+            <div>
+              <div class="setting-label">Portal: Confirm Pick (green Select)</div>
+              <div class="setting-desc">Click point on the green <b>Select</b> button in the Portal Selection screen's right-hand detail pane &mdash; the button that confirms the portal you just clicked in the grid. This is a different button from "Open Portal List" above. Normally found by image; this is the fallback. Default (792, 564).</div>
+            </div>
+            <div class="flex items-center gap-2 flex-shrink-0">
+              <input id="coord-portal_chooser_confirm_x" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('portal_chooser_confirm_x', this.value)">
+              <input id="coord-portal_chooser_confirm_y" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('portal_chooser_confirm_y', this.value)">
+              <button onclick="openCoordPicker('portal_chooser_confirm')" class="text-xs font-semibold px-2 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);" title="Capture the Roblox screen and click the green Select button">Pick</button>
+            </div>
+          </div>
+
+          <div class="setting-row" style="padding: 14px;">
+            <div>
+              <div class="setting-label">Portal: Exit to Lobby</div>
+              <div class="setting-desc">Click point on the Exit to Lobby button on the post-run screen. Fires once the counter has run its configured N portals (or the single-portal template's one).</div>
+            </div>
+            <div class="flex items-center gap-2 flex-shrink-0">
+              <input id="coord-portal_exit_x" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('portal_exit_x', this.value)">
+              <input id="coord-portal_exit_y" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('portal_exit_y', this.value)">
+              <button onclick="openCoordPicker('portal_exit')" class="text-xs font-semibold px-2 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);" title="Capture the Roblox screen and click the Exit to Lobby button">Pick</button>
+            </div>
+          </div>
+
+          <div class="setting-row" style="padding: 14px;">
+            <div>
+              <div class="setting-label">Auto Play Button</div>
+              <div class="setting-desc">Click point on the in-match Auto Play button, used by a task's "Plays The Map" setting. Normally found by image (both states ship art); this is the fallback. Default (1123, 485).</div>
+            </div>
+            <div class="flex items-center gap-2 flex-shrink-0">
+              <input id="coord-autoplay_x" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('autoplay_x', this.value)">
+              <input id="coord-autoplay_y" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('autoplay_y', this.value)">
+              <button onclick="openCoordPicker('autoplay')" class="text-xs font-semibold px-2 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);" title="Capture the Roblox screen and click the Auto Play button">Pick</button>
             </div>
           </div>
         </section>
@@ -2092,7 +2224,7 @@
         <span style="flex:1;"></span>
         <button onclick="openCommunity()" class="task-toolbar-btn"
                 style="margin-right: 10px;"
-                title="discord.gg/creams -- opens in your browser">More Examples on Discord :)</button>
+                title="Open Lord's Macro on GitHub">Lord's Macro on GitHub</button>
         <span class="modal-close" onclick="closeExamples()">&times;</span>
       </div>
       <div class="modal-body">
@@ -2145,7 +2277,7 @@
          two thirds of the window sat empty. -->
     <div class="modal-panel onb-panel" style="width: min(1040px, 94vw);">
       <div class="modal-head">
-        <span class="modal-title">Welcome to Cream's Macro</span>
+        <span class="modal-title">Welcome to Lord's Macro</span>
       </div>
       <div class="modal-body">
         <p class="onb-intro">
@@ -2196,9 +2328,9 @@
     </div>
   </div>
 
-  <!-- ============ One-time subscribe prompt ============
+  <!-- ============ One-time project-support prompt ============
        Shown once per install (settings.subscribe_prompted, see app.js
-       showSubscribePrompt) -- the creator asking users to subscribe, with a
+       showSubscribePrompt) -- a one-time invitation to support the project, with a
        clear opt-out so it's never shown again either way. -->
   <div id="subscribe-modal" class="modal-overlay" style="display:none;">
     <div class="modal-panel" style="width: min(680px, 92vw);">
@@ -2207,12 +2339,12 @@
       </div>
       <div class="modal-body">
         <p class="text-xs" style="color: var(--text-dim); line-height: 1.8; margin-bottom: 16px;">
-          This macro is free. If it's saving you time, subscribing to the creator's YouTube channel is a
-          big help -- it's the only thing asked in return. You'll only ever see this once.
+          Lord's Macro is free and open source. If it is saving you time, starring the project on GitHub
+          helps others find it. You will only ever see this once.
         </p>
         <div class="flex items-center gap-2" style="justify-content: flex-end;">
           <button type="button" class="rec-stop-btn" onclick="closeSubscribePrompt()">Maybe later</button>
-          <button type="button" class="pu-set-btn" onclick="subscribeAndClose()">Subscribe on YouTube</button>
+          <button type="button" class="pu-set-btn" onclick="visitProjectAndClose()">Open on GitHub</button>
         </div>
       </div>
     </div>
@@ -2505,7 +2637,7 @@
         <!-- Import Tab Content -->
         <div id="share-content-import" style="display: none; flex-direction: column; gap: 10px;">
           <div class="flex items-center justify-between">
-            <span style="font-size: 11px; color: var(--text-dim);">Paste code (`CREAM:v1:`), raw JSON, or web URL (Pastebin/Gist/Discord):</span>
+            <span style="font-size: 11px; color: var(--text-dim);">Paste code (`LORD:v2:`), raw JSON, or web URL (Pastebin/Gist/Discord):</span>
             <button type="button" class="task-toolbar-btn" style="padding: 2px 8px; font-size: 10px;" onclick="pasteFromClipboardPython()">Paste Clipboard</button>
           </div>
           <textarea id="share-import-input" rows="3" style="width: 100%; font-family: monospace; font-size: 11px; padding: 8px; background: var(--bg-surface); border: 1px solid var(--border); color: var(--text); border-radius: 6px; resize: vertical;" placeholder="Paste code or URL here..." oninput="onShareImportInput()"></textarea>
@@ -2561,7 +2693,7 @@
             </button>
             <div class="faq-answer">
               <p><strong>Yes, the macro is safe and open-source.</strong></p>
-              <p>PyInstaller executables often trigger false positives in basic antivirus scans. You can inspect every line of code on our <a href="https://github.com/Cweamy/Anime-Expeditions-Creams-Macro" target="_blank" style="color: var(--brand); text-decoration: underline;">GitHub repository</a> or run it directly from source.</p>
+              <p>PyInstaller executables often trigger false positives in basic antivirus scans. You can inspect every line of code on our <a href="https://github.com/PizzaPeli/Anime-Expeditions-Lords-Macro" target="_blank" style="color: var(--brand); text-decoration: underline;">GitHub repository</a> or run it directly from source.</p>
             </div>
           </div>
 
@@ -2587,7 +2719,7 @@
             </button>
             <div class="faq-answer">
               <p>A running background process might lock the executable file from being overwritten.</p>
-              <p><strong>Fix:</strong> Close all macro processes in Task Manager, or download the latest <code>.zip</code> from <a href="https://github.com/Cweamy/Anime-Expeditions-Creams-Macro/releases/latest" target="_blank" style="color: var(--brand); text-decoration: underline;">GitHub Releases</a> and extract it to a new folder.</p>
+              <p><strong>Fix:</strong> Close all macro processes in Task Manager, or download the latest <code>.zip</code> from <a href="https://github.com/PizzaPeli/Anime-Expeditions-Lords-Macro/releases/latest" target="_blank" style="color: var(--brand); text-decoration: underline;">GitHub Releases</a> and extract it to a new folder.</p>
             </div>
           </div>
 

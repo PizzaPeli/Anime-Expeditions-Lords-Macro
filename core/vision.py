@@ -115,6 +115,46 @@ def detect_template_dir(name: str) -> str:
 # noise to tolerate.
 DEFAULT_THRESHOLD = 0.90
 
+# Built-in per-name baseline overrides, shipped in code rather than in a
+# user's settings.json. These are for names that were flaky at the global
+# 0.90 bar on their own art (portal_tab / portal_tab_selected changing
+# color state, portal_activate, portal_chooser_header) and are lowered here
+# so the fix travels with the app for every user/build instead of relying on
+# each person finding the Image Manager slider themselves. A user's own
+# Settings > General > Image Manager override (_name_thresholds below) still
+# wins over this if they ever set one -- this is only the shipped floor
+# underneath that, not a ceiling on it.
+_BUILTIN_NAME_THRESHOLDS = {
+    "portal_tab": 0.80,
+    "portal_tab_selected": 0.80,
+    "portal_activate": 0.80,
+    "portal_chooser_header": 0.80,
+    "portal_offer": 0.60,
+    # The shipped challenge_loaded art is cut ~10% smaller than this UI
+    # renders it: measured against a real Challenges screen its best score is
+    # 0.87, and only at the 1.10 end of SCALE_FACTORS -- just under the 0.90
+    # bar, which is why "challenge_loaded not found within 10s" stopped every
+    # Challenge run. A same-scale variant is shipped alongside this
+    # (challenge_loaded_modal.png, cut 1:1 from that screen and including the
+    # modal's compass medallion so it cannot match the gamemode menu's
+    # Challenge button instead); the floor is the belt to that braces.
+    "challenge_loaded": 0.85,
+    # Same shape as nav_area and challenge_loaded: every shipped defeat crop is
+    # cut smaller than this UI renders the banner. Measured on two real Defeat
+    # frames from this machine (debug/debug_screenshot_1.png and
+    # debug/screen_manual_20260908_000520.png, both Challenge result screens the
+    # runner was actively watching), all three peak at the TOP of the scale
+    # sweep and still miss the bar: defeat 0.858, defeat_alt2 0.888, defeat_alt3
+    # 0.829, every one of them at 1.10x. So a real Defeat never matched at all,
+    # _wait_for_match_result kept polling a result screen that could no longer
+    # change, and the run only escaped at MATCH_RESULT_TIMEOUT half an hour
+    # later. A correctly-scaled defeat_current.png now ships beside them and
+    # scores 1.00 at 1.0x, so this floor is only the belt to that brace. The
+    # margin is comfortable: that same crop scores at most 0.56 on non-Defeat
+    # frames (a Victory result screen, the portal chooser), nowhere near 0.85.
+    "defeat": 0.85,
+}
+
 # Per-search-name threshold overrides (Settings > General > Image Manager --
 # the sensitivity slider on each name). Lets someone lower the bar for a
 # button that renders slightly differently on their setup so it still
@@ -144,9 +184,16 @@ def _effective_threshold(name: str, threshold: float) -> float:
     """The threshold to actually use for `name`: a per-name override when the
     caller left threshold at the default, otherwise the caller's explicit
     value (an explicit non-default threshold always wins -- those are
-    deliberate, e.g. MAX_PLACEMENT_THRESHOLD)."""
+    deliberate, e.g. MAX_PLACEMENT_THRESHOLD).
+
+    Priority when the caller left threshold at the default: the user's own
+    Settings > Image Manager override first, then the shipped built-in
+    baseline for a handful of known-flaky names, then the global default.
+    """
     if threshold == DEFAULT_THRESHOLD:
-        return _name_thresholds.get(name, DEFAULT_THRESHOLD)
+        if name in _name_thresholds:
+            return _name_thresholds[name]
+        return _BUILTIN_NAME_THRESHOLDS.get(name, DEFAULT_THRESHOLD)
     return threshold
 
 # Some setups render this game's UI at a slightly different pixel size than
@@ -305,6 +352,40 @@ def clear_template_cache() -> None:
     _template_cache.clear()
 
 
+# Reference art bigger than the normalised capture space can NEVER match:
+# every matcher here treats "template larger than haystack" as a clean miss
+# (see find_in_gray / find_all_in_gray / find_bottommost_image), and the scale
+# sweep only reaches 0.90x, so nothing rescues a template more than ~10% too
+# big. That miss is completely silent, which is how five dead portal_offer
+# crops and a dead portal_win survived in the shipped Assets -- art cut from a
+# screenshot at some other window size just never matches, and the log says
+# nothing at all. Recorded on load so the failure is visible instead of
+# invisible; see oversized_template_report().
+_OVERSIZED_TEMPLATES = {}
+
+
+def _note_if_oversized(path: str, gray) -> None:
+    h, w = gray.shape[:2]
+    if w <= config.FIXED_WIN_W and h <= config.FIXED_WIN_H:
+        return
+    if path in _OVERSIZED_TEMPLATES:
+        return
+    _OVERSIZED_TEMPLATES[path] = (w, h)
+    sys.stderr.write(
+        f"[Vision] Reference image {path} is {w}x{h}, larger than the "
+        f"{config.FIXED_WIN_W}x{config.FIXED_WIN_H} capture space -- it can "
+        f"never match and is being ignored. Re-crop it from a frame in "
+        f"debug/ (already normalised) and keep it to the element itself.\n")
+
+
+def oversized_template_report() -> dict:
+    """Every reference image loaded so far that is too big to ever match,
+    as {path: (width, height)}. Empty is the healthy state. Surfaced for
+    diagnostics so this class of dead art is findable without reading the
+    Assets folder by hand."""
+    return dict(_OVERSIZED_TEMPLATES)
+
+
 def _load_gray_from_path(path: str):
     """Loads + caches one reference image file as (grayscale, mask). Cached
     per file path because the runner hits this on every poll of
@@ -336,6 +417,7 @@ def _load_gray_from_path(path: str):
         gray = cv2.cvtColor(raw[:, :, :3], cv2.COLOR_BGR2GRAY)
     else:
         gray = cv2.cvtColor(raw, cv2.COLOR_BGR2GRAY) if raw.ndim == 3 else raw
+    _note_if_oversized(path, gray)
     entry = (gray, None)
     _template_cache[cache_key] = entry
     return entry
@@ -398,6 +480,93 @@ from . import mss_manager
 
 _use_window_capture = sys.platform == "darwin"
 
+# --- Frozen-frame detection -------------------------------------------------
+#
+# WHY: the default capture path is a SCREEN-REGION grab of the window's
+# rectangle (see _screen_grab_gray), so it returns whatever pixels are in that
+# rectangle -- the game if it is on top, and any window in FRONT of the game if
+# one is. capture_game_gray's own docstring states the assumption that made
+# that acceptable ("the runner only ever calls this while Roblox is the
+# actually-visible, foreground game"), and that assumption is simply false when
+# the user alt-tabs to something that covers it.
+#
+# Measured, in the 0.31.5 session: debug/region_match_result_timeout.png
+# (00:32:35) and debug/region_rejoin_timeout.png (00:35:11) are BYTE-IDENTICAL,
+# md5 8a4261d8..., 340670 bytes -- two captures 2m36s apart, spanning a full
+# Roblox close + relaunch + re-dock at 00:33:40-00:33:51. Two frames of a live
+# game cannot be identical across a client restart. And they are not of the
+# game: both show the user's chat client, which was sitting over the Roblox
+# rectangle.
+#
+# What that cost, all downstream of the same stuck frame: a 30-minute
+# MATCH_RESULT_TIMEOUT watching a picture; a "silent disconnect" verdict that
+# force-closed and relaunched a perfectly healthy client; leave_stage matched
+# at 1.00 on six clicks that never cleared it; nav_closeui found and clicked 8
+# times in a row; and a 14-minute wedge in which every layer independently said
+# "continuing anyway" and handed the wedged client to the next one.
+#
+# NOTHING NOTICED. That is the actual defect -- not the capture path, which has
+# a documented fix already (Settings > "Hardware Capture Fix", the WGC backend
+# above, which reads the window's own composed frames regardless of occlusion).
+# A macro that reads the screen has to be able to tell "the screen is not
+# changing" from "the screen is telling me the same thing", and it had no way
+# to. This is that way.
+#
+# Only FULL-WINDOW captures are tracked (region is None). A fixed sub-region --
+# a HUD corner, a button box -- is legitimately identical for long stretches and
+# would produce constant false alarms. A live full frame effectively never
+# repeats: this game animates its lobby, its world and its timers, and the
+# comparison is on a 64x64 reduction where any real motion shows up.
+_FROZEN_SIGNATURE_SIZE = (64, 64)
+_frozen_signature = None
+_frozen_since = 0.0
+_frozen_samples = 0
+
+
+def _note_capture_signature(gray) -> None:
+    """Record whether this full-window capture differs from the last one."""
+    global _frozen_signature, _frozen_since, _frozen_samples
+    try:
+        small = cv2.resize(gray, _FROZEN_SIGNATURE_SIZE, interpolation=cv2.INTER_AREA)
+        signature = small.tobytes()
+    except Exception:
+        return
+    now = time.time()
+    if signature == _frozen_signature:
+        _frozen_samples += 1
+        return
+    _frozen_signature = signature
+    _frozen_since = now
+    _frozen_samples = 1
+
+
+def capture_unchanged_seconds() -> float:
+    """How long the full-window capture has been byte-identical, in seconds.
+
+    0.0 when nothing has been captured yet or the frame just changed. Callers
+    should treat a large value as "I am looking at a picture, not a game" --
+    see the module comment above for the run this was measured on.
+    """
+    if _frozen_signature is None or _frozen_samples < 2:
+        return 0.0
+    return max(0.0, time.time() - _frozen_since)
+
+
+def capture_unchanged_samples() -> int:
+    """How many consecutive full-window captures were byte-identical."""
+    return _frozen_samples if _frozen_signature is not None else 0
+
+
+def reset_capture_staleness() -> None:
+    """Forget the current signature -- call after anything that legitimately
+    replaces what is on screen (a rejoin, a fresh run) so the clock does not
+    carry a pre-existing freeze across it."""
+    global _frozen_signature, _frozen_since, _frozen_samples
+    _frozen_signature = None
+    _frozen_since = 0.0
+    _frozen_samples = 0
+
+
 
 def _get_mss():
     return mss_manager.get_mss()
@@ -433,6 +602,17 @@ def _capture_window_gray(hwnd: int, region: tuple = None):
 
 
 def capture_game_gray(hwnd: int, region: tuple = None) -> np.ndarray:
+    """Thin wrapper over the real capture below that records a signature of
+    every FULL-WINDOW frame, so callers can ask how long the screen has been
+    frozen (see _note_capture_signature and capture_unchanged_seconds). The
+    docstring of the actual capture follows on _capture_game_gray_uncounted."""
+    gray = _capture_game_gray_uncounted(hwnd, region)
+    if region is None and gray is not None:
+        _note_capture_signature(gray)
+    return gray
+
+
+def _capture_game_gray_uncounted(hwnd: int, region: tuple = None) -> np.ndarray:
     """Grayscale screenshot of the game window, or a sub-rect of it in
     REFERENCE-space coordinates (x, y, w, h) -- e.g. the Nav's Play button
     lives in a small fixed corner, so a caller that already knows roughly
@@ -1086,6 +1266,58 @@ def upgrade_button_green_fraction(hwnd: int, match: dict) -> float:
     b, g, r = (bgr[:, :, i].astype(int) for i in range(3))
     greenness = g - np.maximum(b, r)
     return float(((greenness > 25) & (hsv[:, :, 1] > 90)).mean())
+
+
+# The Portals tab in the Items panel has two states that differ almost only
+# by COLOUR: unselected is the panel's grey/dark chrome, selected is filled
+# blue. Matching is grayscale, so the one thing that tells them apart is
+# thrown away before scoring -- and portal_tab / portal_tab_selected both sit
+# at a lowered 0.80 threshold (see _BUILTIN_NAME_THRESHOLDS) because each
+# misses its own art at 0.90. Measured on the shipped art, the selected
+# template scores up to 0.892 against the UNSELECTED tab, so "is the Portals
+# tab selected?" answered by template alone is a coin flip that lands wrong:
+# the runner reads the tab as already selected, skips the click that would
+# select it (see _portal_step's already-at-destination shortcut), and then
+# clicks the saved inventory slot on whatever tab was actually open --
+# reported as "No Activate screen after picking the portal ... or that
+# inventory square is empty".
+#
+# Same fix as find_upgrade_state below: locate by template, decide the STATE
+# by colour. Blue fill measures 0.70 on both selected variants and exactly
+# 0.00 on all four unselected ones, so the bar sits far from either.
+PORTAL_TAB_BLUE_MIN_FRACTION = 0.25
+
+
+def portal_tab_blue_fraction(hwnd: int, match: dict) -> float:
+    """Fraction of pixels at `match` that are dominantly blue and saturated."""
+    bgr = capture_game_bgr(hwnd, (match["x"], match["y"], match["w"], match["h"]))
+    if bgr is None or bgr.size == 0:
+        return 0.0
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    b, g, r = (bgr[:, :, i].astype(int) for i in range(3))
+    blueness = b - np.maximum(g, r)
+    return float(((blueness > 25) & (hsv[:, :, 1] > 90)).mean())
+
+
+def portal_tab_is_selected(hwnd: int) -> bool:
+    """True only when the Portals tab is actually the SELECTED (blue) tab.
+
+    Locates the tab with either name's art -- the shape is the same in both
+    states, which is exactly why the template cannot answer this -- and then
+    reads the colour at that spot. Returns False when the tab isn't on screen
+    at all, so callers can treat it as "not there / not selected" without a
+    separate existence check.
+    """
+    try:
+        found = find_image_any(hwnd, ("portal_tab_selected", "portal_tab"))
+    except TemplateNotFound:
+        return False
+    if found is None:
+        return False
+    match = found[0] if isinstance(found, tuple) else found
+    if not match:
+        return False
+    return portal_tab_blue_fraction(hwnd, match) >= PORTAL_TAB_BLUE_MIN_FRACTION
 
 
 def find_upgrade_state(hwnd: int):

@@ -144,6 +144,7 @@ let compactMode = false;
 // Called from Python (main.py) the moment docking actually succeeds,
 // don't wait on the 1.5s status poll for a state this important to flip.
 function showDocked() {
+  document.body.classList.add('nav-rail-active');
   document.getElementById('waiting-screen').style.display = 'none';
   document.getElementById('main-layout').style.display = 'flex';
   document.getElementById('titlebar').style.display = 'flex';
@@ -402,6 +403,7 @@ function runPendingFirstRun() {
 
 function showWaiting() {
   if (skipped) return;  // user chose to use the panel before Roblox docks, don't yank it away
+  document.body.classList.remove('nav-rail-active');
   document.getElementById('main-layout').style.display = 'none';
   document.getElementById('waiting-screen').style.display = 'flex';
   document.getElementById('titlebar').style.display = 'none';
@@ -409,6 +411,7 @@ function showWaiting() {
 
 function skipWaiting() {
   skipped = true;
+  document.body.classList.add('nav-rail-active');
   try { window.pywebview && pywebview.api.skip_waiting(); } catch (e) {}
   document.getElementById('waiting-screen').style.display = 'none';
   document.getElementById('main-layout').style.display = 'flex';
@@ -876,7 +879,7 @@ let rebindingAction = null;
 // action's ORIGINAL key without a round-trip; unbinding is done by pressing
 // Esc during capture instead.
 const HOTKEY_DEFAULTS = {
-  toggle_game: 'f4', skip_waiting: '', macro_start: 'f1', macro_stop: 'f2', macro_pause: 'f5', debug_screenshot: 'f3',
+  toggle_game: 'f4', skip_waiting: '', macro_start: 'f1', macro_stop: 'f2', macro_pause: 'f5', screen_snapshot: 'f3',
   image_manager: 'f6', toggle_compact: 'f7', game_auto_upgrade: '',
 };
 
@@ -958,7 +961,7 @@ async function resetHotkeys() {
     updateKeybindDisplay('macro_start', hk.macro_start || '');
     updateKeybindDisplay('macro_stop', hk.macro_stop || '');
     updateKeybindDisplay('macro_pause', hk.macro_pause || '');
-    updateKeybindDisplay('debug_screenshot', hk.debug_screenshot || '');
+    updateKeybindDisplay('screen_snapshot', hk.screen_snapshot || '');
     updateKeybindDisplay('image_manager', hk.image_manager || '');
     updateKeybindDisplay('toggle_compact', hk.toggle_compact || '');
     updateKeybindDisplay('game_auto_upgrade', hk.game_auto_upgrade || '');
@@ -971,8 +974,8 @@ async function resetHotkeys() {
 // comment on data-theme-base/data-theme-accent for how they combine. '' /
 // 'default' means "no override" for either, i.e. the plain :root palette.
 const THEME_BASES = {
-  default: { label: 'Dark', bg: '#171a26', border: '#2a2e42' },
-  black:   { label: 'Black', bg: '#0a0a0a', border: '#262626' },
+  default: { label: 'Black + Red', bg: '#0a0a0a', border: '#282828' },
+  black:   { label: 'Pure Black', bg: '#0a0a0a', border: '#262626' },
   slate:   { label: 'Slate', bg: '#1a1b1e', border: '#313338' },
   light:   { label: 'Light', bg: '#ffffff', border: '#d8dbe4' },
   space:   { label: 'Space', bg: '#0b0d19', border: '#1e2640' },
@@ -982,8 +985,8 @@ const THEME_BASES = {
   glass:   { label: 'Liquid Glass', bg: 'linear-gradient(135deg, rgba(110,166,255,0.45), rgba(181,140,224,0.45))', border: 'rgba(255,255,255,0.25)' },
 };
 const THEME_ACCENTS = {
-  default: '#7c9dff', ocean: '#58a6ff', emerald: '#3fbf8f', sakura: '#e87a9e',
-  violet: '#a878f0', sunset: '#e8935a', crimson: '#e05a6d', mono: '#aab2c8',
+  default: '#e53935', ocean: '#58a6ff', emerald: '#3fbf8f', sakura: '#e87a9e',
+  violet: '#a878f0', sunset: '#e8935a', crimson: '#e53935', mono: '#aab2c8',
 };
 let activeThemeBase = 'default';
 let activeThemeAccent = 'default';
@@ -1125,8 +1128,7 @@ async function loadSettingsUI() {
     const expColorEl = document.getElementById('toggle-expedition-color');
     // Default ON -- the key is simply absent until the user first flips it.
     if (expColorEl) expColorEl.classList.toggle('on', s.expedition_color_buttons !== false);
-    const expOEl = document.getElementById('setting-expedition-o-ms');
-    if (expOEl) expOEl.value = s.expedition_camera_o_ms ?? 100;
+    renderCameraProfiles(s.camera_profiles || {});
     const flickerEl = document.getElementById('toggle-flicker-free');
     if (flickerEl) {
       // Default on -- absent key means enabled.
@@ -1187,7 +1189,7 @@ async function loadSettingsUI() {
     updateKeybindDisplay('macro_start', hk.macro_start || '');
     updateKeybindDisplay('macro_stop', hk.macro_stop || '');
     updateKeybindDisplay('macro_pause', hk.macro_pause || '');
-    updateKeybindDisplay('debug_screenshot', hk.debug_screenshot || '');
+    updateKeybindDisplay('screen_snapshot', hk.screen_snapshot || '');
     updateKeybindDisplay('image_manager', hk.image_manager || '');
     updateKeybindDisplay('toggle_compact', hk.toggle_compact || '');
     updateKeybindDisplay('game_auto_upgrade', hk.game_auto_upgrade || '');
@@ -1765,8 +1767,8 @@ async function closeSubscribePrompt() {
   restoreGameIfDashboard();
 }
 
-async function subscribeAndClose() {
-  try { await pywebview.api.open_youtube_channel(); } catch (e) {}
+async function visitProjectAndClose() {
+  try { await pywebview.api.open_project_page(); } catch (e) {}
   await closeSubscribePrompt();
 }
 
@@ -1852,6 +1854,262 @@ async function saveExpeditionOZoom(el) {
   el.value = ms;
   try { await pywebview.api.set_setting('expedition_camera_o_ms', ms); } catch (e) {}
   addLog(`[Settings] Expedition camera zoom hold set to ${ms}ms.`);
+}
+
+// ---------------------------------------------------------------------------
+// Settings > Debug > Portal Scanner
+//
+// Geometry only -- WHICH portal a task takes is the task's own "Portal Name".
+// These are the squares the scanner clicks and the two parts of the detail
+// pane it reads once a square is selected. Shipped values are measured from a
+// docked 1152x756 window; Test Read is how you check them against yours.
+function slotsToText(slots) {
+  return (slots || []).map(p => `${p[0]}, ${p[1]}`).join('\n');
+}
+
+// Forgiving on purpose: this is a text box people will paste into. Anything
+// that isn't two numbers is dropped rather than rejecting the whole list.
+function textToSlots(text) {
+  return String(text || '').split('\n').map(line => {
+    const m = /^\s*(-?\d+)\s*[, ]\s*(-?\d+)\s*$/.exec(line);
+    return m ? [parseInt(m[1], 10), parseInt(m[2], 10)] : null;
+  }).filter(Boolean);
+}
+
+function renderPortalScanSettings(ps) {
+  if (!ps) return;
+  const put = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+  const [nx, ny, nw, nh] = ps.name_region || [];
+  const [mx, my, mw, mh] = ps.modifier_region || [];
+  const [cnx, cny, cnw, cnh] = ps.chooser_name_region || [];
+  const [cmx, cmy, cmw, cmh] = ps.chooser_modifier_region || [];
+  put('ps-name-x', nx); put('ps-name-y', ny); put('ps-name-w', nw); put('ps-name-h', nh);
+  put('ps-mod-x', mx); put('ps-mod-y', my); put('ps-mod-w', mw); put('ps-mod-h', mh);
+  put('ps-cname-x', cnx); put('ps-cname-y', cny); put('ps-cname-w', cnw); put('ps-cname-h', cnh);
+  put('ps-cmod-x', cmx); put('ps-cmod-y', cmy); put('ps-cmod-w', cmw); put('ps-cmod-h', cmh);
+  put('ps-inventory-slots', slotsToText(ps.inventory_slots));
+  put('ps-chooser-slots', slotsToText(ps.chooser_slots));
+}
+
+function readPortalScanForm() {
+  const num = id => parseInt((document.getElementById(id) || {}).value, 10) || 0;
+  const text = id => (document.getElementById(id) || {}).value || '';
+  return {
+    name_region: [num('ps-name-x'), num('ps-name-y'), num('ps-name-w'), num('ps-name-h')],
+    modifier_region: [num('ps-mod-x'), num('ps-mod-y'), num('ps-mod-w'), num('ps-mod-h')],
+    chooser_name_region: [num('ps-cname-x'), num('ps-cname-y'), num('ps-cname-w'), num('ps-cname-h')],
+    chooser_modifier_region: [num('ps-cmod-x'), num('ps-cmod-y'), num('ps-cmod-w'), num('ps-cmod-h')],
+    inventory_slots: textToSlots(text('ps-inventory-slots')),
+    chooser_slots: textToSlots(text('ps-chooser-slots')),
+  };
+}
+
+async function savePortalScanSettings(btn) {
+  try {
+    const res = await pywebview.api.set_portal_scan_settings(readPortalScanForm());
+    if (res && res.portal_scan) {
+      renderPortalScanSettings(res.portal_scan);
+      addLog('[Portal Scanner] Saved.');
+    }
+  } catch (e) {}
+}
+
+async function resetPortalScanSettings(btn) {
+  try {
+    const res = await pywebview.api.reset_portal_scan_settings();
+    if (res && res.portal_scan) {
+      renderPortalScanSettings(res.portal_scan);
+      addLog('[Portal Scanner] Reset to the shipped defaults.');
+    }
+  } catch (e) {}
+}
+
+// Settings > Debug > Screenshot > "Screen Snapshot".
+//
+// Deliberately NOT the Portal Scanner's Test Read: that one reads four
+// portal-specific regions and judges them, which is meaningless on any other
+// screen. When the macro is stuck the question is only ever "what is it
+// looking at", so this takes the picture and stops. The Python side focuses
+// Roblox, captures, and returns focus here.
+async function captureScreenSnapshot(btn) {
+  const original = btn ? btn.textContent : null;
+  switchScreen('dashboard');
+  if (btn) { btn.disabled = true; btn.textContent = 'Capturing...'; }
+  try {
+    const res = await pywebview.api.debug_capture_screen('manual');
+    if (btn) btn.textContent = (res && res.ok) ? 'Saved' : 'Failed';
+  } catch (e) {
+    if (btn) btn.textContent = 'Failed';
+  }
+  if (btn) {
+    setTimeout(() => { btn.disabled = false; btn.textContent = original; }, 1400);
+  }
+}
+
+async function portalScanTestRead(btn) {
+  const out = document.getElementById('ps-test-result');
+  // Back to the dashboard before the read: it takes over Roblox's focus for
+  // a moment, and sitting on a Settings pane while that happens is what made
+  // the UI feel broken afterwards. Python hands focus back to this window
+  // when it is done.
+  switchScreen('dashboard');
+  if (out) out.textContent = 'Reading...';
+  try {
+    const res = await pywebview.api.debug_portal_scan_test_read();
+    if (!res || res.ok === false) {
+      if (out) out.textContent = res && res.reason === 'no_roblox'
+        ? 'Roblox isn\'t open.' : 'Could not read.';
+      return;
+    }
+    // Both screens are read every press, so show whichever pair actually
+    // produced text -- that is also how you tell which screen you are on.
+    const r = res.regions || {};
+    const name = (r.name_region || {}).text || (r.chooser_name_region || {}).text || '';
+    const mod = (r.modifier_region || {}).text || (r.chooser_modifier_region || {}).text || '';
+    if (!out) return;
+    if (name || mod) {
+      out.textContent = `name: ${name || '(nothing)'} \u00b7 modifier: ${mod || '(nothing)'}`;
+      return;
+    }
+    // Nothing read. Which of the three possible reasons it was decides what
+    // the user should do next, so say which -- "nothing readable" on its own
+    // is what sent the first calibration attempt looking at the wrong thing.
+    if (res.reason === 'no_capture') {
+      out.textContent = 'The game window could not be captured \u2014 is Roblox minimised?';
+    } else if (res.reason === 'no_engine') {
+      out.textContent = `No OCR engine on this machine (${res.engine_text || 'none'}) \u2014 the regions are not the problem.`;
+    } else {
+      out.textContent = `OCR works (${res.engine_text || ''}) but both regions read nothing \u2014 see debug/portal_scan_frame_regions.png for where it looked.`;
+    }
+  } catch (e) {
+    if (out) out.textContent = 'Could not read.';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Settings > Debug > Camera Profiles
+//
+// Pre Start framed every map the same way: tilt down, hold O for 2s. That is
+// one framing for maps whose lanes sit in completely different places, and
+// the only escape was Expedition's hardcoded exception. A profile is that
+// same sequence made editable per map -- tilt, an arrow-key rotate, an O
+// zoom -- stored in settings under the map's name (or a mode name as a
+// catch-all for that mode), read by runner._camera_profile_for.
+//
+// Stored per map rather than per task on purpose: the right framing is a
+// property of the map, so calibrating it once should serve every task that
+// ever runs it.
+let cameraProfiles = {};
+
+// Every map the Task Builder can pick, plus the mode names as catch-alls.
+// Built from TASK_DATA so a map added there shows up here with no second
+// list to keep in sync.
+function cameraProfileTargets() {
+  const maps = new Set();
+  for (const [mode, d] of Object.entries(TASK_DATA)) {
+    for (const m of (d.maps || [])) maps.add(m);
+  }
+  return [...[...maps].sort(), ...Object.keys(TASK_DATA).sort().map(m => `${m} (all maps)`)];
+}
+
+// "expedition (all maps)" is stored as the bare mode name -- that is the key
+// the runner falls back to when a map has no profile of its own.
+function cameraProfileKey(label) {
+  const mode = /^(\w+) \(all maps\)$/.exec(label || '');
+  return mode ? mode[1] : (label || '');
+}
+
+function renderCameraProfiles(profiles) {
+  cameraProfiles = profiles && typeof profiles === 'object' ? profiles : {};
+  const sel = document.getElementById('camera-profile-map');
+  if (!sel) return;
+  if (!sel.options.length) {
+    sel.innerHTML = cameraProfileTargets()
+      .map(label => `<option value="${escapeHtml(label)}">${escapeHtml(label)}</option>`).join('');
+    sel.onchange = () => loadCameraProfileIntoForm();
+  }
+  const list = document.getElementById('camera-profile-list');
+  if (list) {
+    const names = Object.keys(cameraProfiles).sort();
+    list.innerHTML = names.length
+      ? names.map(name => {
+          const p = cameraProfiles[name] || {};
+          const bits = [p.tilt === false ? 'no tilt' : 'tilt down'];
+          if (p.rotate_key && p.rotate_ms) bits.push(`${p.rotate_key} ${p.rotate_ms}ms`);
+          if (p.o_ms) bits.push(`zoom ${p.o_ms}ms`);
+          return `<div class="flex items-center gap-2" style="padding: 3px 0;">
+            <span style="flex: 1 1 auto;"><b>${escapeHtml(name)}</b> &mdash; ${escapeHtml(bits.join(', '))}</span>
+            <button type="button" class="task-icon-btn delete" data-tooltip="Remove"
+                    onclick="clearCameraProfile('${escapeHtml(name)}')">&#10005;</button>
+          </div>`;
+        }).join('')
+      : 'No saved profiles &mdash; every map uses its built-in sequence.';
+  }
+  loadCameraProfileIntoForm();
+}
+
+// Show what the selected map does TODAY: its saved profile if it has one,
+// otherwise the built-in its mode would use. Never a blank form -- a form
+// that starts empty invites saving "no tilt, no zoom", which is a camera
+// step that does nothing.
+function loadCameraProfileIntoForm() {
+  const sel = document.getElementById('camera-profile-map');
+  if (!sel) return;
+  const key = cameraProfileKey(sel.value);
+  const saved = cameraProfiles[key];
+  const p = saved || (key === 'expedition'
+    ? { tilt: true, rotate_key: 'left', rotate_ms: 730, o_ms: 100 }
+    : { tilt: true, rotate_key: '', rotate_ms: 0, o_ms: 2000 });
+  const tilt = document.getElementById('camera-profile-tilt');
+  const rot = document.getElementById('camera-profile-rotate');
+  const rotMs = document.getElementById('camera-profile-rotate-ms');
+  const oMs = document.getElementById('camera-profile-o-ms');
+  if (tilt) tilt.checked = p.tilt !== false;
+  if (rot) rot.value = p.rotate_key || '';
+  if (rotMs) rotMs.value = p.rotate_ms || 0;
+  if (oMs) oMs.value = p.o_ms || 0;
+}
+
+function readCameraProfileForm() {
+  const num = (id, cap) => Math.max(0, Math.min(cap, parseInt(
+    (document.getElementById(id) || {}).value, 10) || 0));
+  return {
+    tilt: !!(document.getElementById('camera-profile-tilt') || {}).checked,
+    rotate_key: (document.getElementById('camera-profile-rotate') || {}).value || '',
+    rotate_ms: num('camera-profile-rotate-ms', 10000),
+    o_ms: num('camera-profile-o-ms', 10000),
+  };
+}
+
+async function testCameraProfile(btn) {
+  const profile = readCameraProfileForm();
+  switchScreen('dashboard');
+  await new Promise(resolve => setTimeout(resolve, 400));
+  try {
+    const res = await pywebview.api.debug_run_camera_profile(profile);
+    if (res && res.ok === false) {
+      addLog(res.reason === 'no_roblox'
+        ? '[Camera] Roblox isn\'t open -- start the game first.'
+        : `[Camera] Couldn't test that profile: ${res.reason}`);
+    }
+  } catch (e) {}
+}
+
+async function saveCameraProfile(btn) {
+  const sel = document.getElementById('camera-profile-map');
+  if (!sel) return;
+  const key = cameraProfileKey(sel.value);
+  try {
+    const res = await pywebview.api.set_camera_profile(key, readCameraProfileForm());
+    if (res && res.profiles) renderCameraProfiles(res.profiles);
+  } catch (e) {}
+}
+
+async function clearCameraProfile(name) {
+  try {
+    const res = await pywebview.api.clear_camera_profile(name);
+    if (res && res.profiles) renderCameraProfiles(res.profiles);
+  } catch (e) {}
 }
 
 // Settings > Debug > "Camera Setup 3" -- experimental: right-click drag
@@ -2154,7 +2412,7 @@ const TASK_DATA = {
   },
   raid: {
     label: 'Raid',
-    maps: ['Spirit City'],
+    maps: ['Spirit City', 'Snowy Castle'],
     stages: ['1', '2', '3'],
     fixedDifficulty: 'Hard',
   },
@@ -2168,29 +2426,6 @@ const TASK_DATA = {
     // run. See core.runner._expedition_extract_accept_at.
     extractAfter: ['0', '1', '2', '3', '4', '5'],
   },
-  event: {
-    label: 'Event',
-    // Event has its own lobby entry (nav_event -> event_gamemode -> kind
-    // card), no map carousel and no difficulty picker -- just one of the
-    // event kinds (Infinite & Fishing, or Portal Mode), then Solo/
-    // Matchmaking. Stored in `stage` (values 'infinite'/'portal') the same
-    // way Raid stores its Acts, so it reuses the existing stage/act
-    // plumbing. The chosen kind is what runner._reach_event_kind_selected
-    // clicks. Mirrors core.runner_constants' EVENT_KIND_ORDER. Portal Mode
-    // additionally picks + activates a portal on the way in, and picks the
-    // next one after each win (see runner_event._select_summer_portal).
-    stages: ['infinite', 'portal'],
-    isEvent: true,
-  },
-  portals: {
-    label: 'Portals',
-    // A mode-agnostic portal runner: the user types a portal name that is
-    // used as the SEARCH QUERY in the Inventory -> Portals tab (see
-    // core.runner_portals / PortalsOp). Stored in `map`, so it reads
-    // straight through to logs/status. No map carousel or difficulty -- the
-    // portal name IS the selection.
-    isPortals: true,
-  },
   tournament: {
     label: 'Tournament',
     // Tournament has its own lobby entry (nav_tournament -> a type card ->
@@ -2202,6 +2437,26 @@ const TASK_DATA = {
     // Matchmaking isn't offered: "Solo Tournament" already is the mode.
     maps: ['Solo Tournament'],
     isTournament: true,
+  },
+  portals: {
+    label: 'Portals',
+    // Portals are opened straight out of the inventory (Items > Portals >
+    // the portal), not through Play/gamemode/map and not through the Event
+    // menu -- so there is no map carousel and no difficulty picker. There is no portal
+    // TYPE picker either: which panel a portal is opened from depends on
+    // where the last run left you, so the runner decides that by looking at
+    // the screen (see _portal_chooser_showing) rather than by asking. What
+    // the task stores instead is the two click points themselves --
+    // portal_lobby_x/y and portal_chooser_x/y, picked right here in the Task
+    // Builder, because two queued Portals tasks can want two different
+    // portals out of the same inventory.
+    //
+    // `extract_after` is the run count (0 = until stopped), and it stands in
+    // for Repeat, which is hidden for this mode so the two can't disagree.
+    // Solo/Matchmaking isn't offered: a portal is always entered solo from
+    // your own inventory.
+    extractAfter: ['0', '1', '2', '3', '4', '5'],
+    isPortals: true,
   },
   tower: {
     label: 'Tower',
@@ -2235,6 +2490,12 @@ function defaultTask() {
     infinite_wave_limit: DEFAULT_INFINITE_WAVE_LIMIT,
     extract_after: '1',
     repeat: 1, team: '', equipment: 'include', play_mode: 'solo', macro: '',
+    card_select: 'let_game_decide',
+    // Event-only: auto-clear Villian Invasion Act 4 when a Crow Relic drops.
+    // act4_mode 'once' spends one relic then resumes; 'until_locked' spends
+    // every banked relic. act4_macro is Act 4's own Macro Operation (it plays
+    // nothing like Acts 1-3). See runner._run_act4_diversion.
+    act4_on_drop: false, act4_mode: 'once', act4_macro: '',
   };
 }
 
@@ -2413,12 +2674,12 @@ async function importSettings() {
 // at nothing on someone else's machine). Import restores both, giving all
 // tasks fresh ids and never overwriting a template that already exists
 // locally under the same name.
-// Every macro a task can point at. Kept as a helper because the export walks
-// it: a task's macro used to be left out of the export entirely, so a shared
-// queue arrived referencing a macro the recipient did not have -- and the
-// export still reported success.
+// Every macro a task can point at. act4_macro is Act 4's own Macro
+// Operation and was left out of the export entirely, so a shared queue
+// arrived referencing a macro the recipient did not have -- and the export
+// still reported success.
 function taskMacroNames(task) {
-  return [task.macro].filter(Boolean);
+  return [task.macro, task.act4_macro].filter(Boolean);
 }
 
 async function exportTasks() {
@@ -2720,12 +2981,11 @@ function setTaskProp(id, key, value) {
   // labels re-render on every change either way, but the Builder is only
   // rebuilt when the *shape* changed so typing in the Repeat field doesn't
   // lose focus mid-keystroke to an innerHTML swap.
-  const structural = ['mode', 'stage'];
+  const structural = ['mode', 'stage', 'card_select'];
   if (key === 'mode') {
     const d = TASK_DATA[t.mode];
     if (d.maps) t.map = d.maps[0];
     else if (d.isEvent) t.map = 'Event';  // no map to pick, but a label keeps logs/status readable
-    else if (d.isPortals) t.map = 'summer';  // default portal search query
     if (d.stages) t.stage = d.stages[0];
     if (d.difficulties) t.difficulty = d.difficulties[0];
     if (d.extractAfter) t.extract_after = '1';
@@ -2740,8 +3000,17 @@ function setTaskProp(id, key, value) {
       if (!t.tower_mode) t.tower_mode = 'normal';
       t.play_mode = 'solo';
     }
+    // Portals: no Solo/Matchmaking (see TASK_DATA.portals), and the run
+    // counter defaults to 0 = continuous rather than Expedition's 1.
+    if (d.isPortals) {
+      // No map to pick, but a label keeps logs/status/webhook readable --
+      // and the runner skips a task with an empty map.
+      t.map = 'Portals';
+      t.extract_after = '0';
+      t.play_mode = 'solo';
+    }
   }
-  if (key === 'stage' && (value === 'Infinite' || value === 'infinite') && !Number.isInteger(Number(t.infinite_wave_limit))) {
+  if (key === 'stage' && value === 'Infinite' && !Number.isInteger(Number(t.infinite_wave_limit))) {
     t.infinite_wave_limit = DEFAULT_INFINITE_WAVE_LIMIT;
   }
   updateQueueRowInPlace(t);
@@ -2754,7 +3023,11 @@ function taskOpts(list, current, fmt) {
 }
 
 // One accent per mode so the queue scans by color before you even read it.
-const TASK_MODE_COLORS = { story: 'var(--brand)', raid: 'var(--rose)', expedition: 'var(--teal)', event: 'var(--amber)', tournament: 'var(--lilac)', tower: 'var(--slate)' };
+const TASK_MODE_COLORS = { story: 'var(--brand)', raid: 'var(--brand)', expedition: 'var(--brand)', event: 'var(--brand)', tournament: 'var(--brand)', tower: 'var(--brand)', portals: 'var(--brand)' };
+
+function portalSlotsReady(t) {
+  return !!String(t.portal_name || '').trim();
+}
 
 // The two text lines a queue row shows for a task -- where it goes, then how
 // it runs. All editing happens in the Builder, rows are read-only summaries.
@@ -2766,21 +3039,27 @@ function taskSummary(t) {
   } else if (t.mode === 'expedition' || t.mode === 'tournament') {
     title += ` · ${t.map}`;
   } else if (t.mode === 'event') {
-    title += ` · ${t.stage === 'infinite' ? 'Infinite' : 'Portal'}`;
-  } else if (t.mode === 'portals') {
-    title += ` · ${t.map || 'summer'}`;
+    title += ` · Act ${t.stage}`;
   }
   const specialStage = t.mode === 'story' && (t.stage === 'Infinite' || t.stage === 'Mastery');
   const diff = ((t.mode === 'story' && !specialStage) || t.mode === 'expedition') ? t.difficulty
              : (d.fixedDifficulty || specialStage) ? 'Hard' : '';
   const meta = [
-    `×${t.repeat}`,
+    t.mode === 'portals' ? '' : `×${t.repeat}`,
     diff,
-    ((t.mode === 'story' && t.stage === 'Infinite') || (t.mode === 'event' && t.stage === 'infinite'))
+    t.mode === 'story' && t.stage === 'Infinite'
       ? `Stop after wave ${t.infinite_wave_limit || DEFAULT_INFINITE_WAVE_LIMIT}` : '',
     t.tower_mode === 'traitless' ? 'Traitless' : '',
-    (t.mode === 'tournament' || t.mode === 'tower') ? '' : (t.play_mode === 'matchmaking' ? 'Matchmaking' : 'Solo'),
+    t.mode === 'portals'
+      ? ((parseInt(t.extract_after, 10) || 0) > 0
+          ? `${parseInt(t.extract_after, 10)} portals` : 'Until stopped') : '',
+    // Both slots are required: a Portals task can't run without them.
+    (t.mode === 'portals' && !portalSlotsReady(t)) ? '\u26a0 enter a portal name' : '',
+    (t.mode === 'tournament' || t.mode === 'tower' || t.mode === 'portals') ? '' : (t.play_mode === 'matchmaking' ? 'Matchmaking' : 'Solo'),
+    !t.macro ? 'Auto Play' : '',
     t.macro ? `▸ ${t.macro}` : '',
+    (t.mode === 'event' && t.stage !== '4' && t.act4_on_drop)
+      ? `⮡ Act 4 on drop${t.act4_mode === 'until_locked' ? ' (until locked)' : ''}` : '',
   ].filter(Boolean).join(' · ');
   return { title, meta };
 }
@@ -2848,10 +3127,15 @@ function renderTaskBuilder() {
   const field = (label, control, tooltip = '') => `<div class="task-field" ${tooltip ? `data-tooltip="${escapeHtml(tooltip)}"` : ''}><span>${label}</span>${control}</div>`;
 
   const fields = [
-    field('Mode', sel('mode', Object.keys(TASK_DATA), k => TASK_DATA[k].label, 'Select game mode: Story, Raid, Expedition, Event, Tournament, or Tower'), 'Choose game mode'),
-    field('Repeat', `<div class="task-rep-group" style="width: 100%;">&times;<input type="number" min="1" value="${t.repeat}"
-      oninput="setTaskProp('${t.id}', 'repeat', Math.max(1, parseInt(this.value, 10) || 1))"></div>`, 'Number of times to run this task'),
+    field('Mode', sel('mode', Object.keys(TASK_DATA), k => TASK_DATA[k].label, 'Select game mode: Story, Raid, Expedition, Event, Tournament, Tower, or Portals'), 'Choose game mode'),
   ];
+  // Portals counts portals, not repeats -- its "Portals Then Exit" field is
+  // the count (and can be 0 = until stopped, which Repeat can't express), so
+  // showing both would be two controls fighting over the same number.
+  if (t.mode !== 'portals') {
+    fields.push(field('Repeat', `<div class="task-rep-group" style="width: 100%;">&times;<input type="number" min="1" value="${t.repeat}"
+      oninput="setTaskProp('${t.id}', 'repeat', Math.max(1, parseInt(this.value, 10) || 1))"></div>`, 'Number of times to run this task'));
+  }
 
   if (t.mode === 'story' || t.mode === 'raid') {
     fields.push(field('Map', sel('map', d.maps, null, 'Select map')));
@@ -2860,16 +3144,10 @@ function renderTaskBuilder() {
   } else if (t.mode === 'expedition') {
     fields.push(field('Expedition', sel('map', d.maps, null, 'Select Expedition map')));
   } else if (t.mode === 'event') {
-    fields.push(field('Map', sel('stage', d.stages, s => s === 'infinite' ? 'Infinite' : 'Portal',
-      'Select the event to enter: Infinite & Fishing, or Portal Mode'),
-      'Select the event to enter'));
-  } else if (t.mode === 'portals') {
-    fields.push(field('Portal Name', `<input type="text" class="block-input" style="width:130px;"
-      value="${escapeHtml(t.map ?? 'summer')}" placeholder="e.g. summer"
-      oninput="setTaskProp('${t.id}', 'map', this.value)">`,
-      'The portal to search for in the Inventory > Portals tab (the search query, e.g. "summer")'));
+    fields.push(field('Act', sel('stage', d.stages, s => 'Act ' + s, 'Select Event Act 1-4'), 'Select Event Act 1-4'));
   } else if (t.mode === 'tournament') {
     fields.push(field('Type', sel('map', d.maps, null, 'Select the Tournament type to enter'), 'Select the Tournament type to enter'));
+
   } else if (t.mode === 'tower') {
     // Tower has no map choice in-game -- map stays at its internal default.
     const towerMode = t.tower_mode || 'normal';
@@ -2888,7 +3166,7 @@ function renderTaskBuilder() {
     fields.push(field('Difficulty', `<span class="task-chip" style="align-self: flex-start;">Hard &middot; locked</span>`, 'Difficulty locked to Hard for this mode'));
   }
 
-  if ((t.mode === 'story' && t.stage === 'Infinite') || (t.mode === 'event' && t.stage === 'infinite')) {
+  if (t.mode === 'story' && t.stage === 'Infinite') {
     fields.push(field('Stop After Wave', `<input type="number" class="block-input" min="1"
       value="${Math.max(1, parseInt(t.infinite_wave_limit, 10) || DEFAULT_INFINITE_WAVE_LIMIT)}"
       oninput="setTaskProp('${t.id}', 'infinite_wave_limit', Math.max(1, parseInt(this.value, 10) || 1))">`,
@@ -2901,9 +3179,29 @@ function renderTaskBuilder() {
       `Number of extraction prompts to decline before extracting (maximum ${MAX_EXTRACT_AFTER})`));
   }
 
+  // Portals reuses extract_after as its run counter (see TASK_DATA.portals).
+  // 0 = keep running portals until the task is stopped, which is why the
+  // label and tooltip differ from Expedition's.
+  if (t.mode === 'portals') {
+    fields.push(field('Portals Then Exit', `<input type="number" class="block-input" min="0" max="${MAX_EXTRACT_AFTER}" step="1" value="${t.extract_after}"
+      onchange="this.value = normalizeExtractAfter(this.value); setTaskProp('${t.id}', 'extract_after', this.value)">`,
+      `How many portals to run before exiting to the lobby -- 0 keeps going until you stop the task (maximum ${MAX_EXTRACT_AFTER})`));
+    fields.push(field('Portal Name', `<input type="text" class="block-input"
+      value="${escapeHtml(t.portal_name || '')}"
+      onchange="setTaskProp('${t.id}', 'portal_name', this.value.trim())">`,
+      'Type the name to search for. The first search result is used.'));
+    const portalOfferMode = ['let_game_decide', 'preferred', 'advanced', 'none'].includes(t.card_select)
+      ? 'let_game_decide' : 'fast';
+    fields.push(field('Portal cards during battle', `<select class="task-select"
+      onchange="setTaskProp('${t.id}', 'card_select', this.value)">
+      <option value="fast" ${portalOfferMode === 'fast' ? 'selected' : ''}>Fast mode — take first portal</option>
+      <option value="let_game_decide" ${portalOfferMode === 'let_game_decide' ? 'selected' : ''}>Let game decide</option>
+      </select>`, 'Fast mode checks every second after two minutes and immediately takes the first card. Let game decide performs no scanning or clicking and waits for Roblox\'s built-in portal selector.'));
+  }
+
   // Tournament and Tower have no Solo/Matchmaking choice -- their runner paths
   // force the solo Start tail, so the toggle would be a no-op here.
-  if (t.mode !== 'tournament' && t.mode !== 'tower') {
+  if (t.mode !== 'tournament' && t.mode !== 'tower' && t.mode !== 'portals') {
     const playSeg = `
       <div class="seg-toggle" data-tooltip="Select Solo or Matchmaking / Party mode">
         <button type="button" class="seg-btn ${t.play_mode === 'solo' ? 'active' : ''}" onclick="setTaskProp('${t.id}', 'play_mode', 'solo'); renderTaskBuilder()">Solo</button>
@@ -2919,21 +3217,57 @@ function renderTaskBuilder() {
       <option value="">No Macro</option>
       ${taskTemplates.map(n => `<option value="${escapeHtml(n)}" ${n === t.macro ? 'selected' : ''}>&#9654; ${escapeHtml(n)}</option>`).join('')}
     </select>`;
-  // Infinite & Fishing runs unlimited waves, so it needs an Autoplay Macro
-  // Operation to keep going; Portal Mode is a normal stage and keeps the
-  // plain label.
-  const macroLabel = (t.mode === 'event' && t.stage === 'infinite')
-    ? 'Macro Operation (Must be Autoplay)' : 'Macro Operation';
-  fields.push(field(macroLabel, macroSel, 'Select a pre-start placement macro template'));
+  fields.push(field('Macro Operation', macroSel, 'Select a pre-start placement macro template'));
+
+  // Event farm tasks (Acts 1-3) can auto-divert to Villian Invasion Act 4
+  // ("Crow - Dawn") when a Crow Relic drops. Not shown on an Act 4 task
+  // itself -- there's nothing to divert TO. Act 4 needs its own Macro
+  // Operation since it plays nothing like Acts 1-3.
+  if (t.mode === 'event' && t.stage !== '4') {
+    const on = !!t.act4_on_drop;
+    const onOffSeg = `
+      <div class="seg-toggle">
+        <button type="button" class="seg-btn ${on ? 'active' : ''}" onclick="setTaskProp('${t.id}', 'act4_on_drop', true); renderTaskBuilder()">On</button>
+        <button type="button" class="seg-btn ${!on ? 'active' : ''}" onclick="setTaskProp('${t.id}', 'act4_on_drop', false); renderTaskBuilder()">Off</button>
+      </div>`;
+    fields.push(field('Auto-clear Act 4 on relic drop', onOffSeg));
+    if (t.act4_on_drop) {
+      const runsSeg = `
+        <div class="seg-toggle">
+          <button type="button" class="seg-btn ${t.act4_mode !== 'until_locked' ? 'active' : ''}" onclick="setTaskProp('${t.id}', 'act4_mode', 'once'); renderTaskBuilder()">Once</button>
+          <button type="button" class="seg-btn ${t.act4_mode === 'until_locked' ? 'active' : ''}" onclick="setTaskProp('${t.id}', 'act4_mode', 'until_locked'); renderTaskBuilder()">Until locked</button>
+        </div>`;
+      fields.push(field('Act 4 Runs', runsSeg));
+      const act4MacroSel = `
+        <select class="task-select" onchange="setTaskProp('${t.id}', 'act4_macro', this.value)">
+          <option value="">No Macro</option>
+          ${taskTemplates.map(n => `<option value="${escapeHtml(n)}" ${n === t.act4_macro ? 'selected' : ''}>&#9654; ${escapeHtml(n)}</option>`).join('')}
+        </select>`;
+      fields.push(field('Act 4 Macro Operation', act4MacroSel));
+      // Act 4 gets its own play mode -- e.g. farm Solo but clear Act 4 in
+      // Matchmaking, or vice versa. Defaults to the task's own play mode until
+      // set (t.act4_play_mode absent -> runner falls back to t.play_mode).
+      const act4Play = t.act4_play_mode || t.play_mode;
+      const act4PlaySeg = `
+        <div class="seg-toggle">
+          <button type="button" class="seg-btn ${act4Play === 'solo' ? 'active' : ''}" onclick="setTaskProp('${t.id}', 'act4_play_mode', 'solo'); renderTaskBuilder()">Solo</button>
+          <button type="button" class="seg-btn ${act4Play === 'matchmaking' ? 'active' : ''}" onclick="setTaskProp('${t.id}', 'act4_play_mode', 'matchmaking'); renderTaskBuilder()">Matchmaking</button>
+        </div>`;
+      fields.push(field('Act 4 Play Mode', act4PlaySeg));
+    }
+  }
 
   const extractHint = t.mode === 'expedition'
     ? `<div class="wh-hint">"Extract After" is how many extract prompts to skip before actually taking one -- 0 extracts at the first node, higher goes deeper (and takes longer) per run.</div>` : '';
-  const infiniteHint = ((t.mode === 'story' && t.stage === 'Infinite') || (t.mode === 'event' && t.stage === 'infinite'))
+  const infiniteHint = (t.mode === 'story' && t.stage === 'Infinite')
     ? `<div class="wh-hint"><b>Stop After Wave</b> completes the wave you enter, waits for the counter to advance once, then uses Leave Stage and returns to the lobby. For example, 20 leaves when wave 21 begins.</div>` : '';
+  const act4Hint = (t.mode === 'event' && t.stage !== '4' && t.act4_on_drop)
+    ? `<div class="wh-hint">When a Crow Relic drops on a win, the run leaves this stage, clears Act 4 (Crow - Dawn) with its own Macro Operation above, then comes back. <b>Once</b> spends one relic; <b>Until locked</b> spends every banked relic. Give Act 4 its own Macro Operation ${'&#8212;'} it plays nothing like Acts 1-3.</div>` : '';
   el.innerHTML = `
     <div class="task-builder-grid">${fields.join('')}</div>
     ${extractHint}
     ${infiniteHint}
+    ${act4Hint}
     <div class="wh-hint" style="margin-top: 8px;">The macro's Team Loadout comes from its template (Macro Manager tab).</div>
     <div class="flex items-center gap-2" style="margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border);">
       <button class="task-toolbar-btn add" onclick="cloneTaskCard('${t.id}')">&#10697; Clone Task</button>
@@ -2959,10 +3293,28 @@ async function refreshTaskQueue() {
     // the whole list blank while the header still shows a count.
     const dropped = rawTasks.filter(t => !TASK_DATA[t.mode]).length;
     let repairedExtractAfter = 0;
-    let migratedEventStages = 0;
+    let migratedPortalTasks = 0;
     taskCards = rawTasks.filter(t => TASK_DATA[t.mode]).map(saved => {
       const t = { ...defaultTask(), ...saved };
       if (t.team == null) t.team = '';
+      // Auto Play is now derived exclusively from the Macro Operation: no
+      // macro means Roblox Auto Play; any chosen macro controls combat.
+      delete t.auto_play;
+      if (t.mode === 'portals') {
+        const legacyPortalKeys = ['portal_priority', 'portal_blacklist', 'portal_lobby_x', 'portal_lobby_y', 'portal_chooser_x', 'portal_chooser_y'];
+        const hadLegacyPortalData = legacyPortalKeys.some(key => Object.prototype.hasOwnProperty.call(saved, key));
+        if (!String(t.portal_name || '').trim()) {
+          const oldNames = Array.isArray(t.portal_priority) ? t.portal_priority : [t.portal_priority];
+          t.portal_name = String(oldNames.find(name => String(name || '').trim()) || '').trim();
+        }
+        delete t.portal_priority;
+        delete t.portal_blacklist;
+        delete t.portal_lobby_x;
+        delete t.portal_lobby_y;
+        delete t.portal_chooser_x;
+        delete t.portal_chooser_y;
+        if (hadLegacyPortalData) migratedPortalTasks++;
+      }
       const normalizedExtractAfter = normalizeExtractAfter(t.extract_after);
       if (String(t.extract_after ?? '').trim() !== normalizedExtractAfter) {
         repairedExtractAfter++;
@@ -2973,26 +3325,17 @@ async function refreshTaskQueue() {
         t.stage = t.difficulty;
         t.difficulty = 'Normal';
       }
-      // Event used to be Villian Invasion, whose stage was an Act number
-      // ('1'-'4'). That event is gone; the stage now names the Summer event
-      // kind ('infinite'/'portal'). Without this an old task keeps a stage
-      // the picker has no option for and stops the run at "Unknown Event
-      // kind" -- migrate it to the default kind instead.
-      if (t.mode === 'event' && !TASK_DATA.event.stages.includes(t.stage)) {
-        t.stage = TASK_DATA.event.stages[0];
-        migratedEventStages++;
-      }
       return t;
     });
-    if (dropped || repairedExtractAfter || migratedEventStages) {
+    if (dropped || repairedExtractAfter || migratedPortalTasks) {
       if (dropped) {
         addLog(`[Task] Removed ${dropped} task(s) with an unrecognized mode (e.g. old Challenge/Bounty entries).`);
       }
       if (repairedExtractAfter) {
         addLog(`[Task] Adjusted invalid or oversized Expedition "Extract After" value(s) to the supported range.`);
       }
-      if (migratedEventStages) {
-        addLog(`[Task] Switched ${migratedEventStages} Event task(s) off the retired Villian Invasion Acts -- check the Event picker.`);
+      if (migratedPortalTasks) {
+        addLog(`[Task] Updated Portal task(s) to the single-name search flow.`);
       }
       saveTaskQueue();
     }
@@ -3239,10 +3582,7 @@ async function toggleChallengeEnabled(btn) {
   btn.classList.toggle('on', isOn);
   bounceToggle(btn);
   try {
-    const result = await pywebview.api.set_challenge_enabled(isOn);
-    if (!result.ok && result.reason === 'incomplete_challenge_maps') {
-      addLog('[Macro] Auto Challenge needs a saved Macro Operation for every Story map before it can be enabled.');
-    }
+    await pywebview.api.set_challenge_enabled(isOn);
   } catch (e) {}
   await refreshChallengeScreen();
 }
@@ -3257,10 +3597,7 @@ async function toggleDailyChallengeEnabled(btn) {
   btn.classList.toggle('on', isOn);
   bounceToggle(btn);
   try {
-    const result = await pywebview.api.set_daily_challenge_enabled(isOn);
-    if (!result.ok && result.reason === 'incomplete_challenge_maps') {
-      addLog('[Macro] Daily Challenge needs a saved Macro Operation for every Story map before it can be enabled.');
-    }
+    await pywebview.api.set_daily_challenge_enabled(isOn);
   } catch (e) {}
   await refreshChallengeScreen();
 }
@@ -3281,10 +3618,9 @@ async function toggleChallengeStage(stage, btn) {
 
 async function setChallengeMapMacro(map, value) {
   try {
-    const result = await pywebview.api.set_challenge_map_macro(map, value);
-    if (result.auto_disabled) {
-      addLog(`[Macro] Auto Challenge disabled: ${map} no longer has a usable Macro Operation.`);
-    }
+    // No macro is a valid choice now -- that map runs on Auto Play, and
+    // Python logs which one. Nothing to warn about here.
+    await pywebview.api.set_challenge_map_macro(map, value);
   } catch (e) {}
   await refreshChallengeScreen();
 }
@@ -3379,10 +3715,7 @@ async function toggleBountyEnabled(btn) {
   const isOn = !btn.classList.contains('on');
   bounceToggle(btn);
   try {
-    const result = await pywebview.api.set_bounty_enabled(isOn);
-    if (!result.ok && result.reason === 'incomplete_bounty_maps') {
-      addLog('[Macro] Auto Bounty needs a saved Macro Operation for every Story map before it can be enabled.');
-    }
+    await pywebview.api.set_bounty_enabled(isOn);
   } catch (e) {}
   await refreshBountyScreen();
 }
@@ -3647,6 +3980,7 @@ function autoShopStatusLabel(status) {
     max_inventory: 'Max inventory',
     failed_today: 'Failed today',
     pending_verification: 'Verifying',
+    pending_not_located: 'Pending — not located yet',
     retry_pending: 'Retry scheduled',
     pending: 'Pending',
   }[status] || 'Pending';
@@ -4125,15 +4459,8 @@ const BLOCK_TYPES = {
   // applyPlaceUnitPosition writes params.x/y for whichever block opened
   // it, so the picker needed no changes to support this).
   click:              { label: 'Click',             group: 'Setup',  color: 'var(--rose)',  params: [{ key: 'x', type: 'number', placeholder: 'x', default: 0 }, { key: 'y', type: 'number', placeholder: 'y', default: 0 }] },
-  // A raw mouse drag from one fixed spot to another in the game window (same
-  // 1152x756 client coords Click's x/y use): press the button at (x1, y1),
-  // move to (x2, y2) while held, then release -- for swipe-style UI
-  // interactions no dedicated block covers. Bespoke labeled X1/Y1 -> X2/Y2
-  // fields, see renderDragControls / the runner's _run_drag_block
-  // (Mouse.drag). Same escape-hatch philosophy as Click. steps/duration_ms
-  // tune how the held-button drag plays: more steps = smoother, longer
-  // duration_ms = slower (a fast drag reads as a click in-game).
-  drag:               { label: 'Drag',             group: 'Setup',  color: 'var(--teal)', params: [{ key: 'x1', type: 'number', placeholder: 'x1', default: 0 }, { key: 'y1', type: 'number', placeholder: 'y1', default: 0 }, { key: 'x2', type: 'number', placeholder: 'x2', default: 0 }, { key: 'y2', type: 'number', placeholder: 'y2', default: 0 }, { key: 'steps', type: 'number', placeholder: 'steps', default: 30 }, { key: 'duration_ms', type: 'number', placeholder: 'ms', default: 600 }] },
+  // Raw held mouse movement between two saved game-window positions.
+  drag:               { label: 'Drag',              group: 'Setup',  color: 'var(--teal)', params: [{ key: 'x1', type: 'number', placeholder: 'x1', default: 0 }, { key: 'y1', type: 'number', placeholder: 'y1', default: 0 }, { key: 'x2', type: 'number', placeholder: 'x2', default: 0 }, { key: 'y2', type: 'number', placeholder: 'y2', default: 0 }, { key: 'steps', type: 'number', placeholder: 'steps', default: 30 }, { key: 'duration_ms', type: 'number', placeholder: 'ms', default: 600 }] },
   // Presses a keyboard key at this point (an ability, interact, menu key --
   // anything no dedicated block covers). Bespoke controls: a key-capture
   // button + an optional hold time. See renderSendKeyControls / the runner's
@@ -4481,7 +4808,6 @@ const MACRO_COORD_KEYS = [
   'story_click_x', 'story_click_y',
   'stage_row_x', 'stage_row_y', 'stage_row_height',
   'act_row_x', 'act_row_y', 'act_row_height',
-  'event_gamemode_x', 'event_gamemode_y',
   'challenge_stage_1_x', 'challenge_stage_1_y',
   'challenge_stage_2_x', 'challenge_stage_2_y',
   'challenge_stage_3_x', 'challenge_stage_3_y',
@@ -4490,15 +4816,52 @@ const MACRO_COORD_KEYS = [
   'team_button_x', 'team_button_y',
   'screen_middle_x', 'screen_middle_y',
   'unit_info_reset_x', 'unit_info_reset_y',
+  'daily_challenge_tab_x', 'daily_challenge_tab_y',
+  // Summer Siege / portal-mode click points (0.21). Every one drives a
+  // coord_key resolve in core/runner_blocks._run_click_block, so every
+  // bundled portal template respects whatever's picked here.
+  // Portal click points, in route order. No Event-menu steps: a portal is
+  // opened straight out of the inventory (Items > Portals > the portal),
+  // which works from the lobby whatever else is on screen.
+  //
+  // Portal identity is entered as text per task; these are only stable route
+  // controls around the search result and party screens.
+  'nav_items_x', 'nav_items_y',
+  'portal_tab_x', 'portal_tab_y',
+  'portal_activate_x', 'portal_activate_y',
+  'portal_start_x', 'portal_start_y',
+  'portal_select_x', 'portal_select_y',
+  'portal_chooser_confirm_x', 'portal_chooser_confirm_y',
+  'portal_exit_x', 'portal_exit_y',
+  'autoplay_x', 'autoplay_y',
 ];
 
 async function loadMacroCoords() {
+  installCoordPasteButtons();
   let coords = {};
   try { coords = await pywebview.api.get_macro_coords(); } catch (e) {}
   for (const key of MACRO_COORD_KEYS) {
     const el = document.getElementById(`coord-${key}`);
     if (el) el.value = coords[key] ?? '';
   }
+}
+
+function installCoordPasteButtons() {
+  document.querySelectorAll('button[onclick^="openCoordPicker("]').forEach(pick => {
+    if (pick.dataset.pasteReady) return;
+    const match = pick.getAttribute('onclick').match(/openCoordPicker\('([^']+)'\)/);
+    if (!match) return;
+    const paste = document.createElement('button');
+    paste.type = 'button';
+    paste.className = pick.className;
+    paste.style.cssText = pick.style.cssText;
+    paste.style.color = 'var(--teal)';
+    paste.title = 'Paste x, y copied from Mouse Coordinates';
+    paste.textContent = 'Paste';
+    paste.onclick = () => pasteCoordFromClipboard(match[1]);
+    pick.insertAdjacentElement('afterend', paste);
+    pick.dataset.pasteReady = 'true';
+  });
 }
 
 async function setMacroCoord(key, value) {
@@ -4518,6 +4881,29 @@ async function clearMacroCoord(prefix) {
       addLog(`[Debug] ${prefix} coordinate override cleared -- using Auto.`);
     }
   } catch (e) {}
+}
+
+// Accept the copy format from Mouse Coordinates: "245, 230" (also accepts
+// "245 230" or "(245, 230)"). Keeping this beside each Pick action means a
+// cursor point can go straight from the live reader into the setting without
+// manually transcribing either value.
+async function pasteCoordFromClipboard(prefix) {
+  try {
+    const result = await pywebview.api.read_clipboard_text();
+    const match = String(result && result.text || '').match(/^\s*\(?\s*(-?\d+)\s*[,\s]\s*(-?\d+)\s*\)?\s*$/);
+    if (!result || !result.ok || !match) {
+      addLog('[Debug] Clipboard does not contain coordinates like "245, 230".');
+      return;
+    }
+    const x = Number(match[1]), y = Number(match[2]);
+    const xEl = document.getElementById(`coord-${prefix}_x`);
+    const yEl = document.getElementById(`coord-${prefix}_y`);
+    if (!xEl || !yEl) return;
+    xEl.value = x;
+    yEl.value = y;
+    await saveMacroCoords({ [`${prefix}_x`]: x, [`${prefix}_y`]: y });
+    addLog(`[Debug] Pasted ${prefix}: ${x}, ${y}.`);
+  } catch (e) { addLog('[Debug] Could not read coordinates from the clipboard.'); }
 }
 
 // Several coordinate keys in one atomic write (see set_macro_coords) -- the
@@ -4575,7 +4961,7 @@ async function openCoordPicker(prefix) {
   document.getElementById('pu-modal').style.display = 'flex';
 
   const ok = await usePlaceUnitRobloxScreen();
-  if (!ok) closePlaceUnitModal();  // no Roblox to capture -- nothing to pick on
+  if (!ok) closePlaceUnitModal();
 }
 
 async function saveMatchmakingRegionDebug(btn) {
@@ -4597,15 +4983,17 @@ async function saveMatchmakingRegionDebug(btn) {
 // A recording target keeps both its owner and return screen. Macro Manager
 // blocks and Auto Fuel routes share the same recorder and naming flow.
 let pendingRecordingTarget = null;
+let recordingMapWalkName = '';
 
 function stopActiveRecording() {
-  if (recordingBlockId) toggleRecordPath(recordingBlockId);
+  if (recordingMapWalkName) stopMapWalkRecording();
+  else if (recordingBlockId) toggleRecordPath(recordingBlockId);
   else if (recordingFuelPathKey) toggleRecordFuelPath(recordingFuelPathKey);
   else if (recordingMacroBlockId) toggleRecordMacro(recordingMacroBlockId);
 }
 
 async function startRecordingTarget(target) {
-  if (recordingBlockId || recordingFuelPathKey || recordingMacroBlockId) return;
+  if (recordingMapWalkName || recordingBlockId || recordingFuelPathKey || recordingMacroBlockId) return;
   closeFuelPaths();
   switchScreen('dashboard');
   await new Promise(resolve => setTimeout(resolve, 200));
@@ -4624,6 +5012,52 @@ async function startRecordingTarget(target) {
   } catch (e) {}
   renderPhases();
   renderFuelPaths();
+}
+
+async function toggleMapWalkRecording(btn) {
+  if (recordingMapWalkName) return stopMapWalkRecording();
+  const mapName = (document.getElementById('map-walk-name')?.value || '').trim();
+  if (!mapName) {
+    addLog('[Path Recorder] Enter a map name first (new maps are supported).');
+    return;
+  }
+  closeFuelPaths();
+  switchScreen('dashboard');
+  await new Promise(resolve => setTimeout(resolve, 200));
+  try {
+    const result = await pywebview.api.start_path_recording();
+    if (!result.ok) {
+      addLog(`[Path Recorder] Couldn't start recording: ${result.reason || 'error'}`);
+      return;
+    }
+    recordingMapWalkName = mapName;
+    const textEl = document.getElementById('rec-popout-text');
+    if (textEl) textEl.textContent = `Recording default walk for ${mapName} (WASD + I/O)`;
+    document.getElementById('rec-popout').style.display = 'flex';
+    addLog(`[Path Recorder] Recording default walk for "${mapName}". Stop from the floating bar when you reach the destination.`);
+  } catch (e) {}
+}
+
+async function stopMapWalkRecording() {
+  const mapName = recordingMapWalkName;
+  recordingMapWalkName = '';
+  document.getElementById('rec-popout').style.display = 'none';
+  let stopped = null;
+  try { stopped = await pywebview.api.stop_path_capture(); } catch (e) {}
+  if (!stopped || !stopped.count) {
+    try { await pywebview.api.discard_pending_path(); } catch (e) {}
+    addLog('[Path Recorder] Nothing recorded -- no movement detected.');
+    return;
+  }
+  try {
+    const saved = await pywebview.api.save_pending_shared_path(mapName);
+    if (!saved.ok) throw new Error(saved.reason || 'save failed');
+    await pywebview.api.set_default_walk_path(mapName, saved.name);
+    await refreshSavedPaths();
+    addLog(`[Path Recorder] Saved "${saved.name}" and assigned it as ${mapName}'s Default Auto Walk.`);
+  } catch (e) {
+    addLog('[Path Recorder] Could not save the map walk path.');
+  }
 }
 
 async function stopRecordingTarget(target) {
@@ -4947,27 +5381,19 @@ function renderClickControls(b) {
   return x + y + set;
 }
 
-// Drag block: press at (x1, y1) and move to (x2, y2) while held, then
-// release -- a swipe for any UI element a raw Click can't reach. Same
-// 1152x756 client coords Click's x/y use; see the runner's _run_drag_block.
-// Each endpoint (From and To) gets its own Position/Set picker button, same
-// as Click's -- the picker writes to x1/y1 or x2/y2 (see openPlaceUnitModal's
-// endpoint handling / applyPlaceUnitPosition).
 function renderDragControls(b) {
   const field = (label, inner) => `
     <label class="blk-field"><span class="blk-field-label">${label}</span>${inner}</label>`;
-  const x1 = field('X1', `<input class="block-input" type="number" value="${b.params.x1}" oninput="updateBlockParam('${b.id}', 'x1', this.value)">`);
-  const y1 = field('Y1', `<input class="block-input" type="number" value="${b.params.y1}" oninput="updateBlockParam('${b.id}', 'y1', this.value)">`);
-  const x2 = field('X2', `<input class="block-input" type="number" value="${b.params.x2}" oninput="updateBlockParam('${b.id}', 'x2', this.value)">`);
-  const y2 = field('Y2', `<input class="block-input" type="number" value="${b.params.y2}" oninput="updateBlockParam('${b.id}', 'y2', this.value)">`);
-  const hasFrom = b.params.x1 || b.params.y1;
-  const hasTo = b.params.x2 || b.params.y2;
-  const fromBtn = field('From Position', `<button type="button" class="pu-set-btn ${hasFrom ? 'has-pos' : ''} tooltip-side" data-tooltip="Pick the drag START on a map or your Roblox screen" onclick="openPlaceUnitModal('${b.id}', 'from')">${hasFrom ? 'Set &#10003;' : 'Set'}</button>`);
-  const toBtn = field('To Position', `<button type="button" class="pu-set-btn ${hasTo ? 'has-pos' : ''} tooltip-side" data-tooltip="Pick the drag END on a map or your Roblox screen" onclick="openPlaceUnitModal('${b.id}', 'to')">${hasTo ? 'Set &#10003;' : 'Set'}</button>`);
-  const arrow = field('', '<span style="opacity:.6;">&#8594;</span>');
-  const steps = field('Steps', `<input class="block-input" type="number" min="1" value="${b.params.steps ?? 30}" oninput="updateBlockParam('${b.id}', 'steps', this.value)" title="How many interpolated moves the held drag makes -- more = smoother">`);
-  const duration = field('Duration (ms)', `<input class="block-input" type="number" min="0" value="${b.params.duration_ms ?? 600}" oninput="updateBlockParam('${b.id}', 'duration_ms', this.value)" title="How long the whole drag takes -- slower registers better in-game">`);
-  return x1 + y1 + fromBtn + arrow + x2 + y2 + toBtn + steps + duration;
+  const p = b.params;
+  const x1 = field('From X', `<input class="block-input" type="number" value="${p.x1}" oninput="updateBlockParam('${b.id}', 'x1', this.value)">`);
+  const y1 = field('From Y', `<input class="block-input" type="number" value="${p.y1}" oninput="updateBlockParam('${b.id}', 'y1', this.value)">`);
+  const from = field('From Position', `<button type="button" class="pu-set-btn ${(p.x1 || p.y1) ? 'has-pos' : ''}" onclick="openPlaceUnitModal('${b.id}', 'from')">Set</button>`);
+  const x2 = field('To X', `<input class="block-input" type="number" value="${p.x2}" oninput="updateBlockParam('${b.id}', 'x2', this.value)">`);
+  const y2 = field('To Y', `<input class="block-input" type="number" value="${p.y2}" oninput="updateBlockParam('${b.id}', 'y2', this.value)">`);
+  const to = field('To Position', `<button type="button" class="pu-set-btn ${(p.x2 || p.y2) ? 'has-pos' : ''}" onclick="openPlaceUnitModal('${b.id}', 'to')">Set</button>`);
+  const steps = field('Steps', `<input class="block-input" type="number" min="1" value="${p.steps ?? 30}" oninput="updateBlockParam('${b.id}', 'steps', this.value)">`);
+  const duration = field('Duration (ms)', `<input class="block-input" type="number" min="0" value="${p.duration_ms ?? 600}" oninput="updateBlockParam('${b.id}', 'duration_ms', this.value)">`);
+  return x1 + y1 + from + x2 + y2 + to + steps + duration;
 }
 
 // Send Key block: capture a key (stored in b.key, reusing the same keybind
@@ -5140,7 +5566,7 @@ function renderBlockRow(b, key) {
   // place_unit and click render ALL their fields bespoke (labeled X/Y +
   // the Set picker button) -- the generic anonymous param inputs would
   // duplicate them.
-  const inputs = (b.type === 'place_unit' || b.type === 'click' || b.type === 'send_key' || b.type === 'drag')
+  const inputs = (b.type === 'place_unit' || b.type === 'click' || b.type === 'drag' || b.type === 'send_key')
     ? '' : def.params.map(p => renderParamInput(b, p)).join('');
   const extra = b.type === 'setting_change' ? renderSettingControls(b)
     : b.type === 'place_unit' ? renderPlaceUnitControls(b)
@@ -5513,9 +5939,6 @@ let puState = {
   image: null, naturalW: 0, naturalH: 0,
   zoom: 1, panX: 0, panY: 0,
   markX: null, markY: null,
-  // Which params the picker writes back to: { x: 'x', y: 'y' } for Click/
-  // Place Unit, or { x: 'x1', y: 'y1' } / { x: 'x2', y: 'y2' } for a Drag
-  // block's From/To endpoints (see openPlaceUnitModal).
   paramKeys: null,
   // Settings > Debug > Macro Coordinates "Pick" mode: a coord key prefix
   // (e.g. 'story_click') instead of a block -- a picked spot writes to the
@@ -5553,21 +5976,17 @@ function setRecentPlaceUnitMap(category, name) {
 
 let puRequestId = 0;
 
-async function openPlaceUnitModal(blockId, endpoint) {
+async function openPlaceUnitModal(blockId, endpoint = null) {
   const reqId = ++puRequestId;
   const loc = findBlockLocation(blockId);
   if (!loc) return;
   const b = loc.container[loc.idx];
-  // Which params the picker writes back to. Click/Place Unit use x/y; a Drag
-  // block has TWO endpoints (From x1/y1, To x2/y2) and each opens this modal
-  // with its own endpoint, so the picked point lands on the right one.
-  const keys = (b.type === 'drag' && endpoint === 'to') ? { x: 'x2', y: 'y2' }
-    : (b.type === 'drag' && endpoint === 'from') ? { x: 'x1', y: 'y1' }
+  puState.paramKeys = b.type === 'drag'
+    ? (endpoint === 'to' ? { x: 'x2', y: 'y2' } : { x: 'x1', y: 'y1' })
     : { x: 'x', y: 'y' };
-  puState.paramKeys = keys;
   puState.blockId = blockId;
-  puState.markX = b.params[keys.x] || null;
-  puState.markY = b.params[keys.y] || null;
+  puState.markX = b.params[puState.paramKeys.x] || null;
+  puState.markY = b.params[puState.paramKeys.y] || null;
   puState.image = null;
 
   document.getElementById('pu-canvas-wrap').style.display = 'none';
@@ -5612,7 +6031,6 @@ function closePlaceUnitModal() {
   ++puRequestId;
   document.getElementById('pu-modal').style.display = 'none';
   puState.blockId = null;
-  puState.paramKeys = null;
   puState.coordTarget = null;
   puState.coordHeightKey = null;
   puState.coordStep = null;
@@ -5827,11 +6245,11 @@ function drawPlaceUnitCanvas() {
     const sy = puState.panY + puState.markY * puState.zoom;
     ctx.beginPath();
     ctx.arc(sx, sy, 8, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(124,157,255,0.3)';
+    ctx.fillStyle = 'rgba(229,57,53,0.3)';
     ctx.fill();
     ctx.beginPath();
     ctx.arc(sx, sy, 4, 0, Math.PI * 2);
-    ctx.fillStyle = '#7c9dff';
+    ctx.fillStyle = '#e53935';
     ctx.strokeStyle = '#fff';
     ctx.lineWidth = 1.5;
     ctx.fill();
@@ -5887,8 +6305,6 @@ function applyPlaceUnitPosition() {
   const loc = findBlockLocation(puState.blockId);
   if (!loc) return;
   const b = loc.container[loc.idx];
-  // Click/Place Unit write to x/y; Drag blocks write to whichever endpoint
-  // opened the picker (x1/y1 or x2/y2, set by openPlaceUnitModal).
   const keys = puState.paramKeys || { x: 'x', y: 'y' };
   b.params[keys.x] = puState.markX;
   b.params[keys.y] = puState.markY;
@@ -6036,19 +6452,6 @@ const IMAGE_DESCRIPTIONS = {
   return: "The 'Return to Lobby' confirmation after Leave Stage.",
   "select upgrade card": "The level-up 'Select an upgrade!' reward-card popup.",
   story: "The Story card on the Play menu.",
-  stage_infinite: "The Infinite stage card (Story's Infinite stage and the Summer event's Infinite & Fishing stage).",
-  stage_infinite_large: "A larger crop of the Infinite stage card.",
-  stage_infinite_selected: "The Infinite stage card in its SELECTED state.",
-  summer_nav: "The lobby 'Event' button for the Summer event -- Event mode's own entry (not under Play).",
-  summer_event_gamemode: "The Summer event's gamemode card -- opens the Infinite & Fishing / Portal Mode picker.",
-  summer_event_infinite: "The 'Infinite & Fishing' event card -- the event kind we run.",
-  summer_event_portal: "The 'Portal Mode' event card (Tiered & Secret Portals).",
-  nav_inv: "The lobby's Inventory button -- the lead-in to the Portals tab.",
-  normal_portals_nav: "The Inventory's Portals tab.",
-  portal_search: "The portal picker's search box.",
-  summer_portal: "A Summer portal card in the portal picker's list.",
-  portal_activate: "The portal picker's confirm button ('Activate Portal' on entry, 'Select' post-victory).",
-  select_new_portal: "The Victory screen's 'Select Portal' button (Portal runs get this instead of Repeat Stage).",
   team: "The Team Loadout panel (opened with H).",
   teleportstuck: "Legacy normal-loading reference; no longer used as a disconnect signal.",
   toggle_false: "A Settings toggle in its OFF state.",
@@ -6470,7 +6873,7 @@ function drawImageCanvas() {
     ctx.fillRect(0, sy + sh, canvas.width, Math.max(0, canvas.height - (sy + sh)));     // below
     ctx.fillRect(0, sy, Math.max(0, sx), sh);                                           // left
     ctx.fillRect(sx + sw, sy, Math.max(0, canvas.width - (sx + sw)), sh);               // right
-    ctx.strokeStyle = '#7c9dff';
+    ctx.strokeStyle = '#e53935';
     ctx.lineWidth = 1.5;
     ctx.strokeRect(sx, sy, sw, sh);
   }
@@ -6934,6 +7337,13 @@ function serializeBlock(b) {
     mode: b.mode, pathName: b.pathName, ignoreHighlight: b.ignoreHighlight, retryUntilPlaced: b.retryUntilPlaced,
     sprint: b.sprint, key: b.key,
   };
+  // Fields the runner understands but this editor has no control for yet.
+  // They have to be carried through verbatim: this function is a whitelist,
+  // so anything not named here is DELETED the moment a template is opened
+  // and saved -- which is how a hand-written counter block would silently
+  // come back as a plain always-true detect. Only written out when actually
+  // present, so an ordinary block's JSON is unchanged.
+  if (Array.isArray(b.skip_modes) && b.skip_modes.length) out.skip_modes = [...b.skip_modes];
   if (b.type === 'detect') {
     out.image = b.image || '';
     out.advanced = !!b.advanced;
@@ -6946,6 +7356,14 @@ function serializeBlock(b) {
     out.loop = !!b.loop;
     out.loopAttempts = Math.max(0, Math.floor(Number(b.loopAttempts) || 0));
     out.loopIntervalMs = Math.max(100, Math.min(60000, Math.floor(Number(b.loopIntervalMs) || 1000)));
+    // Counter mode (0.20.9) and its task-driven limit (0.22) likewise have
+    // no editor control -- same carry-through rule as skip_modes above.
+    if (b.mode === 'counter') {
+      out.limit = b.limit === '' || b.limit === undefined ? '' : b.limit;
+      if (b.counter_id) out.counter_id = b.counter_id;
+      if (b.limit_from_task) out.limit_from_task = b.limit_from_task;
+      if (b.label) out.label = b.label;
+    }
     out.then = (b.then || []).map(serializeBlock);
     out.else = (b.else || []).map(serializeBlock);
   }
@@ -7235,12 +7653,22 @@ function blockFromSaved(b) {
     block.mode = b.mode === 'custom' ? 'custom' : 'auto';
     block.pathName = b.pathName || '';
   }
+  if (Array.isArray(b.skip_modes) && b.skip_modes.length) block.skip_modes = [...b.skip_modes];
   if (b.type === 'walk_path' || b.type === 'walk') block.sprint = !!b.sprint;
   if (b.type === 'send_key') block.key = b.key || '';
   if (b.type === 'detect') {
     block.image = b.image || '';
     block.advanced = !!b.advanced;
-    block.mode = ['single', 'multi', 'expr'].includes(b.mode) ? b.mode : 'single';
+    // 'counter' has no editor UI, but it has to survive being loaded and
+    // re-saved -- dropping it to 'single' here turned a counter block into
+    // an image detect with no image, i.e. permanently false.
+    block.mode = ['single', 'multi', 'expr', 'counter'].includes(b.mode) ? b.mode : 'single';
+    if (block.mode === 'counter') {
+      block.limit = b.limit === undefined ? '' : b.limit;
+      block.counter_id = b.counter_id || '';
+      block.limit_from_task = b.limit_from_task || '';
+      block.label = b.label || '';
+    }
     block.images = Array.isArray(b.images) ? [...b.images] : [];
     block.logic = b.logic === 'or' ? 'or' : 'and';
     block.expr = b.expr || '';
@@ -7637,4 +8065,8 @@ async function submitImportShareCode() {
       statusEl.style.display = 'block';
     }
   }
+}
+
+function popOutMousePosition() {
+  try { window.pywebview && pywebview.api.pop_out_mouse_position(); } catch (e) {}
 }

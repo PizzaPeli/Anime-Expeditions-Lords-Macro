@@ -28,7 +28,7 @@ def _modern_template(_name):
     return {"blocks": {"prestart": [], "battle": []}}
 
 
-def test_bounty_cannot_enable_until_every_map_has_a_macro(monkeypatch):
+def test_bounty_enables_without_all_macros(monkeypatch):
     state = _settings({
         name: f"{name} Farm"
         for name in main.BOUNTY_STORY_MAPS[:-1]
@@ -41,14 +41,12 @@ def test_bounty_cannot_enable_until_every_map_has_a_macro(monkeypatch):
 
     result = api.set_bounty_enabled(True)
 
-    assert result["ok"] is False
-    assert result["reason"] == "incomplete_bounty_maps"
-    assert result["missing_maps"] == [main.BOUNTY_STORY_MAPS[-1]]
-    assert state["bounty"]["enabled"] is False
-    assert any("was not enabled" in message for message in api.logs)
+    assert result["ok"] is True
+    assert api.get_bounty_settings()["missing_maps"] == [main.BOUNTY_STORY_MAPS[-1]]
+    assert state["bounty"]["enabled"] is True
 
 
-def test_bounty_cannot_enable_with_deleted_macro(monkeypatch):
+def test_bounty_enables_with_deleted_macro(monkeypatch):
     macros = {name: f"{name} Farm" for name in main.BOUNTY_STORY_MAPS}
     state = _settings(macros)
     monkeypatch.setattr(main.cfg, "load", lambda: state)
@@ -61,13 +59,13 @@ def test_bounty_cannot_enable_with_deleted_macro(monkeypatch):
 
     result = api.set_bounty_enabled(True)
 
-    assert result["ok"] is False
-    assert result["invalid_maps"] == [{
+    assert result["ok"] is True
+    assert api.get_bounty_settings()["invalid_maps"] == [{
         "map": "Rose Kingdom", "macro": "Rose Kingdom Farm"}]
-    assert state["bounty"]["enabled"] is False
+    assert state["bounty"]["enabled"] is True
 
 
-def test_bounty_cannot_enable_with_old_format_macro(monkeypatch):
+def test_bounty_enables_with_old_format_macro(monkeypatch):
     macros = {name: f"{name} Farm" for name in main.BOUNTY_STORY_MAPS}
     state = _settings(macros)
     monkeypatch.setattr(main.cfg, "load", lambda: state)
@@ -83,10 +81,10 @@ def test_bounty_cannot_enable_with_old_format_macro(monkeypatch):
 
     result = api.set_bounty_enabled(True)
 
-    assert result["ok"] is False
-    assert result["invalid_maps"] == [{
+    assert result["ok"] is True
+    assert api.get_bounty_settings()["invalid_maps"] == [{
         "map": "King's Tomb", "macro": "King's Tomb Farm"}]
-    assert state["bounty"]["enabled"] is False
+    assert state["bounty"]["enabled"] is True
 
 
 def test_bounty_enables_when_all_five_macros_are_usable(monkeypatch):
@@ -105,7 +103,7 @@ def test_bounty_enables_when_all_five_macros_are_usable(monkeypatch):
     assert "setup_ready" not in state["bounty"]
 
 
-def test_clearing_a_map_macro_disables_enabled_bounty(monkeypatch):
+def test_clearing_a_map_macro_keeps_bounty_enabled(monkeypatch):
     macros = {name: f"{name} Farm" for name in main.BOUNTY_STORY_MAPS}
     state = _settings(macros, enabled=True)
     monkeypatch.setattr(main.cfg, "load", lambda: state)
@@ -117,8 +115,8 @@ def test_clearing_a_map_macro_disables_enabled_bounty(monkeypatch):
     result = api.set_bounty_map_macro("School Grounds", "")
 
     assert result["ok"] is True
-    assert result["auto_disabled"] is True
-    assert state["bounty"]["enabled"] is False
+    assert result["auto_disabled"] is False
+    assert state["bounty"]["enabled"] is True
     assert result["missing_maps"] == ["School Grounds"]
 
 

@@ -102,6 +102,52 @@ def test_wait_for_wave_reads_from_the_runners_configured_region(monkeypatch):
     assert captured == [EXPEDITION_WAVE_REGION]
 
 
+def test_wait_for_wave_reuses_a_valid_unchanged_badge_without_reocr(monkeypatch):
+    """A static wave counter should not launch the full OCR vote every poll."""
+    runner = _runner()
+    runner._battle_block_state = {}
+    frame = np.zeros((33, 110, 3), dtype=np.uint8)
+    reads = []
+
+    monkeypatch.setattr(runner_blocks.vision, "capture_window_region_bgr",
+                        lambda _hwnd, _region: frame.copy())
+    monkeypatch.setattr(wave_module, "read_wave",
+                        lambda _image: reads.append(True) or (1, 5))
+
+    assert runner._run_wait_wave_tick(123, {"params": {"wave": 4}}, 1) is False
+    # Bypass the ordinary time gate: this pins the cache behavior itself.
+    runner._battle_block_state["next_check"] = 0
+    assert runner._run_wait_wave_tick(123, {"params": {"wave": 4}}, 1) is False
+
+    assert len(reads) == 1
+
+
+def test_wait_for_wave_rereads_a_changed_badge_and_confirms_target(monkeypatch):
+    """A changed frame, and then the target confirmation, must still OCR."""
+    runner = _runner()
+    runner._battle_block_state = {}
+    frames = [
+        np.zeros((33, 110, 3), dtype=np.uint8),
+        np.ones((33, 110, 3), dtype=np.uint8),
+        np.ones((33, 110, 3), dtype=np.uint8),
+    ]
+    readings = iter(((1, 5), (4, 5), (4, 5)))
+    reads = []
+
+    monkeypatch.setattr(runner_blocks.vision, "capture_window_region_bgr",
+                        lambda _hwnd, _region: frames.pop(0))
+    monkeypatch.setattr(wave_module, "read_wave",
+                        lambda _image: reads.append(True) or next(readings))
+
+    assert runner._run_wait_wave_tick(123, {"params": {"wave": 4}}, 1) is False
+    runner._battle_block_state["next_check"] = 0
+    assert runner._run_wait_wave_tick(123, {"params": {"wave": 4}}, 1) is False
+    runner._battle_block_state["next_check"] = 0
+    assert runner._run_wait_wave_tick(123, {"params": {"wave": 4}}, 1) is True
+
+    assert len(reads) == 3
+
+
 # ---------------------------------------------------------------------------
 # Gamemodes that have no wave counter at all
 # ---------------------------------------------------------------------------

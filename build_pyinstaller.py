@@ -18,7 +18,7 @@ Requires:
     py -3.12 -m pip install pyinstaller
     py -3.12 build_pyinstaller.py
 
-Output: dist/Cream's Macro - Anime Expeditions.exe
+Output: dist/Lord's Macro - Anime Expeditions.exe
 """
 import subprocess
 import sys
@@ -29,9 +29,9 @@ import platform
 ROOT = os.path.dirname(os.path.abspath(__file__))
 # No apostrophe -- PyInstaller writes --name straight into an
 # auto-generated .spec file as an unescaped Python string literal
-# ("Cream's Macro..." breaks that file's own syntax). Nuitka took the name
+# ("Lord's Macro..." breaks that file's own syntax). Nuitka took the name
 # as a plain filename argument, so this never came up there.
-EXE_NAME = "Creams Macro - Anime Expeditions"
+EXE_NAME = "Lords Macro - Anime Expeditions"
 
 # winforms.py imports win32 unconditionally even though edgechromium is the
 # backend actually used at runtime -- PyInstaller's own pywebview hook
@@ -134,14 +134,14 @@ def _windows_version_file():
     mask=0x3f, flags=0x0, OS=0x40004, fileType=0x1, subtype=0x0, date=(0, 0)),
   kids=[
     StringFileInfo([StringTable('040904B0', [
-      StringStruct('CompanyName', "Cream's Macro"),
+      StringStruct('CompanyName', "Lord's Macro"),
       StringStruct('FileDescription', "Anime Expeditions Macro"),
       StringStruct('FileVersion', "{ver}"),
       StringStruct('InternalName', "{EXE_NAME}"),
       StringStruct('OriginalFilename', "{EXE_NAME}.exe"),
-      StringStruct('ProductName', "Cream's Macro - Anime Expeditions"),
+      StringStruct('ProductName', "Lord's Macro - Anime Expeditions"),
       StringStruct('ProductVersion', "{ver}"),
-      StringStruct('LegalCopyright', "Cream's Macro"),
+      StringStruct('LegalCopyright', "Lord's Macro"),
     ])]),
     VarFileInfo([VarStruct('Translation', [1033, 1200])])
   ]
@@ -167,8 +167,11 @@ cmd = [
     # happens to have UPX on PATH (PyInstaller uses it automatically if so).
     "--noupx",
     f"--name={EXE_NAME}",
-    "--distpath=dist",
-    "--workpath=build",
+    # TEST_BUILD.bat supplies account-specific absolute directories so RDP
+    # playtests cannot overwrite each other's executable or PyInstaller work
+    # tree. Release/local builds keep the familiar repository defaults.
+    f"--distpath={os.environ.get('LORDS_MACRO_BUILD_DIST', 'dist')}",
+    f"--workpath={os.environ.get('LORDS_MACRO_BUILD_WORK', 'build')}",
 ]
 if sys.platform == "darwin":
     # Release builds run on GitHub's explicit Intel runner. Refuse to
@@ -191,7 +194,7 @@ if sys.platform == "darwin":
     # ONE identity across versions. (The other half is the codesign step after
     # the build below -- a stable self-signed CERT identity in CI releases,
     # ad-hoc locally -- see that block for the full story.)
-    cmd.append("--osx-bundle-identifier=com.cweamy.creams-macro-anime-expeditions")
+    cmd.append("--osx-bundle-identifier=com.pizzapeli.lords-macro-anime-expeditions")
 else:
     cmd.append(f"--icon={os.path.join(ROOT, 'logo.ico')}")
     version_file = _windows_version_file()  # AV-friendly metadata, Windows only
@@ -253,7 +256,8 @@ if sys.platform == "darwin":
     # is never fatal: if it somehow fails the app still runs unsigned, just
     # with the old permission flakiness -- so this warns and continues
     # rather than failing the build (same policy as before this change).
-    app_path = os.path.join(ROOT, "dist", f"{EXE_NAME}.app")
+    app_path = os.path.join(ROOT, os.environ.get("LORDS_MACRO_BUILD_DIST", "dist"),
+                            f"{EXE_NAME}.app")
     identity = os.environ.get("MACOS_CODESIGN_IDENTITY", "").strip()
     if identity:
         print(f"\nCode-signing {app_path} with stable identity "
