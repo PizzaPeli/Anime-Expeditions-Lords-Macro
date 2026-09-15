@@ -2,10 +2,8 @@
 straight down until the pitch pins at its floor (top-down view), then hold O
 for 2s so the scroll-out zoom reaches max.
 
-Shared by Settings > Debug > "Camera Setup" (main.Api.debug_camera_setup,
-on demand) and the macro run's Pre Start step (core.runner, automatically
-before every match) -- both need the exact same sequence, so it lives here
-once instead of twice.
+The runner uses these camera actions during Pre Start. Profile tests use the
+same actions on demand, so the sequence lives here once.
 """
 import json
 import os

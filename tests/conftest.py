@@ -15,8 +15,6 @@ RETIRED_TESTS = {
     "test_daily_challenge_unavailable_returns_to_lobby_without_clicking",
     "test_challenge_map_ocr_uses_unique_map_words[Tornb - Act 1-King's Tomb]",
     "test_challenge_map_ocr_uses_fixed_fallback_when_hud_absent",
-    "test_bounty_exception_does_not_prevent_challenge_or_queue",
-    "test_resource_phase_exception_still_reaches_task_queue[bounty]",
     "test_recovery_exception_is_logged_without_blocking_later_phases",
     "test_stop_during_phase_failure_does_not_recover_or_continue",
     "test_known_item_scroll_steps_match_the_observed_shop_rows",

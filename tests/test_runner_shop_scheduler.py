@@ -15,7 +15,6 @@ def test_startup_resource_priority_places_auto_shop_after_auto_fuel(monkeypatch)
     monkeypatch.setattr("core.runner.wm.is_process_elevated", lambda _hwnd: False)
     monkeypatch.setattr("core.runner.vision.find_image", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(runner, "_checkpoint", lambda _stop: False)
-    monkeypatch.setattr(runner, "_run_bounties", lambda *_args: False)
     monkeypatch.setattr(runner, "_run_challenges", lambda *_args: None)
     monkeypatch.setattr(runner, "_run_crafting_if_due", lambda *_args: None)
     monkeypatch.setattr(runner, "_fuel_wants_in", lambda: True)
@@ -32,7 +31,6 @@ def test_startup_resource_priority_places_auto_shop_after_auto_fuel(monkeypatch)
     runner._run(lambda: 1, lambda: [], stop_event)
 
     assert phases == [
-        "Auto Bounty",
         "Challenge",
         "Auto Crafting",
         "Auto Fuel",
@@ -138,7 +136,6 @@ def test_auto_shop_is_checked_again_after_a_completed_task(monkeypatch):
     monkeypatch.setattr("core.runner.wm.is_process_elevated", lambda _hwnd: False)
     monkeypatch.setattr("core.runner.vision.find_image", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(runner, "_checkpoint", lambda _stop: stop_event.is_set())
-    monkeypatch.setattr(runner, "_run_bounties", lambda *_args: False)
     monkeypatch.setattr(runner, "_run_challenges", lambda *_args: None)
     monkeypatch.setattr(runner, "_run_crafting_if_due", lambda *_args: None)
     monkeypatch.setattr(runner, "_fuel_wants_in", lambda: False)

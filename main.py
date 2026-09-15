@@ -30,11 +30,6 @@ from core.runner import MacroRunner
 from core import updater
 from core import auto_shop
 from core.auto_shop import current_auto_shop_period
-from core.runner_constants import (
-    BOUNTY_MYTHIC_DEFAULT_REROLLS,
-    BOUNTY_MYTHIC_MIN_REROLLS,
-    BOUNTY_MYTHIC_MAX_REROLLS,
-)
 
 # Imported at module scope (not inside the darwin branches that use it) so the
 # macOS-only geometry helpers below can be plain module functions. window_mac
@@ -274,9 +269,6 @@ CHALLENGE_STORY_MAPS = ["School Grounds", "Rose Kingdom", "Fairy King Forest", "
 CHALLENGE_STAGE_SLOTS = ["1", "2", "3"]
 CHALLENGE_DAILY_CAP = 10  # fixed, not user-editable -- see get_challenge_settings
 CHALLENGE_RESET_SCHEDULE = "utc_midnight_v1"
-BOUNTY_STORY_MAPS = list(CHALLENGE_STORY_MAPS)
-BOUNTY_DAILY_TOTAL = 10
-BOUNTY_RESET_SCHEDULE = CHALLENGE_RESET_SCHEDULE
 
 
 def _current_challenge_reset_period(now: float = None) -> str:
@@ -624,8 +616,8 @@ class Api:
         self.runner = MacroRunner(
             self.mouse, self.keyboard, self.push_log, self._set_run_status, self._record_match_result,
             self.get_challenge_settings, self.mark_challenge_stage_played, self._run_stats_snapshot,
-            self.get_crafting_settings, self.set_crafting_count, self.get_bounty_settings,
-            self.set_bounty_remaining, self.get_fuel_settings, self.mark_fuel_refill_result,
+            self.get_crafting_settings, self.set_crafting_count,
+            self.get_fuel_settings, self.mark_fuel_refill_result,
             self.get_hotkeys,
             self.get_auto_shop_settings, self._save_auto_shop_item_state,
             self._save_auto_shop_shop_state)
@@ -1244,30 +1236,9 @@ class Api:
 
     # ── Auto Crafting (see core/runner_crafting.py) ──
 
-    def _default_bounty_settings(self) -> dict:
-        return {
-            "enabled": False,
-            "play_mode": "solo",
-            "summon_banner": "standard",
-            "mythic_only": False,
-            "mythic_max_rerolls": BOUNTY_MYTHIC_DEFAULT_REROLLS,
-            "remaining": BOUNTY_DAILY_TOTAL,
-            "total": BOUNTY_DAILY_TOTAL,
-            "last_reset_date": _current_challenge_reset_period(),
-            "reset_schedule": BOUNTY_RESET_SCHEDULE,
-            "maps": {name: {"macro": ""} for name in BOUNTY_STORY_MAPS},
-        }
-
     @staticmethod
     def _story_macro_setup(settings: dict, map_names) -> dict:
-        """Whether every possible Story destination has a usable macro.
-
-        Both Auto Bounty and Auto Challenge choose a Story destination at
-        runtime. Starting with only some maps configured therefore guarantees
-        that a later objective can enter a battle with no Pre Start blocks and
-        no units. Treat the full map assignment as one required setup instead
-        of discovering the hole after teleporting.
-        """
+        """Report Story destinations without a usable Macro Operation."""
         maps = settings.get("maps") or {}
         missing_maps = []
         invalid_maps = []
@@ -1282,18 +1253,6 @@ class Api:
             data = tpl.load_template(macro_name)
             if not isinstance(data.get("blocks"), dict):
                 invalid_maps.append({"map": map_name, "macro": macro_name})
-        # ADVISORY, never a gate. This used to refuse to enable Auto
-        # Challenge / Auto Bounty until all six maps had a working macro,
-        # which meant one renamed or deleted template silently turned the
-        # whole feature off and buried the reason in a log line repeated
-        # once per press. There is a perfectly good thing to do with a map
-        # that has no usable macro -- play it on Auto Play, which is what
-        # the runner now does -- so blocking the feature was never the right
-        # answer to it.
-        #
-        # setup_ready stays in the payload (the UI reads it) and is now
-        # always True. The two lists are kept because "which maps will fall
-        # back to Auto Play" is genuinely worth showing.
         return {
             "setup_ready": True,
             "missing_maps": missing_maps,
@@ -1303,148 +1262,6 @@ class Api:
     @staticmethod
     def _challenge_macro_setup(settings: dict) -> dict:
         return Api._story_macro_setup(settings, CHALLENGE_STORY_MAPS)
-
-    @staticmethod
-    def _bounty_macro_setup(settings: dict) -> dict:
-        return Api._story_macro_setup(settings, BOUNTY_STORY_MAPS)
-
-    @staticmethod
-    def _save_bounty_settings(settings: dict) -> None:
-        """Persist only settings, not the computed setup-status fields."""
-        cfg.update({"bounty": {
-            "enabled": bool(settings.get("enabled")),
-            "play_mode": settings.get("play_mode") or "solo",
-            "summon_banner": settings.get("summon_banner") or "standard",
-            "mythic_only": bool(settings.get("mythic_only")),
-            "mythic_max_rerolls": int(settings.get(
-                "mythic_max_rerolls", BOUNTY_MYTHIC_DEFAULT_REROLLS)),
-            "maps": settings.get("maps") or {},
-        }})
-
-    def get_bounty_settings(self) -> dict:
-        saved = cfg.load().get("bounty") or {}
-        merged = {**self._default_bounty_settings(), **saved}
-        if merged.get("play_mode") not in ("solo", "matchmaking"):
-            merged["play_mode"] = "solo"
-        if merged.get("summon_banner") not in ("standard", "villain"):
-            merged["summon_banner"] = "standard"
-        merged["mythic_only"] = bool(merged.get("mythic_only"))
-        try:
-            merged["mythic_max_rerolls"] = max(
-                BOUNTY_MYTHIC_MIN_REROLLS,
-                min(
-                    BOUNTY_MYTHIC_MAX_REROLLS,
-                    int(merged.get(
-                        "mythic_max_rerolls", BOUNTY_MYTHIC_DEFAULT_REROLLS)),
-                ),
-            )
-        except (TypeError, ValueError):
-            merged["mythic_max_rerolls"] = BOUNTY_MYTHIC_DEFAULT_REROLLS
-        try:
-            total = max(1, min(99, int(merged.get("total") or BOUNTY_DAILY_TOTAL)))
-        except (TypeError, ValueError):
-            total = BOUNTY_DAILY_TOTAL
-        try:
-            remaining = max(0, min(total, int(merged.get("remaining", total))))
-        except (TypeError, ValueError):
-            remaining = total
-        merged["total"] = total
-        merged["remaining"] = remaining
-        saved_maps = saved.get("maps") or {}
-        merged["maps"] = {
-            name: {"macro": (saved_maps.get(name) or {}).get("macro") or ""}
-            for name in BOUNTY_STORY_MAPS
-        }
-        merged.update(self._bounty_macro_setup(merged))
-        reset_period = _current_challenge_reset_period()
-        if saved.get("reset_schedule") != BOUNTY_RESET_SCHEDULE:
-            # Adopt the shared UTC game-day schedule without changing a
-            # pre-existing count during migration.
-            merged["last_reset_date"] = reset_period
-            merged["reset_schedule"] = BOUNTY_RESET_SCHEDULE
-            cfg.update({"bounty": merged})
-        elif merged.get("last_reset_date") != reset_period:
-            merged["remaining"] = merged["total"]
-            merged["last_reset_date"] = reset_period
-            cfg.update({"bounty": merged})
-            self.push_log("[Bounty] Daily bounty tracker reset.")
-        return merged
-
-    def set_bounty_enabled(self, enabled: bool) -> dict:
-        settings = self.get_bounty_settings()
-        settings["enabled"] = bool(enabled)
-        self._save_bounty_settings(settings)
-        return {"ok": True}
-
-    def set_bounty_play_mode(self, play_mode: str) -> dict:
-        if play_mode not in ("solo", "matchmaking"):
-            return {"ok": False, "reason": "bad_play_mode"}
-        settings = self.get_bounty_settings()
-        settings["play_mode"] = play_mode
-        self._save_bounty_settings(settings)
-        return {"ok": True}
-
-    def set_bounty_summon_banner(self, banner: str) -> dict:
-        if banner not in ("standard", "villain"):
-            return {"ok": False, "reason": "bad_banner"}
-        settings = self.get_bounty_settings()
-        settings["summon_banner"] = banner
-        self._save_bounty_settings(settings)
-        return {"ok": True}
-
-    def set_bounty_mythic_only(self, enabled: bool) -> dict:
-        settings = self.get_bounty_settings()
-        settings["mythic_only"] = bool(enabled)
-        self._save_bounty_settings(settings)
-        return {"ok": True}
-
-    def set_bounty_mythic_max_rerolls(self, value) -> dict:
-        try:
-            limit = int(value)
-        except (TypeError, ValueError):
-            return {"ok": False, "reason": "bad_mythic_max_rerolls"}
-        if not (BOUNTY_MYTHIC_MIN_REROLLS <= limit <= BOUNTY_MYTHIC_MAX_REROLLS):
-            return {"ok": False, "reason": "bad_mythic_max_rerolls"}
-        settings = self.get_bounty_settings()
-        settings["mythic_max_rerolls"] = limit
-        self._save_bounty_settings(settings)
-        return {"ok": True}
-
-    def set_bounty_map_macro(self, map_name: str, macro: str) -> dict:
-        if map_name not in BOUNTY_STORY_MAPS:
-            return {"ok": False, "reason": "bad_map"}
-        settings = self.get_bounty_settings()
-        settings["maps"][map_name]["macro"] = macro or ""
-        setup = self._bounty_macro_setup(settings)
-        # Same as Challenge: no macro means Auto Play for that map, not the
-        # whole feature switched off.
-        self._save_bounty_settings(settings)
-        if not (settings["maps"][map_name].get("macro") or ""):
-            self.push_log(f'[Bounty] "{map_name}" has no Macro Operation -- it will run on '
-                           "Auto Play.")
-        return {"ok": True, "auto_disabled": False, **setup}
-
-    def set_bounty_remaining(self, remaining, total=None) -> dict:
-        settings = self.get_bounty_settings()
-        if total is not None:
-            try:
-                settings["total"] = max(1, min(99, int(total)))
-            except (TypeError, ValueError):
-                return {"ok": False, "reason": "bad_total"}
-        try:
-            settings["remaining"] = max(
-                0, min(settings["total"], int(remaining)))
-        except (TypeError, ValueError):
-            return {"ok": False, "reason": "bad_remaining"}
-        settings["last_reset_date"] = _current_challenge_reset_period()
-        settings["reset_schedule"] = BOUNTY_RESET_SCHEDULE
-        cfg.update({"bounty": settings})
-        return {"ok": True}
-
-    def reset_bounty_remaining(self) -> dict:
-        settings = self.get_bounty_settings()
-        return self.set_bounty_remaining(
-            settings["total"], settings["total"])
 
     def _default_crafting_settings(self) -> dict:
         from core.runner_constants import CRAFT_SPRITES, CRAFT_DEFAULT_EVERY
@@ -3662,71 +3479,6 @@ class Api:
         self.push_log("[Debug] Roblox un-attached -- won't auto re-dock until you Attach again.")
         return {"ok": True}
 
-    # ------------------------------------------------------------------
-    # Portal Scanner -- Settings > Debug > Portal Scanner
-    #
-    # The lattice of squares the scanner clicks on each portal screen, and
-    # the two regions of the detail pane it reads once a square is selected.
-    # Geometry only: WHICH portal to take is per task (its "Portal Name"),
-    # because two queued tasks can want different portals out of one
-    # inventory, while the grid itself is the same for everybody.
-    # ------------------------------------------------------------------
-    def get_portal_scan_settings(self) -> dict:
-        from core import portal_scan
-        data = cfg.load().get("portal_scan", {})
-        if not isinstance(data, dict):
-            data = {}
-        return {
-            "inventory_slots": [list(p) for p in portal_scan.normalize_slots(
-                data.get("inventory_slots"), portal_scan.DEFAULT_INVENTORY_SLOTS)],
-            "chooser_slots": [list(p) for p in portal_scan.normalize_slots(
-                data.get("chooser_slots"), portal_scan.DEFAULT_CHOOSER_SLOTS)],
-            "name_region": list(portal_scan.normalize_region(
-                data.get("name_region"), portal_scan.DEFAULT_NAME_REGION)),
-            "modifier_region": list(portal_scan.normalize_region(
-                data.get("modifier_region"), portal_scan.DEFAULT_MODIFIER_REGION)),
-            # The Portal Selection list's pane sits ~25px left of the
-            # inventory's, so it gets its own pair -- see portal_scan.
-            "chooser_name_region": list(portal_scan.normalize_region(
-                data.get("chooser_name_region"),
-                portal_scan.DEFAULT_CHOOSER_NAME_REGION)),
-            "chooser_modifier_region": list(portal_scan.normalize_region(
-                data.get("chooser_modifier_region"),
-                portal_scan.DEFAULT_CHOOSER_MODIFIER_REGION)),
-        }
-
-    def set_portal_scan_settings(self, settings: dict) -> dict:
-        from core import portal_scan
-        if not isinstance(settings, dict):
-            return {"ok": False, "reason": "bad_settings"}
-        current = self.get_portal_scan_settings()
-        merged = {
-            "inventory_slots": [list(p) for p in portal_scan.normalize_slots(
-                settings.get("inventory_slots", current["inventory_slots"]),
-                portal_scan.DEFAULT_INVENTORY_SLOTS)],
-            "chooser_slots": [list(p) for p in portal_scan.normalize_slots(
-                settings.get("chooser_slots", current["chooser_slots"]),
-                portal_scan.DEFAULT_CHOOSER_SLOTS)],
-            "name_region": list(portal_scan.normalize_region(
-                settings.get("name_region", current["name_region"]),
-                portal_scan.DEFAULT_NAME_REGION)),
-            "modifier_region": list(portal_scan.normalize_region(
-                settings.get("modifier_region", current["modifier_region"]),
-                portal_scan.DEFAULT_MODIFIER_REGION)),
-            "chooser_name_region": list(portal_scan.normalize_region(
-                settings.get("chooser_name_region", current["chooser_name_region"]),
-                portal_scan.DEFAULT_CHOOSER_NAME_REGION)),
-            "chooser_modifier_region": list(portal_scan.normalize_region(
-                settings.get("chooser_modifier_region", current["chooser_modifier_region"]),
-                portal_scan.DEFAULT_CHOOSER_MODIFIER_REGION)),
-        }
-        cfg.update({"portal_scan": merged})
-        return {"ok": True, "portal_scan": merged}
-
-    def reset_portal_scan_settings(self) -> dict:
-        cfg.update({"portal_scan": {}})
-        return {"ok": True, "portal_scan": self.get_portal_scan_settings()}
-
     def _focus_game_for_debug(self) -> int:
         """Bring Roblox forward for a live-game Debug action, or 0.
 
@@ -3783,12 +3535,9 @@ class Api:
     def debug_capture_screen(self, reason: str = "") -> dict:
         """One picture of what the game is showing right now. Nothing else.
 
-        Deliberately separate from debug_portal_scan_test_read, which is the
-        PORTAL CALIBRATION tool -- it reads four specific regions, judges
-        them, and its output only makes sense on a portal screen. When the
-        macro is stuck on some unknown screen, none of that applies and all
-        of it is noise; what is wanted is simply "show me what it is looking
-        at". Every diagnosis in this project has started from exactly that
+        When the macro is stuck on an unknown screen, what is wanted is
+        simply "show me what it is looking at". Every diagnosis here has
+        started from exactly that
         picture.
 
         So this one takes the frame, saves it, and stops. It is safe to call
@@ -3821,116 +3570,6 @@ class Api:
         finally:
             self._return_focus_to_panel()
 
-    def debug_portal_scan_test_read(self) -> dict:
-        """Read the two detail regions RIGHT NOW and show exactly what happened.
-
-        This is the calibration tool, and it has to answer three different
-        questions with one press, because they look identical from the
-        outside: is the window being captured at all, is there an OCR engine
-        on this machine, and are the regions pointing at the text? So it
-        always writes the FULL frame (annotated with the regions it read),
-        names the OCR engines it found, and says which of the three failed.
-        "Nothing readable" on its own sent the last calibration attempt
-        looking at the wrong thing.
-        """
-        import cv2
-        from core import portal_scan, vision
-
-        # Roblox has to be in front to be captured (see
-        # _focus_game_for_debug), and the panel gets focus back at the end --
-        # the whole body below is wrapped so that happens however this
-        # returns.
-        hwnd = self._focus_game_for_debug()
-        if not hwnd:
-            return {"ok": False, "reason": "no_roblox"}
-        try:
-            return self._portal_scan_test_read(hwnd)
-        finally:
-            self._return_focus_to_panel()
-
-    def _portal_scan_test_read(self, hwnd) -> dict:
-        import cv2
-        from core import portal_scan, vision
-
-        settings = self.get_portal_scan_settings()
-        engines = portal_scan.engine_status()
-        engine_text = portal_scan.describe_engines(engines)
-        folder = _debug_dir()
-        out = {"ok": True, "regions": {}, "engines": engines,
-               "engine_text": engine_text, "frame": "", "reason": ""}
-
-        # The whole frame first, and unconditionally. Whatever else went
-        # wrong, this is the picture that shows what the game was actually
-        # displaying -- and it is what new regions get measured from.
-        frame = vision.capture_game_bgr(hwnd)
-        if frame is None:
-            out["reason"] = "no_capture"
-            self.push_log("[Portal Scanner] Test Read: the window could not be captured at all "
-                          "-- nothing was read. Is Roblox minimised?")
-            return out
-        try:
-            frame_path = os.path.join(folder, "portal_scan_frame.png")
-            cv2.imwrite(frame_path, frame)
-            out["frame"] = frame_path
-            marked = frame.copy()
-            for key, color in (("name_region", (0, 220, 0)),
-                               ("modifier_region", (0, 160, 255)),
-                               ("chooser_name_region", (255, 200, 0)),
-                               ("chooser_modifier_region", (255, 100, 200))):
-                x, y, w, h = (int(v) for v in settings[key])
-                cv2.rectangle(marked, (x, y), (x + w, y + h), color, 2)
-                cv2.putText(marked, key.replace("_region", ""), (x, max(12, y - 5)),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv2.LINE_AA)
-            cv2.imwrite(os.path.join(folder, "portal_scan_frame_regions.png"), marked)
-        except Exception as exc:
-            self.push_log(f"[Portal Scanner] Couldn't save the frame: {exc}")
-
-        any_text = False
-        # Both screens' regions, every time. The button cannot know whether
-        # the inventory or the Portal Selection list is on screen, and the
-        # two panes do not line up -- reading only one pair is how a
-        # perfectly good calibration looks like a failure on the other
-        # screen.
-        for key in ("name_region", "modifier_region",
-                    "chooser_name_region", "chooser_modifier_region"):
-            region = tuple(settings[key])
-            crop = vision.capture_window_region_bgr(hwnd, region)
-            if crop is None:
-                out["regions"][key] = {"text": "", "saved": "", "error": "no capture"}
-                continue
-            path = os.path.join(folder, f"portal_scan_{key}.png")
-            try:
-                cv2.imwrite(path, crop)
-            except Exception:
-                path = ""
-            texts = portal_scan.ocr_variants(crop)
-            if texts:
-                any_text = True
-            out["regions"][key] = {"text": " | ".join(texts), "saved": path}
-            self.push_log(f"[Portal Scanner] {key} {region} read: "
-                          f"{(' | '.join(texts)) or '(nothing)'}"
-                          + (f" -- crop saved to {path}" if path else ""))
-
-        if not any_text:
-            # Two very different problems, and telling them apart is the
-            # whole point of this button.
-            out["reason"] = "no_engine" if engine_text.startswith("none") else "no_text"
-            if out["reason"] == "no_engine":
-                self.push_log("[Portal Scanner] No OCR engine is available on this machine, so "
-                              "nothing can be read no matter where the regions point. Windows "
-                              f"OCR says: {engines.get('windows_reason') or 'unavailable'}. "
-                              "Install Tesseract (Settings > General) or the RapidOCR extra.")
-            else:
-                self.push_log(f"[Portal Scanner] OCR is available ({engine_text}) but both "
-                              "regions read nothing -- so they are almost certainly pointing at "
-                              "the wrong part of the screen. Open "
-                              "debug/portal_scan_frame_regions.png: the boxes drawn on it are "
-                              "where it looked.")
-        else:
-            self.push_log(f"[Portal Scanner] OCR engines: {engine_text}. Full frame saved to "
-                          f"{out['frame']}.")
-        return out
-
     # ------------------------------------------------------------------
     # Camera profiles -- Settings > Debug > Camera Profiles
     #
@@ -3957,12 +3596,6 @@ class Api:
                 "o_ms": cfg.load().get("expedition_camera_o_ms", 100),
             })
         return profiles
-
-    def get_builtin_camera_profiles(self) -> dict:
-        """The stock sequences, so the UI can show what a map does today and
-        offer them as a starting point instead of a blank form."""
-        from core import camera
-        return {k: dict(v) for k, v in camera.BUILTIN_PROFILES.items()}
 
     def set_camera_profile(self, name: str, profile: dict) -> dict:
         from core import camera
@@ -4009,93 +3642,6 @@ class Api:
                 self.push_log(f"[Camera] Test done ({camera.describe_profile(resolved)}).")
             except Exception as exc:
                 self.push_log(f"[Camera] Test failed: {exc}")
-
-        threading.Thread(target=run, daemon=True).start()
-        return {"ok": True}
-
-    def debug_camera_setup(self) -> dict:
-        # Settings > Debug > "Camera Setup": puts the Roblox camera into the
-        # standard macro viewpoint. Actual sequence lives in core.camera
-        # (shared with the macro run's automatic Pre Start step) -- this is
-        # just the on-demand trigger, run on a background thread since the
-        # whole sequence takes ~3s and none of it needs anything else
-        # coordinated.
-        hwnd = self.game_hwnd
-        if not hwnd or not wm.is_window(hwnd):
-            return {"ok": False, "reason": "no_roblox"}
-
-        # Same focus dance as reward-scroll/path-recording: the click that
-        # triggered this left the macro's own panel focused, and Roblox only
-        # processes mouse/keyboard input while it's the foreground window.
-        self._show_dashboard_for_game_focus()
-        wm.show_window(hwnd)
-        wm.activate_window(hwnd)
-
-        def run():
-            from core import camera
-            try:
-                camera.run_camera_setup(self.mouse, self.keyboard, hwnd)
-                self.push_log("[Debug] Camera setup done -- tilted down, zoomed out.")
-            except Exception as exc:
-                self.push_log(f"[Debug] Camera setup failed: {exc}")
-
-        threading.Thread(target=run, daemon=True).start()
-        return {"ok": True}
-
-    def debug_camera_setup_2(self, hold_ms) -> dict:
-        # Settings > Debug > "Camera Setup 2": same drag-down-then-zoom
-        # sequence as Camera Setup, but with a caller-supplied O-hold
-        # duration instead of the fixed 2s -- for testing how long the
-        # zoom-out actually needs.
-        hwnd = self.game_hwnd
-        if not hwnd or not wm.is_window(hwnd):
-            return {"ok": False, "reason": "no_roblox"}
-        try:
-            hold_ms = max(0.0, float(hold_ms))
-        except (TypeError, ValueError):
-            return {"ok": False, "reason": "bad_hold_ms"}
-
-        self._show_dashboard_for_game_focus()
-        wm.show_window(hwnd)
-        wm.activate_window(hwnd)
-
-        def run():
-            from core import camera
-            try:
-                camera.run_camera_setup(self.mouse, self.keyboard, hwnd, hold_ms=hold_ms)
-                self.push_log(f"[Debug] Camera setup 2 done ({hold_ms:.0f}ms hold).")
-            except Exception as exc:
-                self.push_log(f"[Debug] Camera setup 2 failed: {exc}")
-
-        threading.Thread(target=run, daemon=True).start()
-        return {"ok": True}
-
-    def debug_camera_setup_3(self, hold_ms) -> dict:
-        # Settings > Debug > "Camera Setup 3": the standard right-click
-        # drag-down pitch pin, then HOLD the Left arrow key for a
-        # caller-supplied time instead of the O zoom-hold -- the same
-        # sequence Expedition's Pre Start runs with a 750ms hold (see
-        # core.camera.run_camera_drag_hold), runnable here with any hold
-        # time for tuning.
-        hwnd = self.game_hwnd
-        if not hwnd or not wm.is_window(hwnd):
-            return {"ok": False, "reason": "no_roblox"}
-        try:
-            hold_ms = max(0.0, float(hold_ms))
-        except (TypeError, ValueError):
-            return {"ok": False, "reason": "bad_hold_ms"}
-
-        self._show_dashboard_for_game_focus()
-        wm.show_window(hwnd)
-        wm.activate_window(hwnd)
-
-        def run():
-            from core import camera
-            try:
-                camera.run_camera_drag_hold(self.mouse, self.keyboard, hwnd, hold_ms=hold_ms)
-                self.push_log(f"[Debug] Camera setup 3 done (drag down, {hold_ms:.0f}ms Left-arrow hold).")
-            except Exception as exc:
-                self.push_log(f"[Debug] Camera setup 3 failed: {exc}")
 
         threading.Thread(target=run, daemon=True).start()
         return {"ok": True}
@@ -4318,7 +3864,7 @@ class Api:
         ocr_ok, ocr_detail = ocr.smoke_test_text_reader()
         add("Text reading (OCR)", ocr_ok,
             ocr_detail if ocr_ok else
-            f"{ocr_detail} -- only Auto Bounty, stats/reward reading, and Wait-for-Wave need it. "
+            f"{ocr_detail} -- stats/reward reading and Wait-for-Wave need it. "
             "Install the Windows OCR dependencies from requirements.txt, or install Tesseract via "
             "Settings > General.")
 

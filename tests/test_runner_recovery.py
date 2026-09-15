@@ -131,39 +131,13 @@ def test_guarded_phase_logs_exception_and_recovers_to_lobby(runner):
         raise RuntimeError("simulated vision failure")
 
     completed, result = runner._run_guarded_phase(
-        "Auto Bounty", 123, runner._stop_event, fail)
+        "Challenge", 123, runner._stop_event, fail)
 
     assert completed is False
     assert result is None
     runner._recover_to_lobby.assert_called_once_with(123, runner._stop_event)
     assert any(
-        "Unexpected error during Auto Bounty: RuntimeError: simulated vision failure"
-        in call_args.args[0]
-        for call_args in runner._log.call_args_list
-    )
-
-
-def test_bounty_exception_does_not_prevent_challenge_or_queue(monkeypatch, runner):
-    monkeypatch.setattr(runner_module.wm, "is_window", lambda _hwnd: True)
-    monkeypatch.setattr(runner_module.wm, "show_window", lambda _hwnd: None)
-    monkeypatch.setattr(runner_module.wm, "activate_window", lambda _hwnd: True)
-    monkeypatch.setattr(runner_module.wm, "is_process_elevated", lambda _hwnd: False)
-    monkeypatch.setattr(runner_module.wm, "is_self_elevated", lambda: False)
-    monkeypatch.setattr(runner_module.vision, "find_image", lambda *_args, **_kwargs: None)
-    runner._run_bounties = Mock(side_effect=RuntimeError("capture failed"))
-    runner._bounty_settings = Mock(return_value={"enabled": True})
-    runner._run_challenges = Mock()
-    runner._crafting_wants_in = Mock(return_value=False)
-    runner._recover_to_lobby.return_value = True
-
-    runner._run(
-        lambda: 123, lambda: [], runner._stop_event,
-        coords={}, default_walk_paths={}, webhook={})
-
-    runner._recover_to_lobby.assert_called_once_with(123, runner._stop_event)
-    runner._run_challenges.assert_called_once()
-    assert any(
-        "Auto Bounty pass finished and the Task Queue is empty"
+        "Unexpected error during Challenge: RuntimeError: simulated vision failure"
         in call_args.args[0]
         for call_args in runner._log.call_args_list
     )
@@ -203,11 +177,10 @@ def _prepare_run_environment(monkeypatch, runner):
     monkeypatch.setattr(runner_module.wm, "is_process_elevated", lambda _hwnd: False)
     monkeypatch.setattr(runner_module.wm, "is_self_elevated", lambda: False)
     monkeypatch.setattr(runner_module.vision, "find_image", lambda *_args, **_kwargs: None)
-    runner._bounty_settings = Mock(return_value={"enabled": True})
     runner._recover_to_lobby.return_value = True
 
 
-@pytest.mark.parametrize("failed_phase", ["bounty", "challenge", "crafting"])
+@pytest.mark.parametrize("failed_phase", ["challenge", "crafting"])
 def test_resource_phase_exception_still_reaches_task_queue(
         monkeypatch, runner, failed_phase):
     _prepare_run_environment(monkeypatch, runner)
@@ -221,7 +194,6 @@ def test_resource_phase_exception_still_reaches_task_queue(
             return result
         return run
 
-    runner._run_bounties = Mock(side_effect=phase("bounty", False))
     runner._run_challenges = Mock(side_effect=phase("challenge"))
     runner._run_crafting = Mock(side_effect=phase("crafting"))
     runner._crafting_wants_in = Mock(side_effect=[True, False])
@@ -235,35 +207,11 @@ def test_resource_phase_exception_still_reaches_task_queue(
     assert "task" in calls
     runner._recover_to_lobby.assert_called_once_with(123, runner._stop_event)
     phase_labels = {
-        "bounty": "Auto Bounty",
         "challenge": "Challenge",
         "crafting": "Auto Crafting",
     }
     assert any(
         f"Unexpected error during {phase_labels[failed_phase]}"
-        in call_args.args[0]
-        for call_args in runner._log.call_args_list
-    )
-
-
-def test_recovery_exception_is_logged_without_blocking_later_phases(
-        monkeypatch, runner):
-    _prepare_run_environment(monkeypatch, runner)
-    runner._run_bounties = Mock(side_effect=RuntimeError("bounty failed"))
-    runner._recover_to_lobby.side_effect = RuntimeError("recovery failed")
-    runner._run_challenges = Mock()
-    runner._crafting_wants_in = Mock(return_value=False)
-    runner._run_task = Mock(return_value=True)
-    queue_reads = iter([[{"mode": "event", "map": "Event", "repeat": 1}], []])
-
-    runner._run(
-        lambda: 123, lambda: next(queue_reads), runner._stop_event,
-        coords={}, default_walk_paths={}, webhook={})
-
-    runner._run_challenges.assert_called_once()
-    runner._run_task.assert_called_once()
-    assert any(
-        "Unexpected error during Auto Bounty lobby recovery"
         in call_args.args[0]
         for call_args in runner._log.call_args_list
     )

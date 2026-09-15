@@ -865,88 +865,6 @@
             </div>
           </details>
 
-          <!-- Auto Bounty -->
-          <details id="resource-card-bounty" class="resource-card" style="display: none;">
-            <summary class="resource-card-head">
-              <span class="resource-card-icon">B</span>
-              <span class="resource-card-copy">
-                <span class="resource-card-title">Auto Bounty</span>
-                <span class="resource-card-desc">Complete supported Bounty Board objectives before other automation.</span>
-              </span>
-              <span id="resource-bounty-summary" class="resource-card-state">Disabled</span>
-              <span class="resource-card-chevron">&#8250;</span>
-            </summary>
-            <div class="resource-card-body">
-
-          <div id="bounty-setup-warning" class="resource-setup-warning" style="display: none;"></div>
-
-          <div class="setting-row" style="padding: 10px 0;">
-            <div>
-              <div class="setting-label">Enable Auto Bounty</div>
-              <div class="setting-desc">Checks the Event Bounty Board before Challenge and runs supported Clear Wave or Hard objectives.</div>
-            </div>
-            <button id="toggle-bounty-enabled" class="toggle-switch" onclick="toggleBountyEnabled(this)"></button>
-          </div>
-
-          <div class="setting-row" style="padding: 10px 0;">
-            <div>
-              <div class="setting-label">Auto Mythic Bounty</div>
-              <div class="setting-desc">Rerolls each eligible card until its card title verifies as Mythic.</div>
-            </div>
-            <button id="toggle-bounty-mythic" class="toggle-switch" onclick="toggleBountyMythic(this)"></button>
-          </div>
-
-          <div class="setting-row" style="padding: 10px 0;">
-            <div>
-              <div class="setting-label">Mythic Reroll Safety Limit</div>
-              <div class="setting-desc">Maximum rerolls for one card before Auto Bounty leaves it unclaimed. Allowed range: 1–100.</div>
-            </div>
-            <input id="bounty-mythic-max-rerolls" class="block-input" style="width: 64px;" type="number" min="1" max="100" value="20" onchange="setBountyMythicMaxRerolls(this.value)">
-          </div>
-
-          <div class="setting-row" style="padding: 10px 0;">
-            <div>
-              <div class="setting-label">Play Mode</div>
-              <div class="setting-desc">Solo or Matchmaking for bounty stages.</div>
-            </div>
-            <div class="seg-toggle" style="width: auto;">
-              <button type="button" id="bounty-mode-solo" class="seg-btn" onclick="setBountyPlayMode('solo')">Solo</button>
-              <button type="button" id="bounty-mode-matchmaking" class="seg-btn" onclick="setBountyPlayMode('matchmaking')">Matchmaking</button>
-            </div>
-          </div>
-
-          <div class="setting-row" style="padding: 10px 0;">
-            <div>
-              <div class="setting-label">Summon Banner</div>
-              <div class="setting-desc">Currency source for Summon bounties. Standard uses Gems; Villain uses Villain Coins.</div>
-            </div>
-            <div class="seg-toggle" style="width: auto;">
-              <button type="button" id="bounty-banner-standard" class="seg-btn" onclick="setBountySummonBanner('standard')">Standard</button>
-              <button type="button" id="bounty-banner-villain" class="seg-btn" onclick="setBountySummonBanner('villain')">Villain</button>
-            </div>
-          </div>
-
-          <div class="setting-row" style="padding: 10px 0;">
-            <div>
-              <div class="setting-label">Bounties Remaining</div>
-              <div class="setting-desc">Updated from the Bounty Board. At 0, Auto Bounty skips until the 00:00 UTC reset or a manual reset.</div>
-            </div>
-            <div class="flex items-center gap-2">
-              <span id="bounty-remaining" class="challenge-ready-chip">10 / 10</span>
-              <button class="task-toolbar-btn danger" onclick="resetBountyRemaining()">Reset</button>
-            </div>
-          </div>
-
-          <div class="setting-row" style="padding: 10px 0;">
-            <div>
-              <div class="setting-label">Story Map Setup</div>
-              <div class="setting-desc">Assign the Macro Operation Auto Bounty should use for each Story destination.</div>
-            </div>
-            <button class="task-toolbar-btn" onclick="openBountyMaps()">Story maps</button>
-          </div>
-            </div>
-          </details>
-
           <!-- Future resource sections (Auto Fuel, Gold, Geode, ...) go here. -->
 
         </div>
@@ -1654,18 +1572,6 @@
         <section class="rp-panel">
           <header class="rp-panel-head">
             <span class="rp-head-tag" style="--rp-tag: var(--slate);">Control</span>
-            <span class="rp-head-title">Camera</span>
-            <span class="rp-head-rule"></span>
-          </header>
-
-        </section>
-      </div>
-
-
-      <div class="settings-category" data-cat="debug" style="margin-top: 20px;">
-        <section class="rp-panel">
-          <header class="rp-panel-head">
-            <span class="rp-head-tag" style="--rp-tag: var(--slate);">Control</span>
             <span class="rp-head-title">Camera Profiles</span>
             <span class="rp-head-rule"></span>
           </header>
@@ -2254,22 +2160,6 @@
       <div class="modal-body">
         <div class="wh-hint" style="margin-bottom: 8px;">Regular Challenge rotates one of the Story maps through each slot &mdash; assign the Macro Operation to run for each.</div>
         <div id="challenge-map-list" style="max-height: 60vh; overflow-y: auto;"></div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ============ Bounty Story Maps (Resource > Auto Bounty) ============
-       Uses the same compact map-assignment flow as Auto Challenge while
-       retaining Auto Bounty's independent per-map Macro Operations. -->
-  <div id="bounty-maps-modal" class="modal-overlay" style="display:none;" onmousedown="if(event.target===this) closeBountyMaps()">
-    <div class="modal-panel" style="width: 520px; max-width: 94vw;">
-      <div class="modal-head">
-        <span class="modal-title">Bounty Story Maps</span>
-        <span class="modal-close" onclick="closeBountyMaps()">&times;</span>
-      </div>
-      <div class="modal-body">
-        <div class="wh-hint" style="margin-bottom: 8px;">Assign the Macro Operation Auto Bounty should run for each Story destination.</div>
-        <div id="bounty-map-list" style="max-height: 60vh; overflow-y: auto;"></div>
       </div>
     </div>
   </div>

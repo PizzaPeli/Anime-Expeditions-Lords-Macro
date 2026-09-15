@@ -1,4 +1,4 @@
-"""Guards for the Story-map list that Auto Challenge and Auto Bounty share.
+"""Guards for the Story-map list that Auto Challenge uses.
 
 The same list of Story maps is written out in four places: main.py (the
 settings/API layer), core/runner_constants.py (what the runner recognizes
@@ -18,7 +18,6 @@ import re
 from pathlib import Path
 
 import main
-from core import bounty
 from core import runner_constants as rc
 
 REPO = Path(__file__).resolve().parent.parent
@@ -60,14 +59,6 @@ def test_challenge_maps_cover_every_story_map_the_task_builder_offers():
     Challenge can rotate onto any of them, so the Challenge list has to keep up
     with it -- this is the check that East Town needed and did not have."""
     assert sorted(_js_task_data_story_maps()) == sorted(main.CHALLENGE_STORY_MAPS)
-
-
-def test_bounty_shares_the_same_story_map_list():
-    """core.bounty.STORY_MAPS is what read_destination_map matches an OCRed
-    bounty destination against; BOUNTY_STORY_MAPS is what the Bounty Story Map
-    Setup offers. A destination readable but not assignable means the same
-    unit-less battle Challenge hits."""
-    assert sorted(bounty.STORY_MAPS) == sorted(main.BOUNTY_STORY_MAPS)
 
 
 def test_every_challenge_map_has_a_reference_crop():

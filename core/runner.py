@@ -30,7 +30,6 @@ from . import config
 from . import keys
 from . import ocr
 from . import ocr_windows
-from . import portal_scan
 from . import stage_select
 from . import vision
 from . import wave as wave_module
@@ -38,7 +37,6 @@ from .diagnostics import FailureCategory, RecoveryAction, FailureReport, create_
 from . import window as wm
 from .runner_constants import *  # noqa: F401,F403 -- see runner_constants' docstring
 from .runner_blocks import BlockOps
-from .runner_bounty import BountyOps
 from .runner_challenge import ChallengeOps
 from .runner_crafting import CraftingOps
 from .runner_expedition import ExpeditionOps
@@ -134,17 +132,6 @@ CLOSE_GLYPH_IMAGE_NAMES = ("nav_x", "nav_closeui")
 # window by vision.ref_to_screen before each click.
 PORTAL_SEARCH_POINTS = {"lobby": (460, 180), "chooser": (506, 187)}
 PORTAL_FIRST_SLOT_POINTS = {"lobby": (387, 247), "chooser": (294, 254)}
-# Portal Scanner: how long the detail pane gets to finish repainting after a
-# slot is clicked, and how still it has to be before it is read. OCR-ing a
-# pane mid-fade reads the PREVIOUS portal, which is the one failure mode that
-# would put the scanner's own answer back to where coordinates were.
-PORTAL_DETAIL_SETTLE_TIMEOUT = 3.0
-PORTAL_DETAIL_SETTLE_INTERVAL = 0.2
-PORTAL_DETAIL_STILL_FRACTION = 0.01
-# Nothing is read until the pane has held still for this many consecutive
-# checks, and never before PORTAL_DETAIL_MIN_SETTLE has passed at all.
-PORTAL_DETAIL_STABLE_FRAMES = 2
-PORTAL_DETAIL_MIN_SETTLE = 0.25
 PORTAL_STEP_ATTEMPTS = 3
 # How long a "rejoin pending" latch may stand before it is assumed finished.
 # Without a TTL one bad disconnect diagnosis poisons every later lobby check
@@ -247,15 +234,14 @@ def _find_team_load_button(frame, expected_y):
     return cx, cy
 
 
-class MacroRunner(BountyOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, BlockOps):
+class MacroRunner(ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, BlockOps):
     """One run's worth of state -- module-level singleton via main.Api, same
     pattern as core.paths._recorder, since only one run can realistically be
     active at a time (one physical game window, one macro)."""
 
     def __init__(self, mouse, keyboard, log, set_status=None, record_result=None,
                  get_challenge_settings=None, mark_challenge_stage_played=None, get_run_stats=None,
-                 get_crafting_settings=None, set_crafting_count=None, get_bounty_settings=None,
-                 set_bounty_remaining=None, get_fuel_settings=None,
+                 get_crafting_settings=None, set_crafting_count=None, get_fuel_settings=None,
                  mark_fuel_refill_result=None, get_hotkeys=None,
                  get_auto_shop_settings=None,
                  save_auto_shop_item_state=None, save_auto_shop_shop_state=None):
@@ -334,9 +320,6 @@ class MacroRunner(BountyOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, Expedi
         # Debug > Camera Profiles. Empty means every mode keeps the built-in
         # sequence it has always had.
         self._camera_profiles = {}
-        # Portal Scanner geometry: slot lattices and the detail-pane
-        # regions it reads (Settings > Debug > Portal Scanner).
-        self._portal_scan_settings = {}
         # Wrapped to remember the most recent action text locally: the
         # stop path (_checkpoint) reports "Stopped. (was: <action>)" so a
         # user stopping a visibly-hung run gets told what it was stuck on
@@ -363,12 +346,10 @@ class MacroRunner(BountyOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, Expedi
         # avoids core/ reaching back into main.py). None (the default, e.g.
         # in tests/CLI mode) just makes _run_challenges a no-op.
         self._get_challenge_settings = get_challenge_settings
-        self._get_bounty_settings = get_bounty_settings
         # Read when an Auto Upgrade Unit block runs so a key changed in
         # Settings is used without rebuilding the runner or embedding a
         # machine-specific key inside every exported macro template.
         self._get_hotkeys = get_hotkeys or (lambda: {})
-        self._set_bounty_remaining = set_bounty_remaining or (lambda *a, **kw: None)
         self._mark_challenge_stage_played = mark_challenge_stage_played or (lambda *a, **kw: None)
         # Returns a fresh session/all-time win-loss + session_start + version
         # snapshot for the match-result webhook (see _send_result_webhook).
@@ -493,7 +474,7 @@ class MacroRunner(BountyOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, Expedi
               scroll_nudges: int = None, debug_screenshots: bool = False, default_walk_paths: dict = None,
               webhook: dict = None, expedition_color_buttons: bool = True,
               expedition_camera_o_ms: float = 100, camera_profiles: dict = None,
-              portal_scan_settings: dict = None, loose_team_ocr_match: bool = False,
+              loose_team_ocr_match: bool = False,
               memory_refresh_enabled: bool = False,
               memory_refresh_hours: float = MEMORY_REFRESH_DEFAULT_HOURS) -> dict:
         if self.is_running():
@@ -510,8 +491,6 @@ class MacroRunner(BountyOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, Expedi
         except (TypeError, ValueError):
             self._expedition_camera_o_ms = 100.0
         self._camera_profiles = camera_profiles if isinstance(camera_profiles, dict) else {}
-        self._portal_scan_settings = (portal_scan_settings
-                                      if isinstance(portal_scan_settings, dict) else {})
         self._memory_refresh_enabled = bool(memory_refresh_enabled)
         try:
             refresh_hours = float(memory_refresh_hours)
@@ -880,7 +859,7 @@ class MacroRunner(BountyOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, Expedi
         """Run one independently recoverable part of an unattended pass.
 
         Returns ``(completed, result)``. An implementation bug or transient
-        capture exception in Auto Bounty/Challenge/a single queued task must
+        capture exception in Challenge/a single queued task must
         not kill the daemon thread and silently end the entire overnight run.
         """
         try:
@@ -996,9 +975,6 @@ class MacroRunner(BountyOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, Expedi
         # chance at the between-repeats check once the current stage ends.
         if self._checkpoint(stop_event):
             return
-        # The Event Bounty Board no longer exists. Kept-out saved settings
-        # must not resurrect the retired automation during a run.
-        bounty_enabled = False
         if self._checkpoint(stop_event):
             return
         if not self._skip_first_task_setup:
@@ -1028,9 +1004,7 @@ class MacroRunner(BountyOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, Expedi
             # than keep replaying a stale snapshot from when the run started.
             tasks = get_tasks()
             if not tasks:
-                if bounty_enabled:
-                    self._log("[Macro] Auto Bounty pass finished and the Task Queue is empty -- going Idle.")
-                elif shop_enabled:
+                if shop_enabled:
                     self._log("[Macro] Auto Shop pass finished and the Task Queue is empty -- going Idle.")
                 else:
                     self._log("[Macro] Task queue is empty -- add a task on the Task screen first.")
@@ -5122,92 +5096,6 @@ class MacroRunner(BountyOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, Expedi
                   f"attempt at the route.")
         return False
 
-    # ------------------------------------------------------------------
-    # Portal Scanner
-    #
-    # The answer to convention 3f. A saved coordinate is not a portal
-    # identity -- both portal grids re-flow as portals are spent, so the
-    # square that held your Summer T5 yesterday holds something else today,
-    # and the route spends it. No coordinate can fix that; only reading the
-    # card can. So the slot lattice stops being the ANSWER and becomes the
-    # SEARCH SPACE: click a slot, read the detail pane it fills in, and
-    # confirm only when the name is the one the task asked for. A slot
-    # holding the wrong portal is skipped, not spent.
-    #
-    # The task opts in by naming its portal ("Portal Name" in the Task
-    # Builder). With no name the old saved-coordinate path runs unchanged,
-    # so nothing about an existing task changes until it is given a name.
-    # ------------------------------------------------------------------
-    def _portal_scan_slots(self, screen: str):
-        settings = self._portal_scan_settings or {}
-        if screen == "chooser":
-            return portal_scan.normalize_slots(settings.get("chooser_slots"),
-                                               portal_scan.DEFAULT_CHOOSER_SLOTS)
-        return portal_scan.normalize_slots(settings.get("inventory_slots"),
-                                           portal_scan.DEFAULT_INVENTORY_SLOTS)
-
-    def _portal_detail_regions(self, screen: str = "lobby"):
-        """The name and modifier crops for THIS screen.
-
-        Per screen, not shared. The inventory's detail pane and the Portal
-        Selection list's do not line up -- the chooser's sits about 25px
-        left -- and one shared pair reads its own screen 4/4 and the other
-        0/4, slicing "Summer" into "mmer" and cutting the Traitless icon off.
-        """
-        settings = self._portal_scan_settings or {}
-        if screen == "chooser":
-            return (portal_scan.normalize_region(
-                        settings.get("chooser_name_region"),
-                        portal_scan.DEFAULT_CHOOSER_NAME_REGION),
-                    portal_scan.normalize_region(
-                        settings.get("chooser_modifier_region"),
-                        portal_scan.DEFAULT_CHOOSER_MODIFIER_REGION))
-        return (portal_scan.normalize_region(settings.get("name_region"),
-                                             portal_scan.DEFAULT_NAME_REGION),
-                portal_scan.normalize_region(settings.get("modifier_region"),
-                                             portal_scan.DEFAULT_MODIFIER_REGION))
-
-    def _wait_for_detail_pane(self, hwnd, region, stop_event) -> None:
-        """Let the detail pane finish repainting before it is read.
-
-        Reading it mid-repaint reads the PREVIOUS portal, which would hand
-        the scanner exactly the wrong answer with full confidence -- worse
-        than no scanner at all. Two consecutive captures that differ by less
-        than 1% mean it has settled; the timeout is a cap, not a target.
-        """
-        # A minimum wait before the first capture. The pane does not begin
-        # changing the instant the slot is clicked, and a "stable" reading
-        # taken before it has started is a reading of the PREVIOUS portal --
-        # the one failure mode that would hand the scanner a confident wrong
-        # answer rather than a blank one.
-        self._interruptible_sleep(PORTAL_DETAIL_MIN_SETTLE, stop_event)
-        deadline = time.time() + PORTAL_DETAIL_SETTLE_TIMEOUT
-        previous = vision.capture_window_region_bgr(hwnd, region)
-        stable = 0
-        while time.time() < deadline:
-            if stop_event is not None and stop_event.is_set():
-                return
-            self._interruptible_sleep(PORTAL_DETAIL_SETTLE_INTERVAL, stop_event)
-            current = vision.capture_window_region_bgr(hwnd, region)
-            changed = self._region_change_fraction(previous, current)
-            previous = current
-            if changed is None:
-                return
-            # CONSECUTIVE stable comparisons, not one. A pane that fades or
-            # slides in moves less than the 1% bar between two frames while
-            # still being half-drawn, which is what produced reads like
-            # "TT ~~ So are an | V0 7]" on three slots of one run while the
-            # other two read perfectly.
-            stable = stable + 1 if changed < PORTAL_DETAIL_STILL_FRACTION else 0
-            if stable >= PORTAL_DETAIL_STABLE_FRAMES:
-                return
-
-    def _read_portal_detail(self, hwnd, region) -> str:
-        """Every OCR reading of one detail crop, joined for matching."""
-        crop = vision.capture_window_region_bgr(hwnd, region)
-        texts = portal_scan.ocr_variants(crop)
-        return " ".join(texts)
-
     @staticmethod
     def _portal_targets(task: dict) -> list:
         """The portals this task will take, best first.
@@ -5273,51 +5161,6 @@ class MacroRunner(BountyOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, Expedi
         if self._checkpoint(stop_event):
             return None
         return first_slot
-
-    def _read_portal_slot(self, hwnd, stop_event, index: int, targets: list, blacklist,
-                            name_region, modifier_region):
-        """Read the currently-selected slot's detail pane.
-
-        Returns (priority index, text) when it holds one of `targets` and
-        carries no blacklisted modifier, the string "unreadable" when the
-        pane produced no text at all (an OCR/region problem, worth counting
-        separately), or None when it is simply a portal this task does not
-        want.
-        """
-        self._wait_for_detail_pane(hwnd, name_region, stop_event)
-        name_text = self._read_portal_detail(hwnd, name_region)
-        if not name_text:
-            self._log(f"[Macro] Portal Scanner: slot {index} -- no readable text in the "
-                      "detail pane.")
-            return "unreadable"
-        rank = next((i for i, t in enumerate(targets)
-                     if portal_scan.name_matches(t, name_text)), None)
-        if rank is None:
-            # Read it once more before believing it. A pane caught mid-fade,
-            # produces text that matches nothing. One extra OCR pass is cheap, and in the run
-            # this was written for it is the difference between three slots
-            # reading noise and reading correctly.
-            self._interruptible_sleep(PORTAL_DETAIL_MIN_SETTLE, stop_event)
-            self._wait_for_detail_pane(hwnd, name_region, stop_event)
-            retry_text = self._read_portal_detail(hwnd, name_region)
-            rank = next((i for i, t in enumerate(targets)
-                         if portal_scan.name_matches(t, retry_text)), None)
-            if rank is None:
-                self._log(f'[Macro] Portal Scanner: slot {index} reads "{name_text[:50]}" '
-                          f'(and "{retry_text[:50]}" on a second look) -- not a portal this '
-                          "task wants.")
-                return None
-            name_text = retry_text
-            self._log(f"[Macro] Portal Scanner: slot {index} only read correctly on the second "
-                      "look -- the first read caught the pane mid-change.")
-        modifier_text = (self._read_portal_detail(hwnd, modifier_region)
-                         if blacklist else "")
-        blocked = portal_scan.blacklisted_modifier(blacklist, modifier_text)
-        if blocked:
-            self._log(f'[Macro] Portal Scanner: slot {index} IS "{targets[rank]}" but carries '
-                      f'"{blocked}", which this task rejects -- looking for another.')
-            return None
-        return rank, name_text
 
     def _portal_recover_disconnect(self, hwnd, stop_event) -> bool:
         """A portal step just failed. Was it actually a disconnect?
@@ -6088,8 +5931,6 @@ class MacroRunner(BountyOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, Expedi
         # done here either -- _run_task's repeat loop re-runs _run_task_setup
         # for Portals, which goes back through _reach_portal_activated (the
         # chooser route first, the lobby route as its fallback).
-        self._log("[Macro] The 3-card portal choice was already made during the round (this "
-                  "macro made it), so it is not looked for again after Victory/Defeat.")
         # The next repeat starts from this exact result screen.  Carry that
         # fact across setup rather than inferring "chooser" from the absence
         # of a lobby match (which can also happen while the lobby is drawing).

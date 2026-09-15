@@ -544,7 +544,6 @@ function switchScreen(name) {
     refreshFuelScreen();
     refreshAutoShopScreen();
     refreshChallengeScreen();
-    refreshBountyScreen();
   }
   if (name === 'settings') { refreshSavedPaths(); loadMacroCoords(); loadRewardTestMaps(); }
 
@@ -1547,44 +1546,6 @@ async function testMacroOperation(btn, mode) {
   setTimeout(() => { btn.textContent = original; btn.disabled = false; }, 1200);
 }
 
-// Settings > Debug > "Camera Setup" -- the backend does the right-drag +
-// zoom-hold on its own thread (~3s); the game has to be visible and focused,
-// so switch to the Dashboard first, same as every other live-input debug
-// action.
-async function runCameraSetup(btn) {
-  const original = btn.textContent;
-  switchScreen('dashboard');
-  btn.disabled = true;
-  btn.textContent = 'Running...';
-  await new Promise(resolve => setTimeout(resolve, 400));
-  try {
-    const result = await pywebview.api.debug_camera_setup();
-    btn.textContent = result.ok ? 'Started' : `Failed (${result.reason || 'error'})`;
-  } catch (e) {
-    btn.textContent = 'Failed';
-  }
-  setTimeout(() => { btn.textContent = original; btn.disabled = false; }, 3200);
-}
-
-// Settings > Debug > "Camera Setup 2" -- same sequence as Camera Setup, but
-// with a user-entered O-hold time (ms) instead of the fixed 2s.
-async function runCameraSetup2(btn) {
-  const original = btn.textContent;
-  const msInput = document.getElementById('camera-setup-2-ms');
-  const holdMs = Math.max(0, parseInt(msInput && msInput.value, 10) || 0);
-  switchScreen('dashboard');
-  btn.disabled = true;
-  btn.textContent = 'Running...';
-  await new Promise(resolve => setTimeout(resolve, 400));
-  try {
-    const result = await pywebview.api.debug_camera_setup_2(holdMs);
-    btn.textContent = result.ok ? 'Started' : `Failed (${result.reason || 'error'})`;
-  } catch (e) {
-    btn.textContent = 'Failed';
-  }
-  setTimeout(() => { btn.textContent = original; btn.disabled = false; }, Math.max(3200, holdMs + 1200));
-}
-
 // First-run welcome (see #onboarding-modal): shown once per install, rows
 // filtered to the current platform. "Get Started" persists the flag so it
 // never shows again; the Health Check button inside it reuses the normal
@@ -1856,81 +1817,10 @@ async function saveExpeditionOZoom(el) {
   addLog(`[Settings] Expedition camera zoom hold set to ${ms}ms.`);
 }
 
-// ---------------------------------------------------------------------------
-// Settings > Debug > Portal Scanner
-//
-// Geometry only -- WHICH portal a task takes is the task's own "Portal Name".
-// These are the squares the scanner clicks and the two parts of the detail
-// pane it reads once a square is selected. Shipped values are measured from a
-// docked 1152x756 window; Test Read is how you check them against yours.
-function slotsToText(slots) {
-  return (slots || []).map(p => `${p[0]}, ${p[1]}`).join('\n');
-}
-
-// Forgiving on purpose: this is a text box people will paste into. Anything
-// that isn't two numbers is dropped rather than rejecting the whole list.
-function textToSlots(text) {
-  return String(text || '').split('\n').map(line => {
-    const m = /^\s*(-?\d+)\s*[, ]\s*(-?\d+)\s*$/.exec(line);
-    return m ? [parseInt(m[1], 10), parseInt(m[2], 10)] : null;
-  }).filter(Boolean);
-}
-
-function renderPortalScanSettings(ps) {
-  if (!ps) return;
-  const put = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
-  const [nx, ny, nw, nh] = ps.name_region || [];
-  const [mx, my, mw, mh] = ps.modifier_region || [];
-  const [cnx, cny, cnw, cnh] = ps.chooser_name_region || [];
-  const [cmx, cmy, cmw, cmh] = ps.chooser_modifier_region || [];
-  put('ps-name-x', nx); put('ps-name-y', ny); put('ps-name-w', nw); put('ps-name-h', nh);
-  put('ps-mod-x', mx); put('ps-mod-y', my); put('ps-mod-w', mw); put('ps-mod-h', mh);
-  put('ps-cname-x', cnx); put('ps-cname-y', cny); put('ps-cname-w', cnw); put('ps-cname-h', cnh);
-  put('ps-cmod-x', cmx); put('ps-cmod-y', cmy); put('ps-cmod-w', cmw); put('ps-cmod-h', cmh);
-  put('ps-inventory-slots', slotsToText(ps.inventory_slots));
-  put('ps-chooser-slots', slotsToText(ps.chooser_slots));
-}
-
-function readPortalScanForm() {
-  const num = id => parseInt((document.getElementById(id) || {}).value, 10) || 0;
-  const text = id => (document.getElementById(id) || {}).value || '';
-  return {
-    name_region: [num('ps-name-x'), num('ps-name-y'), num('ps-name-w'), num('ps-name-h')],
-    modifier_region: [num('ps-mod-x'), num('ps-mod-y'), num('ps-mod-w'), num('ps-mod-h')],
-    chooser_name_region: [num('ps-cname-x'), num('ps-cname-y'), num('ps-cname-w'), num('ps-cname-h')],
-    chooser_modifier_region: [num('ps-cmod-x'), num('ps-cmod-y'), num('ps-cmod-w'), num('ps-cmod-h')],
-    inventory_slots: textToSlots(text('ps-inventory-slots')),
-    chooser_slots: textToSlots(text('ps-chooser-slots')),
-  };
-}
-
-async function savePortalScanSettings(btn) {
-  try {
-    const res = await pywebview.api.set_portal_scan_settings(readPortalScanForm());
-    if (res && res.portal_scan) {
-      renderPortalScanSettings(res.portal_scan);
-      addLog('[Portal Scanner] Saved.');
-    }
-  } catch (e) {}
-}
-
-async function resetPortalScanSettings(btn) {
-  try {
-    const res = await pywebview.api.reset_portal_scan_settings();
-    if (res && res.portal_scan) {
-      renderPortalScanSettings(res.portal_scan);
-      addLog('[Portal Scanner] Reset to the shipped defaults.');
-    }
-  } catch (e) {}
-}
-
 // Settings > Debug > Screenshot > "Screen Snapshot".
 //
-// Deliberately NOT the Portal Scanner's Test Read: that one reads four
-// portal-specific regions and judges them, which is meaningless on any other
-// screen. When the macro is stuck the question is only ever "what is it
-// looking at", so this takes the picture and stops. The Python side focuses
-// Roblox, captures, and returns focus here.
+// When the macro is stuck, capture the game screen as a picture. The Python
+// side focuses Roblox, captures, and returns focus here.
 async function captureScreenSnapshot(btn) {
   const original = btn ? btn.textContent : null;
   switchScreen('dashboard');
@@ -1943,46 +1833,6 @@ async function captureScreenSnapshot(btn) {
   }
   if (btn) {
     setTimeout(() => { btn.disabled = false; btn.textContent = original; }, 1400);
-  }
-}
-
-async function portalScanTestRead(btn) {
-  const out = document.getElementById('ps-test-result');
-  // Back to the dashboard before the read: it takes over Roblox's focus for
-  // a moment, and sitting on a Settings pane while that happens is what made
-  // the UI feel broken afterwards. Python hands focus back to this window
-  // when it is done.
-  switchScreen('dashboard');
-  if (out) out.textContent = 'Reading...';
-  try {
-    const res = await pywebview.api.debug_portal_scan_test_read();
-    if (!res || res.ok === false) {
-      if (out) out.textContent = res && res.reason === 'no_roblox'
-        ? 'Roblox isn\'t open.' : 'Could not read.';
-      return;
-    }
-    // Both screens are read every press, so show whichever pair actually
-    // produced text -- that is also how you tell which screen you are on.
-    const r = res.regions || {};
-    const name = (r.name_region || {}).text || (r.chooser_name_region || {}).text || '';
-    const mod = (r.modifier_region || {}).text || (r.chooser_modifier_region || {}).text || '';
-    if (!out) return;
-    if (name || mod) {
-      out.textContent = `name: ${name || '(nothing)'} \u00b7 modifier: ${mod || '(nothing)'}`;
-      return;
-    }
-    // Nothing read. Which of the three possible reasons it was decides what
-    // the user should do next, so say which -- "nothing readable" on its own
-    // is what sent the first calibration attempt looking at the wrong thing.
-    if (res.reason === 'no_capture') {
-      out.textContent = 'The game window could not be captured \u2014 is Roblox minimised?';
-    } else if (res.reason === 'no_engine') {
-      out.textContent = `No OCR engine on this machine (${res.engine_text || 'none'}) \u2014 the regions are not the problem.`;
-    } else {
-      out.textContent = `OCR works (${res.engine_text || ''}) but both regions read nothing \u2014 see debug/portal_scan_frame_regions.png for where it looked.`;
-    }
-  } catch (e) {
-    if (out) out.textContent = 'Could not read.';
   }
 }
 
@@ -2110,27 +1960,6 @@ async function clearCameraProfile(name) {
     const res = await pywebview.api.clear_camera_profile(name);
     if (res && res.profiles) renderCameraProfiles(res.profiles);
   } catch (e) {}
-}
-
-// Settings > Debug > "Camera Setup 3" -- experimental: right-click drag
-// down-right (diagonal), then hold the LEFT mouse button for the entered
-// time (ms). For testing camera interactions the standard setup doesn't
-// produce; nothing in the macro run uses it.
-async function runCameraSetup3(btn) {
-  const original = btn.textContent;
-  const msInput = document.getElementById('camera-setup-3-ms');
-  const holdMs = Math.max(0, parseInt(msInput && msInput.value, 10) || 0);
-  switchScreen('dashboard');
-  btn.disabled = true;
-  btn.textContent = 'Running...';
-  await new Promise(resolve => setTimeout(resolve, 400));
-  try {
-    const result = await pywebview.api.debug_camera_setup_3(holdMs);
-    btn.textContent = result.ok ? 'Started' : `Failed (${result.reason || 'error'})`;
-  } catch (e) {
-    btn.textContent = 'Failed';
-  }
-  setTimeout(() => { btn.textContent = original; btn.disabled = false; }, Math.max(3200, holdMs + 1200));
 }
 
 // Settings > General > "Install Tesseract OCR" -- unlike Camera Setup's
@@ -3286,8 +3115,7 @@ async function refreshTaskQueue() {
     const rawTasks = await pywebview.api.get_tasks();
     // Drop any task whose mode the queue no longer recognizes rather than
     // trying to render it. "Challenge" used to be a Task Queue mode (it never
-    // ran and is now its own tab); "bounty" can leak in from Auto Bounty,
-    // which is its own Resource-tab screen, not a queue mode. Either way an
+    // ran and is now its own tab). An
     // unknown mode makes taskSummary() read TASK_DATA[mode].label off
     // undefined and throw, which aborts renderTaskList() mid-map and leaves
     // the whole list blank while the header still shows a count.
@@ -3329,7 +3157,7 @@ async function refreshTaskQueue() {
     });
     if (dropped || repairedExtractAfter || migratedPortalTasks) {
       if (dropped) {
-        addLog(`[Task] Removed ${dropped} task(s) with an unrecognized mode (e.g. old Challenge/Bounty entries).`);
+        addLog(`[Task] Removed ${dropped} task(s) with an unrecognized mode.`);
       }
       if (repairedExtractAfter) {
         addLog(`[Task] Adjusted invalid or oversized Expedition "Extract After" value(s) to the supported range.`);
@@ -3640,121 +3468,6 @@ async function resetChallengeCounts() {
   try { await pywebview.api.reset_challenge_counts(); } catch (e) {}
   addLog('[Challenge] Daily status, play counts, and cooldowns reset.');
   await refreshChallengeScreen();
-}
-
-// ---------------------------------------------------------------------------
-// Auto Bounty
-// ---------------------------------------------------------------------------
-let bountyState = null;
-
-async function refreshBountyScreen() {
-  try {
-    bountyState = await pywebview.api.get_bounty_settings();
-  } catch (e) {
-    bountyState = null;
-  }
-  await refreshTaskTemplates();
-  renderBountyScreen();
-}
-
-function renderBountyScreen() {
-  const s = bountyState;
-  renderStoryMapSetupWarning('bounty-setup-warning', s, 'Auto Bounty');
-  const summary = document.getElementById('resource-bounty-summary');
-  if (summary) {
-    const remaining = s ? `${s.remaining}/${s.total} left` : '';
-    summary.textContent = s
-      ? `${s.enabled ? 'Enabled' : 'Disabled'} | ${remaining}`
-      : 'Disabled';
-    summary.classList.toggle('active', !!(s && s.enabled));
-  }
-  document.getElementById('toggle-bounty-enabled')?.classList.toggle(
-    'on', !!(s && s.enabled && s.setup_ready));
-  document.getElementById('toggle-bounty-mythic')?.classList.toggle(
-    'on', !!(s && s.mythic_only));
-  const mythicMax = document.getElementById('bounty-mythic-max-rerolls');
-  if (mythicMax && s) mythicMax.value = s.mythic_max_rerolls || 20;
-  const playMode = (s && s.play_mode) || 'solo';
-  document.getElementById('bounty-mode-solo')?.classList.toggle('active', playMode === 'solo');
-  document.getElementById('bounty-mode-matchmaking')?.classList.toggle('active', playMode === 'matchmaking');
-  const summonBanner = (s && s.summon_banner) || 'standard';
-  document.getElementById('bounty-banner-standard')?.classList.toggle('active', summonBanner === 'standard');
-  document.getElementById('bounty-banner-villain')?.classList.toggle('active', summonBanner === 'villain');
-  const remaining = document.getElementById('bounty-remaining');
-  if (remaining && s) {
-    remaining.textContent = `${s.remaining} / ${s.total}`;
-  }
-
-  const list = document.getElementById('bounty-map-list');
-  if (!list) return;
-  if (!s) {
-    list.innerHTML = '<div class="rh-empty">Couldn\'t load Auto Bounty settings.</div>';
-    return;
-  }
-  const macroOpts = current => `<option value="">No Macro</option>` +
-    taskTemplates.map(name =>
-      `<option value="${escapeHtml(name)}" ${name === current ? 'selected' : ''}>&#9654; ${escapeHtml(name)}</option>`
-    ).join('');
-  list.innerHTML = CHALLENGE_STORY_MAPS.map(map => {
-    const info = s.maps[map] || { macro: '' };
-    return `
-      <div class="task-card" style="--tqc: var(--lilac); cursor: default;">
-        <div class="tq-text" style="min-width: 0;">
-          <div class="tq-title">${escapeHtml(map)}</div>
-          <div class="challenge-map-row">
-            <select class="task-select" style="width: 100%;" onchange="setBountyMapMacro('${escJs(map)}', this.value)">
-              ${macroOpts(info.macro)}
-            </select>
-          </div>
-        </div>
-      </div>`;
-  }).join('');
-}
-
-async function toggleBountyEnabled(btn) {
-  const isOn = !btn.classList.contains('on');
-  bounceToggle(btn);
-  try {
-    await pywebview.api.set_bounty_enabled(isOn);
-  } catch (e) {}
-  await refreshBountyScreen();
-}
-
-async function toggleBountyMythic(btn) {
-  const isOn = !btn.classList.contains('on');
-  bounceToggle(btn);
-  try { await pywebview.api.set_bounty_mythic_only(isOn); } catch (e) {}
-  await refreshBountyScreen();
-}
-
-async function setBountyMythicMaxRerolls(value) {
-  try { await pywebview.api.set_bounty_mythic_max_rerolls(value); } catch (e) {}
-  await refreshBountyScreen();
-}
-
-async function setBountyPlayMode(playMode) {
-  try { await pywebview.api.set_bounty_play_mode(playMode); } catch (e) {}
-  await refreshBountyScreen();
-}
-
-async function setBountySummonBanner(banner) {
-  try { await pywebview.api.set_bounty_summon_banner(banner); } catch (e) {}
-  await refreshBountyScreen();
-}
-
-async function setBountyMapMacro(map, macro) {
-  try {
-    const result = await pywebview.api.set_bounty_map_macro(map, macro);
-    if (result.auto_disabled) {
-      addLog(`[Macro] Auto Bounty disabled: ${map} no longer has a usable Macro Operation.`);
-    }
-  } catch (e) {}
-  await refreshBountyScreen();
-}
-
-async function resetBountyRemaining() {
-  try { await pywebview.api.reset_bounty_remaining(); } catch (e) {}
-  await refreshBountyScreen();
 }
 
 // ---------------------------------------------------------------------------
@@ -4376,17 +4089,6 @@ function openChallengeMaps() {
 
 function closeChallengeMaps() {
   const m = document.getElementById('challenge-maps-modal');
-  if (m) m.style.display = 'none';
-}
-
-function openBountyMaps() {
-  const m = document.getElementById('bounty-maps-modal');
-  if (m) m.style.display = 'flex';
-  refreshBountyScreen();  // (re)populate Auto Bounty's independent map assignments
-}
-
-function closeBountyMaps() {
-  const m = document.getElementById('bounty-maps-modal');
   if (m) m.style.display = 'none';
 }
 
