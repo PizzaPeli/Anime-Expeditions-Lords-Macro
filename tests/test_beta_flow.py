@@ -38,6 +38,61 @@ def test_autoplay_ignores_old_toggle_and_follows_macro(macro, want_on):
     runner._ensure_autoplay.assert_called_once_with(1, stop, want_on)
 
 
+def test_autoplay_is_checked_after_portal_chooser_entry():
+    runner = MacroRunner(MagicMock(), MagicMock(), MagicMock())
+    runner._portal_entered_from = 'chooser'
+    runner._ensure_autoplay = MagicMock(return_value=True)
+    stop = threading.Event()
+
+    assert runner._settle_autoplay_for_match(1, stop, {
+        'mode': 'portals', 'macro': '',
+    })
+    runner._ensure_autoplay.assert_called_once_with(1, stop, True)
+
+
+def test_portal_unknown_screen_is_not_assumed_to_be_chooser():
+    runner = MacroRunner(MagicMock(), MagicMock(), MagicMock())
+    runner._portal_chooser_showing = MagicMock(return_value=False)
+    runner._portal_lobby_visible = MagicMock(return_value=False)
+    runner._portal_expect_lobby = False
+    runner._portal_expect_chooser = False
+    runner._open_portal_from_chooser = MagicMock()
+
+    assert not runner._reach_portal_activated(1, threading.Event(), {})
+    runner._open_portal_from_chooser.assert_not_called()
+
+
+def test_portal_known_continuation_may_use_chooser_before_anchor_draws():
+    runner = MacroRunner(MagicMock(), MagicMock(), MagicMock())
+    runner._portal_chooser_showing = MagicMock(return_value=False)
+    runner._portal_lobby_visible = MagicMock(return_value=False)
+    runner._portal_expect_lobby = False
+    runner._portal_expect_chooser = True
+    runner._open_portal_from_chooser = MagicMock(return_value=True)
+
+    assert runner._reach_portal_activated(1, threading.Event(), {})
+    runner._open_portal_from_chooser.assert_called_once()
+    assert runner._portal_expect_chooser is False
+
+
+def test_missing_portal_continuation_eventually_restarts_from_lobby():
+    runner = MacroRunner(MagicMock(), MagicMock(), MagicMock())
+    runner._portal_chooser_showing = MagicMock(side_effect=[False, False])
+    runner._portal_lobby_visible = MagicMock(side_effect=[False, True, True])
+    runner._portal_expect_lobby = False
+    runner._portal_expect_chooser = True
+    runner._open_portal_from_chooser = MagicMock(return_value=False)
+    runner._portal_recover_disconnect = MagicMock(return_value=False)
+    runner._ensure_lobby = MagicMock(return_value=False)
+    runner._portal_targets = MagicMock(return_value=[])
+    runner._portal_task_point = MagicMock(return_value=None)
+
+    assert not runner._reach_portal_activated(1, threading.Event(), {})
+    assert runner._portal_lobby_visible.call_count == 3
+    runner._open_portal_from_chooser.assert_called_once()
+    runner._ensure_lobby.assert_not_called()
+
+
 def test_autoplay_click_uses_located_button_and_hover(monkeypatch):
     runner = MacroRunner(MagicMock(), MagicMock(), MagicMock())
     runner._autoplay_state = MagicMock(side_effect=['off', 'on'])

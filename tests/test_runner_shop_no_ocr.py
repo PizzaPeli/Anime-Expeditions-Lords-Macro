@@ -194,6 +194,41 @@ def test_max_amount_checks_max_and_min_templates_before_clicking(monkeypatch):
     runner._mouse.click.assert_called_once_with(734, 388)
 
 
+def test_modal_close_requires_consecutive_clear_checks(monkeypatch):
+    runner = _runner([])
+    cancel = {"x": 579, "y": 420, "w": 181, "h": 28}
+    # One transient miss is followed by the modal being visible again.  Only
+    # the final three clear observations may confirm closure.
+    cancel_results = iter([None, cancel, None, None, None])
+
+    def find_image(_hwnd, name, **_kwargs):
+        if name == "shop_cancel":
+            return next(cancel_results)
+        return None
+
+    monkeypatch.setattr("core.runner_shop.vision.find_image", find_image)
+    monkeypatch.setattr("core.runner_shop.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr(runner, "_checkpoint", lambda _stop: False)
+
+    assert runner._shop_wait_for_modal_closed(1, threading.Event()) is True
+
+
+def test_modal_close_is_not_confirmed_when_no_template_can_be_checked(monkeypatch):
+    runner = _runner([])
+    times = iter([0.0, 0.0, 0.5, 1.0, 5.1])
+    monkeypatch.setattr("core.runner_shop.time.time", lambda: next(times))
+    monkeypatch.setattr("core.runner_shop.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr(runner, "_checkpoint", lambda _stop: False)
+    monkeypatch.setattr(
+        "core.runner_shop.vision.find_image",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            runner_shop.vision.TemplateNotFound("missing")
+        ),
+    )
+
+    assert runner._shop_wait_for_modal_closed(1, threading.Event()) is False
+
+
 def test_dynamic_sweep_resets_once_and_stops_at_the_physical_list_end(monkeypatch):
     runner = _runner([])
     items = [_item(), {**_item(), "key": "red_flower", "name": "Red Flower", "daily_maximum": 75}]
@@ -214,6 +249,9 @@ def test_dynamic_sweep_resets_once_and_stops_at_the_physical_list_end(monkeypatc
         runner, "_shop_process_visible_item",
         lambda _hwnd, _shop, item, _match, _stop: processed.append(item["key"]),
     )
+    # This test isolates dynamic list-end detection; terminal fallback has a
+    # dedicated test below.
+    monkeypatch.setattr(runner, "_shop_move_to_scroll_position", lambda *_args: False)
     monkeypatch.setattr("core.runner_shop.vision.ref_to_screen", lambda _hwnd, x, y: (x, y))
     monkeypatch.setattr("core.runner_shop.time.sleep", lambda _seconds: None)
 
@@ -233,6 +271,8 @@ def test_dynamic_sweep_keeps_unlocated_item_pending_without_a_fallback_click(mon
     monkeypatch.setattr(runner, "_checkpoint", lambda _stop: False)
     monkeypatch.setattr(runner, "_shop_discovery_signature", lambda _hwnd: b"same")
     monkeypatch.setattr(runner, "_shop_find_visible_item", lambda *_args: None)
+    monkeypatch.setattr(runner, "_shop_move_to_scroll_position", lambda *_args: True)
+    monkeypatch.setattr(runner, "_shop_find_slot_out_of_stock", lambda *_args: False)
     runner._shop_try_fallback_modal = MagicMock(
         side_effect=AssertionError("dynamic discovery must not manufacture a card match")
     )
@@ -243,3 +283,30 @@ def test_dynamic_sweep_keeps_unlocated_item_pending_without_a_fallback_click(mon
 
     runner._shop_try_fallback_modal.assert_not_called()
     assert saved_items[-1][2]["status"] == auto_shop.STATUS_PENDING_NOT_LOCATED
+
+
+def test_dynamic_sweep_recognizes_sold_out_card_when_its_icon_is_hidden(monkeypatch):
+    saved_items = []
+    runner = _runner(saved_items)
+    item = _item()
+    monkeypatch.setattr(runner, "_checkpoint", lambda _stop: False)
+    monkeypatch.setattr(runner, "_shop_discovery_signature", lambda _hwnd: b"same")
+    monkeypatch.setattr(runner, "_shop_find_visible_item", lambda *_args: None)
+    moved_to = []
+    monkeypatch.setattr(
+        runner,
+        "_shop_move_to_scroll_position",
+        lambda _hwnd, amount, _stop: moved_to.append(amount) or True,
+    )
+    monkeypatch.setattr(runner, "_shop_find_slot_out_of_stock", lambda *_args: True)
+    runner._shop_try_fallback_modal = MagicMock(
+        side_effect=AssertionError("sold-out fallback must never attempt a Buy")
+    )
+    monkeypatch.setattr("core.runner_shop.vision.ref_to_screen", lambda _hwnd, x, y: (x, y))
+    monkeypatch.setattr("core.runner_shop.time.sleep", lambda _seconds: None)
+
+    runner._shop_run_no_ocr_sweep(1, "gold_shop", [item], threading.Event())
+
+    assert moved_to == [runner_shop.SHOP_ITEM_SCROLL_AMOUNTS[item["key"]]]
+    assert saved_items[-1][2]["status"] == auto_shop.STATUS_OUT_OF_STOCK
+    runner._shop_try_fallback_modal.assert_not_called()

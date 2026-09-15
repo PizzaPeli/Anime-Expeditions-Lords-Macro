@@ -92,6 +92,14 @@ PORTAL_LOBBY_EXPECTED_WAIT = LOBBY_CHECK_TIMEOUT + LOBBY_CHECK_SECOND_CHANCE
 # Let Game Decide does not scan at all; Roblox's built-in selector owns it.
 PORTAL_OFFER_SCAN_DELAY = 120.0
 PORTAL_OFFER_FAST_SCAN_INTERVAL = 1.0
+# Portal auto-fishing. The rod icon is only a confirmation that the rod is
+# already equipped; it is never clicked. All geometry is in the normalized
+# 1152x756 game-client space and is scaled to the live Roblox window.
+PORTAL_FISHING_ICON_REGION = (760, 430, 392, 326)
+PORTAL_FISHING_ENABLE_POINT = (75, 670)
+PORTAL_FISHING_EQUIP_TIMEOUT = 8.0
+PORTAL_FISHING_EQUIP_SETTLE = 0.5
+PORTAL_FISHING_CLICK_INTERVAL = 1.0
 # Picking a portal out of a grid is the one click in this route with nothing
 # to verify against: the grid squares carry no art of their own, so a click
 # that never registered looks exactly like one that did, and the NEXT step
@@ -160,24 +168,9 @@ PORTAL_IN_MATCH_IMAGES = ("start_game_prompt", "nav_start_game",
 # The in-match Auto Play button. Its two states are the SAME button -- same
 # size, same green, same gear icon -- differing only in the word on it
 # ("Auto Play" vs "Auto Playing"), so they are easy to confuse: a template of
-# one can score well against the other. Two defences: a threshold well above
-# the default, and always testing the ON state first (see _autoplay_state),
-# so a near-tie resolves to "already on" and costs at most a missed toggle
-# rather than a click that turns autoplay back OFF.
 AUTOPLAY_MATCH_THRESHOLD = 0.93
-# Locating the button and deciding WHICH state it is are two different jobs
-# with different bars -- see _autoplay_state. The locate bar is deliberately
-# loose so a machine whose whole capture scores lower still finds the button;
-# the margin is what keeps "on" from being read as "off".
 AUTOPLAY_LOCATE_THRESHOLD = 0.80
-# How far outside the matched button box to crop before OCR-ing the label.
-# The OFF template's box ends where "Auto Play" ends, so the "ing" that
-# proves the button is ON lies just PAST it -- crop to the match exactly and
-# the only discriminating evidence is the part thrown away.
 AUTOPLAY_LABEL_PAD = (26, 8)
-# Upscale before OCR-ing that crop. 4x is what was measured to read the label
-# on real frames; the generic ocr_variants path effectively reaches 24x and
-# came back empty.
 AUTOPLAY_LABEL_UPSCALE = 4
 AUTOPLAY_BUTTON_TIMEOUT = 8.0   # how long to wait for the button after a round starts
 AUTOPLAY_TOGGLE_SETTLE = 0.6    # button label swap animation
@@ -292,6 +285,10 @@ class MacroRunner(BountyOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, Expedi
         # take from a single instantaneous look at a screen that may still be
         # loading. See PORTAL_LOBBY_EXPECTED_WAIT.
         self._portal_expect_lobby = False
+        # Set only by a continuing Portal result.  This lets the next setup
+        # distinguish a slow result screen from an unrelated, unrecognised
+        # screen without guessing that every non-lobby screen is the chooser.
+        self._portal_expect_chooser = False
         # "Leave at Minute" battle block (see runner_blocks): battle clock +
         # the flag it sets when it leaves. Real values set per match in
         # _play_one_match; defaults here so the Settings > Debug battle test
@@ -425,11 +422,6 @@ class MacroRunner(BountyOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, Expedi
         # False any time a run/test starts fresh so a leftover held key
         # from an interrupted previous run can never bleed into a new one.
         self._quick_place_shift_down = False
-        # Where the last Auto Play state read came from: "label" (the button
-        # was OCR-ed, trustworthy) or "template" (scores only, which cannot
-        # tell "Auto Play" from "Auto Playing" -- see _autoplay_state). The
-        # retry loop reads this: a blind retry on a TOGGLE undoes its own
-        # first click, which is exactly the 0.28.9 double-click.
         self._autoplay_state_source = "template"
         self._autoplay_template_warned = False
         # The running #ordinal counter place_unit blocks share -- Pre Start
@@ -1246,6 +1238,11 @@ class MacroRunner(BountyOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, Expedi
                                             scroll_nudges, webhook):
                 if stop_event.is_set():
                     return False
+                # A setup-time disconnect can replace Roblox with a freshly
+                # launched window.  Recover against that window, not the dead
+                # handle that entered this attempt.
+                if self._current_hwnd and wm.is_window(self._current_hwnd):
+                    hwnd = self._current_hwnd
                 if not self._recover_to_lobby(hwnd, stop_event):
                     return not stop_event.is_set()
                 continue
@@ -1646,6 +1643,10 @@ class MacroRunner(BountyOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, Expedi
                 return True  # finished every repeat cleanly
 
             self._log(f'[Macro] Task {task_index}/{task_count} hit a problem mid-run -- recovering to the lobby.')
+            # Disconnect recovery may have re-docked a new Roblox process.
+            # The same-task retry must use it for the lobby confirmation.
+            if self._current_hwnd and wm.is_window(self._current_hwnd):
+                hwnd = self._current_hwnd
             if not self._recover_to_lobby(hwnd, stop_event):
                 return not stop_event.is_set()  # couldn't even get back to the lobby -- nothing left to retry
 
@@ -1678,6 +1679,17 @@ class MacroRunner(BountyOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, Expedi
             self._click_return_to_lobby_if_found(hwnd, stop_event)
         if self._checkpoint(stop_event):
             return False
+        # Auto Shop closes its panel before asking for recovery, so it can
+        # already be standing on a perfectly usable lobby here.  Recognize
+        # that directly instead of reporting a zero-click Back pass and then
+        # performing a second, long lobby check.
+        try:
+            lobby_match, _ = vision.find_image_any(hwnd, NAV_PLAY_IMAGE_NAMES)
+        except vision.TemplateNotFound:
+            lobby_match = None
+        if lobby_match is not None:
+            self._log("[Macro] Already on the lobby -- no recovery clicks needed.")
+            return True
         self._spam_back_until_gone(hwnd, stop_event)
         if self._checkpoint(stop_event):
             return False
@@ -1938,38 +1950,11 @@ class MacroRunner(BountyOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, Expedi
         return not self._checkpoint(stop_event)
 
     def _autoplay_state(self, hwnd):
-        """"on" / "off" / None (button not on screen).
-
-        DECIDED BY READING THE LABEL, not by which template matched. The two
-        button images differ only in their text -- "Auto Play" versus "Auto
-        Playing" -- and one is a literal prefix of the other, so template
-        matching cannot separate them reliably in EITHER direction. Both
-        failures have now been observed on real frames:
-
-          * An ON button matches the off art, because "Auto Play" is the
-            first two thirds of "Auto Playing" (off 0.86 vs on 0.81 on a
-            measured ON frame). Picking the higher score reads ON as OFF and
-            clicks auto-play off mid-match.
-          * An OFF button matches the on art too. Measured on the two
-            0.28.8 Challenge frames, with auto-play verifiably OFF both
-            times: `autoplay_off_label` 0.956, `autoplay_on_label` 0.776 and
-            **0.810**. The old rule checked ON first at a relaxed 0.80 bar
-            and returned on the first hit, so 0.810 cleared it and the run
-            logged "Auto Play is already on -- nothing to do" over a button
-            that was off. The user had to switch it on by hand.
-
-        Templates therefore only LOCATE the button; OCR says what it says.
-        Reading "Auto Playing" is ON, reading "Auto Play" without the "ing"
-        is OFF, and that distinction is unambiguous at a 4x upscale (measured
-        on both frames above). Template scores are still the fallback for a
-        machine with no OCR at all, and keep the old ON-first asymmetry
-        there, whose worst case is leaving auto-play as it already was.
-        """
+        """Return the button state, using the working label check from the
+        supplied older customization before falling back to its templates."""
         try:
             gray = vision.capture_game_gray(hwnd)
         except Exception:
-            gray = None
-        if gray is None:
             return None
 
         scores = {}
@@ -1978,80 +1963,41 @@ class MacroRunner(BountyOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, Expedi
                 probe = vision.find_in_gray_multiscale_diagnostic(gray, name)
             except vision.TemplateNotFound:
                 continue
-            top = probe.get("best")
-            if top is not None:
-                scores[name] = top
-
+            if probe.get("best") is not None:
+                scores[name] = probe["best"]
         if not scores:
             return None
-        best_name = max(scores, key=lambda n: scores[n]["score"])
-        best = scores[best_name]
+        best = max(scores.values(), key=lambda match: match["score"])
         if best["score"] < AUTOPLAY_LOCATE_THRESHOLD:
-            # Neither label is anywhere on this screen: no button to read.
             return None
 
         read = self._autoplay_read_label(hwnd, best)
-        detail = ", ".join(f"{n} {scores[n]['score']:.2f}" for n in sorted(scores))
         if read is not None:
             self._autoplay_state_source = "label"
-            self._log(f"[Macro] Auto Play button reads \"{read[1]}\" -> {read[0]} ({detail}).")
+            self._log(f"[Macro] Auto Play button reads \"{read[1]}\" -> {read[0]}.")
             return read[0]
-        self._autoplay_state_source = "template"
 
-        # No usable read (no OCR engine, or the crop came back blank). Fall
-        # back to the old template rule, ON first for the reason above.
+        self._autoplay_state_source = "template"
         for name, state in (("autoplay_on", "on"), ("autoplay_off", "off")):
             if scores.get(name, {}).get("score", 0.0) >= AUTOPLAY_LOCATE_THRESHOLD:
-                if not self._autoplay_template_warned:
-                    self._autoplay_template_warned = True
-                    self._log(f"[Macro] Couldn't read the Auto Play label ({detail}) -- falling back "
-                               "to template scores, which cannot tell \"Auto Play\" from \"Auto "
-                               "Playing\" reliably. Auto Play will be set at most once per entry "
-                               "rather than retried, so it cannot toggle itself back.")
                 return state
         return None
 
     def _autoplay_read_label(self, hwnd, match: dict):
-        """OCR the located Auto Play button -> ("on"/"off", text) or None.
-
-        Its own small OCR rather than portal_scan.ocr_variants: that helper
-        upscales 4x and then hands the result to ocr_best, whose
-        candidate_masks upscales SIX TIMES AGAIN -- 24x on a 150x42 button is
-        a 3600x1008 image through a bilateral filter, and it came back empty
-        every time in the 0.28.9 run (the "button reads" line never once
-        appears in that log, so every state read silently fell back to the
-        templates this method exists to replace).
-
-        The recipe below is the one that was actually measured against the
-        two saved frames: 4x cubic, then plain / CLAHE / Otsu / inverted, psm
-        6. It read 'o Auto Play' and 'oS" Auto Play |' -- correctly off, on
-        both.
-
-        The crop is the matched box padded outward, because the whole point
-        is the "ing" that the OFF template's box stops just short of --
-        cropping to the match exactly would cut off the only evidence that
-        separates the two states.
-        """
+        """Read the Auto Play label using the older customization's recipe."""
         try:
             frame = vision.capture_game_bgr(hwnd)
-        except Exception:
-            frame = None
-        if frame is None:
-            return None
-        h, w = frame.shape[:2]
-        pad_x, pad_y = AUTOPLAY_LABEL_PAD
-        x1 = max(0, int(match["x"]) - pad_x)
-        y1 = max(0, int(match["y"]) - pad_y)
-        x2 = min(w, int(match["x"]) + int(match["w"]) + pad_x)
-        y2 = min(h, int(match["y"]) + int(match["h"]) + pad_y)
-        crop = frame[y1:y2, x1:x2]
-        if crop.size == 0:
-            return None
-        try:
-            pytesseract = ocr.get_pytesseract()
-        except Exception:
-            pytesseract = None
-        try:
+            if frame is None:
+                return None
+            h, w = frame.shape[:2]
+            pad_x, pad_y = AUTOPLAY_LABEL_PAD
+            x1 = max(0, int(match["x"]) - pad_x)
+            y1 = max(0, int(match["y"]) - pad_y)
+            x2 = min(w, int(match["x"]) + int(match["w"]) + pad_x)
+            y2 = min(h, int(match["y"]) + int(match["h"]) + pad_y)
+            crop = frame[y1:y2, x1:x2]
+            if crop.size == 0:
+                return None
             big = cv2.resize(crop, None, fx=AUTOPLAY_LABEL_UPSCALE, fy=AUTOPLAY_LABEL_UPSCALE,
                              interpolation=cv2.INTER_CUBIC)
             gray = cv2.cvtColor(big, cv2.COLOR_BGR2GRAY)
@@ -2060,6 +2006,11 @@ class MacroRunner(BountyOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, Expedi
             prepared = (big, clahe, otsu, cv2.bitwise_not(otsu))
         except Exception:
             return None
+
+        try:
+            pytesseract = ocr.get_pytesseract()
+        except Exception:
+            pytesseract = None
         for image in prepared:
             try:
                 text = (ocr.ocr_mask(pytesseract, image, "--psm 6") or "").strip()
@@ -2067,9 +2018,6 @@ class MacroRunner(BountyOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, Expedi
                 continue
             squashed = re.sub(r"[^a-z]", "", text.lower())
             if "playing" in squashed or "plaving" in squashed:
-                # "plaving": this font's stylised "y" reads as a "v" often
-                # enough to be worth naming rather than losing the state
-                # over.
                 return "on", text
             if "play" in squashed:
                 return "off", text
@@ -2081,7 +2029,7 @@ class MacroRunner(BountyOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, Expedi
         This is a check, not a blind click: the button is read first, and
         clicked only when it is actually in the wrong state -- clicking it
         unconditionally would toggle autoplay OFF on every task that already
-        had it on. Verified after clicking (the label swaps immediately) and
+        had it on. Verified after clicking with the button templates and
         retried a couple of times, because one missed click here means a
         whole match played the wrong way.
 
@@ -2115,9 +2063,13 @@ class MacroRunner(BountyOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, Expedi
             self._set_status(action=f"Turning Auto Play {wanted}...")
             self._log(f"[Macro] Auto Play is {state}, this task wants it {wanted} -- clicking it "
                       f"(attempt {attempt}/{AUTOPLAY_VERIFY_ATTEMPTS}).")
-            # Same relaxed bar the state read used -- identifying the button
-            # at 0.80 and then refusing to click it at 0.93 would find it and
-            # then fail to act on it.
+            # The state read already located this exact button at the relaxed
+            # locate bar and then disambiguated ON/OFF with OCR. Requiring the
+            # stricter template-only bar again here makes a readable button
+            # miss, sends us to a fixed coordinate, and is especially brittle
+            # across machines. Hover into the detected button as well: Roblox
+            # can visibly highlight a teleported cursor while still swallowing
+            # the click.
             if self._click_found_image(hwnd, image, AUTOPLAY_BUTTON_TIMEOUT, stop_event,
                                        shuffle=True, threshold=AUTOPLAY_LOCATE_THRESHOLD) is None:
                 # The state read above says the button IS there, so a failed
@@ -2139,23 +2091,8 @@ class MacroRunner(BountyOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, Expedi
                 self._log(f"[Macro] Auto Play is now {wanted}.")
                 return True
             if self._autoplay_state_source != "label":
-                # The read that says "still wrong" is a template score, and a
-                # template score cannot tell these two labels apart -- an OFF
-                # button matches `autoplay_on` at up to 0.89, which is what
-                # the 0.28.9 log shows twice in a row:
-                #
-                #   Auto Play is on, this task wants it off -- clicking it (1/3).
-                #   Found "autoplay_on" (score 0.81) -- clicking it.
-                #   Auto Play is on, this task wants it off -- clicking it (2/3).
-                #   Found "autoplay_on" (score 0.89) -- clicking it.
-                #
-                # The first click worked. The second undid it. On a toggle,
-                # an unreliable verification is WORSE than no verification:
-                # one click at least lands on the right side of the coin.
-                # So click once and stop when we cannot actually read it.
                 self._log("[Macro] Clicked Auto Play once, but the button can't be read reliably "
-                          "enough to verify (template scores only) -- leaving it there rather than "
-                          "clicking a toggle a second time and undoing it.")
+                          "enough to verify -- leaving it there rather than clicking a toggle again.")
                 return True
             if state is None:
                 # Clicked, and now neither label matches -- most likely the
@@ -2174,20 +2111,15 @@ class MacroRunner(BountyOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, Expedi
         before Pre Start -- so the run is auto-playing from its first wave
         rather than from whenever the macro got round to it.
 
-        Portals entered straight from the post-run chooser are skipped: Auto
-        Play survives from one portal into the next and is reset only by
-        returning to the lobby, so clicking it on a chooser entry would toggle
-        it OFF mid-chain.
+        This is also run for portals entered through the post-run chooser.
+        Auto Play normally survives that transition, but reading the button is
+        harmless and catches the cases where it did not.  _ensure_autoplay
+        clicks only when the readable state disagrees with the task.
         """
         # Expedition has no Auto Play button at all, so looking for one only
         # burns AUTOPLAY_BUTTON_TIMEOUT on every entry before concluding what
         # was known before it started.
         if task.get("mode") == "expedition":
-            return True
-        if (task.get("mode") == "portals"
-                and getattr(self, "_portal_entered_from", "lobby") == "chooser"):
-            self._log("[Macro] Came straight from the portal chooser -- leaving Auto Play as the "
-                      "last run left it (it only resets via the lobby).")
             return True
         return self._ensure_autoplay(hwnd, stop_event, not bool(task.get("macro")))
 
@@ -2213,15 +2145,10 @@ class MacroRunner(BountyOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, Expedi
         nobody playing it, and the run lost a stage it had already set up
         correctly. Verified on, then off again by the time the waves started.
 
-        Nothing here is blind. The button is READ first (label OCR, exactly as
-        _ensure_autoplay does) and clicked only when it genuinely reads the
-        wrong way, so this cannot toggle off a run that is already
-        auto-playing. That is also why it is safe on a portal entered from the
-        chooser, which _settle_autoplay_for_match skips: convention 9 is about
-        not touching the button BLIND on a chooser entry, and a read-then-act
-        check is not a blind touch. Expedition has no Auto Play button at all,
-        so it is skipped rather than spending AUTOPLAY_BUTTON_TIMEOUT proving
-        it.
+        This uses the same template-only state check as map entry, avoiding
+        any Tesseract work while the match is starting. Expedition has no Auto
+        Play button at all, so it is skipped rather than spending
+        AUTOPLAY_BUTTON_TIMEOUT proving it.
         """
         if task.get("mode") == "expedition":
             return
@@ -2512,9 +2439,30 @@ class MacroRunner(BountyOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, Expedi
         portal_offer_fast_last_check = 0.0
         battle_started_at = time.monotonic()
         portal_offer_selected = False
+        portal_fishing_active = False
+        portal_fishing_last_click = 0.0
+
+        # Fishing is a Portal-only, once-per-round action. Check first because
+        # the rod can remain equipped across consecutive portal runs; toggling
+        # the bottom-left button in that state would put it away.
+        if task and task.get("mode") == "portals":
+            portal_fishing_active = self._start_portal_fishing(hwnd, stop_event)
+            if portal_fishing_active:
+                portal_fishing_last_click = time.monotonic()
+            if self._checkpoint(stop_event):
+                return None
         while deadline is None or time.time() < deadline:
             if self._checkpoint(stop_event):
                 return None
+
+            # Fishing requires repeated input after the rod is equipped. Keep
+            # clicking the configured water spot for the entire live Portal
+            # round instead of treating the first cast as the whole action.
+            now = time.monotonic()
+            if (portal_fishing_active and
+                    now - portal_fishing_last_click >= PORTAL_FISHING_CLICK_INTERVAL):
+                self._click_portal_fishing_spot(hwnd)
+                portal_fishing_last_click = now
 
             # Leaving an Infinite run at its requested wave is a hard task
             # boundary, so check it before Battle blocks. Upgrade Unit can
@@ -2611,7 +2559,19 @@ class MacroRunner(BountyOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, Expedi
                         return "left"
                     self._log("[Macro] Play button visible mid-match -- confirming on the next poll.")
 
+            previous_afk_click = afk_clicked_at
             afk_clicked_at = self._dismiss_afk_chamber(hwnd, afk_clicked_at)
+            if afk_clicked_at != previous_afk_click:
+                # Exiting the chamber lands in the lobby.  End this attempt
+                # immediately so _run_task restarts the SAME task through its
+                # full lobby setup instead of continuing to poll a dead match.
+                # This flag is especially important for Portals: without it,
+                # the next setup can mistake an old/post-run-looking screen for
+                # the chooser and follow the wrong route.
+                self._portal_expect_lobby = True
+                self._log("[Macro] Left the AFK Chamber -- restarting the current task from the lobby.")
+                self._set_status(action="AFK Chamber exited -- restarting current task...")
+                return None
 
             if watch_close_popup:
                 self._click_close_popup_if_found(hwnd)
@@ -3632,6 +3592,10 @@ class MacroRunner(BountyOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, Expedi
         self._send_event_webhook(webhook, task, "Disconnected -- Restarting Roblox",
                                    f"{why.capitalize()}. Closing the stuck client and launching a fresh one.",
                                    0xE8935A, screenshot_path)
+        # A successful rejoin always targets the lobby.  Preserve that fact for
+        # the next attempt so Portal mode cannot interpret the recovery screen
+        # as its post-run chooser.
+        self._portal_expect_lobby = True
         self._attempt_rejoin(hwnd, stop_event)
 
     def _send_event_webhook(self, webhook: dict, task: dict, title: str, description: str, color: int,
@@ -5490,6 +5454,53 @@ class MacroRunner(BountyOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, Expedi
             return "fast"
         return "let_game_decide"
 
+    def _portal_fishing_icon(self, hwnd):
+        """Return the lower-right rod-equipped indicator, or None."""
+        try:
+            return vision.find_image(
+                hwnd, "fishing_icon", region=PORTAL_FISHING_ICON_REGION)
+        except vision.TemplateNotFound:
+            return None
+
+    def _click_portal_fishing_spot(self, hwnd) -> None:
+        x, y = self._cxy("portal_fishing_spot")
+        sx, sy = vision.ref_to_screen(hwnd, x, y)
+        self._mouse.click(sx, sy)
+
+    def _start_portal_fishing(self, hwnd, stop_event: threading.Event) -> bool:
+        """Equip the fishing rod when needed, confirm it, then begin fishing."""
+        equipped = self._portal_fishing_icon(hwnd) is not None
+        if equipped:
+            self._log("[Macro] Fishing rod is already equipped -- leaving the enable button alone.")
+        else:
+            self._set_status(action="Equipping fishing rod...")
+            self._log("[Macro] Fishing rod is not equipped -- clicking the fishing enable button.")
+            if not wm.activate_window(hwnd):
+                self._log("[Macro] Couldn't confirm focus before enabling fishing.")
+            sx, sy = vision.ref_to_screen(hwnd, *PORTAL_FISHING_ENABLE_POINT)
+            self._mouse.click(sx, sy)
+            self._interruptible_sleep(PORTAL_FISHING_EQUIP_SETTLE, stop_event)
+
+            deadline = time.time() + PORTAL_FISHING_EQUIP_TIMEOUT
+            while time.time() < deadline and not self._checkpoint(stop_event):
+                if self._portal_fishing_icon(hwnd) is not None:
+                    equipped = True
+                    break
+                self._interruptible_sleep(PORTAL_FISHING_EQUIP_SETTLE, stop_event)
+
+        if not equipped:
+            self._log('[Macro] Fishing rod did not appear in the lower-right corner -- not casting. '
+                      'Check Assets/ui/fishing_icon for a matching capture.')
+            return False
+        if self._checkpoint(stop_event):
+            return False
+
+        self._set_status(action="Casting fishing rod...")
+        self._click_portal_fishing_spot(hwnd)
+        x, y = self._cxy("portal_fishing_spot")
+        self._log(f"[Macro] Fishing rod confirmed -- repeatedly clicking fishing spot ({x}, {y}).")
+        return True
+
     def _poll_fast_portal_offer(self, hwnd, stop_event, battle_started_at: float,
                                 last_check: float):
         """Fast mode: poll every second and take the first card, uninspected."""
@@ -5853,16 +5864,33 @@ class MacroRunner(BountyOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, Expedi
         # later, unrelated entry.
         expect_lobby = self._portal_expect_lobby
         self._portal_expect_lobby = False
-        if not post_run:
+        expect_chooser = self._portal_expect_chooser
+        self._portal_expect_chooser = False
+        if expect_lobby:
+            # Disconnect and AFK-Chamber recovery explicitly land in the
+            # lobby.  That known state must outrank any stale/false-positive
+            # post-run artwork, otherwise Portal mode can resume the chooser
+            # route and spend or select the wrong portal.
+            if not self._portal_lobby_visible(hwnd, stop_event, expected=True):
+                self._log("[Macro] Recovery expected the lobby, but Play could not be confirmed -- "
+                          "not treating this as a portal result screen.")
+                return False
+            post_run = False
+            self._log("[Macro] Recovery confirmed the lobby -- restarting this Portal task from inventory.")
+        elif not post_run:
             on_lobby = self._portal_lobby_visible(hwnd, stop_event, expect_lobby)
             if on_lobby:
                 self._log("[Macro] On the lobby -- opening a portal from the inventory.")
-            else:
-                # Not the lobby, and the post-run anchors didn't match.
-                self._log("[Macro] Not on the lobby and the post-run anchors didn't match -- "
-                          "assuming the result screen is up and trying the chooser route "
-                          "anyway (it falls back to the lobby if that's wrong).")
+            elif expect_chooser:
+                # A continuing Portal result is the only safe reason to use
+                # the chooser when its visual anchors have not drawn/matched.
+                self._log("[Macro] The previous portal result expects the chooser; its anchors "
+                          "haven't matched yet, so continuing through that known route.")
                 post_run = True
+            else:
+                self._log("[Macro] Neither the lobby nor the portal chooser could be confirmed -- "
+                          "not guessing which screen is open.")
+                return False
 
         if post_run:
             self._log("[Macro] Post-run portal screen is on screen -- taking the next portal from "
@@ -5890,6 +5918,16 @@ class MacroRunner(BountyOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, Expedi
             # So: stop, and say exactly what to check.
             if self._portal_recover_disconnect(hwnd, stop_event):
                 return False
+            # The chooser may disappear because Roblox returned to the lobby
+            # on its own (for example after the last available continuation),
+            # and that transition can finish only after the chooser attempts
+            # have timed out.  Give the lobby one final bounded check here.
+            # If it appears, restart this portal entry through the safe named
+            # inventory route instead of stopping the whole macro.
+            if self._portal_lobby_visible(hwnd, stop_event, expected=False):
+                self._log("[Macro] The portal continuation could not be found, but the lobby is "
+                          "now visible -- restarting this Portal run from the lobby.")
+                return self._reach_portal_activated(hwnd, stop_event, task)
             self._log("[Macro] Couldn't start a portal from the chooser. NOT falling back to the "
                       "lobby inventory: that slot is a fixed coordinate and the grid re-flows as "
                       "portals are spent, so it would likely open a different portal than the one "
@@ -6052,6 +6090,10 @@ class MacroRunner(BountyOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, Expedi
         # chooser route first, the lobby route as its fallback).
         self._log("[Macro] The 3-card portal choice was already made during the round (this "
                   "macro made it), so it is not looked for again after Victory/Defeat.")
+        # The next repeat starts from this exact result screen.  Carry that
+        # fact across setup rather than inferring "chooser" from the absence
+        # of a lobby match (which can also happen while the lobby is drawing).
+        self._portal_expect_chooser = True
         self._set_status(action="Portal result complete -- preparing next Portal run...")
         return True
 

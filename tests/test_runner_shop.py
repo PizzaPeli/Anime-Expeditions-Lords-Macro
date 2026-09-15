@@ -397,7 +397,7 @@ def test_final_buy_that_does_not_close_is_cancelled_at_the_right_edge(monkeypatc
     runner = _runner()
     cancel = {"x": 579, "y": 420, "w": 181, "h": 28}
     monkeypatch.setattr(runner, "_checkpoint", lambda _stop: False)
-    monkeypatch.setattr(runner, "_wait_for_image_gone", lambda *_args: False)
+    monkeypatch.setattr(runner, "_shop_wait_for_modal_closed", lambda *_args: False)
     monkeypatch.setattr(
         "core.runner_shop.vision.ref_to_screen",
         lambda _hwnd, x, y: (x, y),

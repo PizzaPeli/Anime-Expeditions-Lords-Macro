@@ -207,7 +207,6 @@ MACRO_COORD_DEFAULTS = {
     # reliably.
     "team_button_x": None, "team_button_y": None,
     "screen_middle_x": 576, "screen_middle_y": 378,
-    "unit_info_reset_x": 3, "unit_info_reset_y": 3,
     # Used only if the Daily Challenge tab image cannot be found. It was
     # previously a hidden runtime coordinate, which made it impossible to
     # repair after a Roblox UI shift.
@@ -239,6 +238,8 @@ MACRO_COORD_DEFAULTS = {
     "portal_start_x": 681, "portal_start_y": 519,
     "portal_select_x": 292, "portal_select_y": 581,
     "portal_exit_x": 701, "portal_exit_y": 581,
+    # Water/bobber point repeatedly clicked while a Portal battle is live.
+    "portal_fishing_spot_x": 420, "portal_fishing_spot_y": 200,
     # The in-match Auto Play button ("Plays The Map" on a task). Fallback for
     # when neither autoplay_on nor autoplay_off matches -- the button doesn't
     # move within a match, so a fixed point is safe here.
@@ -2245,6 +2246,7 @@ class Api:
         if not hwnd or not wm.is_window(hwnd):
             return {"ok": False, "reason": "no_roblox"}
 
+        self._show_dashboard_for_game_focus()
         wm.show_window(hwnd)
         wm.activate_window(hwnd)
 
@@ -2327,6 +2329,7 @@ class Api:
         hwnd = self.game_hwnd
         if not hwnd or not wm.is_window(hwnd):
             return {"ok": False, "reason": "no_roblox"}
+        self._show_dashboard_for_game_focus()
         wm.show_window(hwnd)
         wm.activate_window(hwnd)
 
@@ -2921,7 +2924,7 @@ class Api:
         win = webview.create_window(
             "Mouse Coordinates | Lord's Macro",
             url=MOUSE_POSITION_WINDOW_HTML,
-            width=330, height=210,
+            width=400, height=520,
             on_top=True,
             background_color="#11131c",
             js_api=self,
@@ -2932,6 +2935,20 @@ class Api:
             self._mouse_position_window = None
         win.events.closed += _on_closed
         return {"ok": True}
+
+    def copy_current_mouse_position(self) -> dict:
+        """Copy the live Roblox-relative point without stealing game focus."""
+        pos = self.get_cursor_game_pos()
+        if not pos.get("ok") or not pos.get("inside"):
+            return {"ok": False, "reason": pos.get("reason", "outside_roblox")}
+        result = self.write_clipboard_text(f'{pos["x"]}, {pos["y"]}')
+        if result.get("ok") and self._mouse_position_window:
+            try:
+                self._mouse_position_window.evaluate_js(
+                    f'window.showHotkeyCopied && window.showHotkeyCopied({pos["x"]}, {pos["y"]})')
+            except Exception:
+                pass
+        return {**result, "x": pos["x"], "y": pos["y"]}
 
     def push_ui(self, js_call: str) -> None:
         if not self._window:
@@ -3721,10 +3738,27 @@ class Api:
         hwnd = self.game_hwnd
         if not hwnd or not wm.is_window(hwnd):
             return 0
+        self._show_dashboard_for_game_focus()
         wm.show_window(hwnd)
         wm.activate_window(hwnd)
         time.sleep(FOCUS_SETTLE)
         return hwnd
+
+    def _show_dashboard_for_game_focus(self) -> None:
+        """Reveal the game slot before an API action foregrounds Roblox.
+
+        UI callers normally make this switch themselves, but API calls can
+        arrive while Settings, Tasks, or Macro Manager is still active. In
+        that state Roblox becomes focused behind an editor panel, which looks
+        like a stuck UI and obscures the live action. Keep the transition at
+        the focus boundary so every live-input path gets the same layout.
+        """
+        try:
+            if self._window:
+                self._window.evaluate_js(
+                    "window.switchScreen && window.switchScreen('dashboard')")
+        except Exception:
+            pass
 
     def _return_focus_to_panel(self) -> None:
         """Give focus back to the dashboard when a Debug action is done.
@@ -3961,8 +3995,9 @@ class Api:
         if not hwnd or not wm.is_window(hwnd):
             return {"ok": False, "reason": "no_roblox"}
         # Live input must be run from the Dashboard: Settings obscures the
-        # embedded game on some dock modes. The caller makes that switch;
-        # this remains the backend guard for non-UI callers.
+        # embedded game on some dock modes. This backend guard covers both
+        # ordinary UI use and non-UI callers.
+        self._show_dashboard_for_game_focus()
         wm.show_window(hwnd)
         wm.activate_window(hwnd)
 
@@ -3992,6 +4027,7 @@ class Api:
         # Same focus dance as reward-scroll/path-recording: the click that
         # triggered this left the macro's own panel focused, and Roblox only
         # processes mouse/keyboard input while it's the foreground window.
+        self._show_dashboard_for_game_focus()
         wm.show_window(hwnd)
         wm.activate_window(hwnd)
 
@@ -4019,6 +4055,7 @@ class Api:
         except (TypeError, ValueError):
             return {"ok": False, "reason": "bad_hold_ms"}
 
+        self._show_dashboard_for_game_focus()
         wm.show_window(hwnd)
         wm.activate_window(hwnd)
 
@@ -4048,6 +4085,7 @@ class Api:
         except (TypeError, ValueError):
             return {"ok": False, "reason": "bad_hold_ms"}
 
+        self._show_dashboard_for_game_focus()
         wm.show_window(hwnd)
         wm.activate_window(hwnd)
 
@@ -4402,6 +4440,7 @@ class Api:
 
         # Same focus dance as reward-scroll/camera-setup/path-recording:
         # Roblox only processes WASD while it's actually the focused window.
+        self._show_dashboard_for_game_focus()
         wm.show_window(hwnd)
         wm.activate_window(hwnd)
 
@@ -4694,6 +4733,7 @@ class Api:
                 # was silently going nowhere regardless of cursor position or
                 # timing. Same activate_window() the undock path already uses
                 # to hand Roblox real input focus.
+                self._show_dashboard_for_game_focus()
                 wm.activate_window(hwnd)
                 time.sleep(0.1)
 
@@ -5023,6 +5063,13 @@ def _launch_ui():
                     # closed Roblox". The reopen + resume happen further down.
                     if api.runner.is_running():
                         api._resume_after_relaunch = True
+                        # The old run still owns the dead hwnd.  Letting it
+                        # continue its own disconnect recovery races the dock
+                        # watchdog: it can mistake the freshly-docked client
+                        # for the wedged one and close it again.  End that run
+                        # now; the handoff below starts a clean queue pass as
+                        # soon as the replacement window is docked.
+                        api.runner.stop()
 
                 # Explicit Un-Attach (Settings > Debug): skip auto-detect
                 # entirely until the user picks a window and clicks Attach
@@ -5232,12 +5279,12 @@ def _launch_ui():
             try:
                 if (api._resume_after_relaunch and api.docker.docked
                         and api.game_hwnd and wm.is_window(api.game_hwnd)):
-                    # Cleared either way -- the still-live runner already
-                    # caught the re-dock by itself (nothing to do here), or it
-                    # had given up and a fresh run starts below.
+                    # A stopped runner can take a tick to unwind.  Keep the
+                    # restart armed until it is fully gone rather than
+                    # clearing it and assuming that old run recovered.
                     still_running = api.runner.is_running()
-                    api._resume_after_relaunch = False
                     if not still_running:
+                        api._resume_after_relaunch = False
                         # Not a resume: start_macro() re-enters the queue at
                         # the first task, so an interrupted task loses the
                         # repeats it had already done. Say that plainly rather
@@ -5272,6 +5319,7 @@ def _launch_ui():
             "screen_snapshot": lambda: api.push_ui("captureScreenSnapshot"),
             "image_manager": lambda: api.push_ui("toggleImageManagerHotkey"),
             "toggle_compact": lambda: api.push_ui("toggleCompactStrip"),
+            "copy_mouse_position": lambda: api.copy_current_mouse_position(),
             # NOT routed through push_ui/JS: stopping has to win over
             # everything else regardless of what the UI thread is doing
             # (mid screen-switch animation, waiting on an evaluate_js round
@@ -5283,7 +5331,8 @@ def _launch_ui():
             "macro_stop": lambda: api.stop_macro(),
         }
         for action, fn in actions.items():
-            key = hotkeys.get(action) or HOTKEY_DEFAULTS.get(action, "")
+            key = ("ctrl+shift+c" if action == "copy_mouse_position"
+                   else hotkeys.get(action) or HOTKEY_DEFAULTS.get(action, ""))
             if not key:
                 continue
             try:

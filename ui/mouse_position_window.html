@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Mouse Coordinates | Lord's Macro</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    *{box-sizing:border-box} body{margin:0;height:100vh;padding:18px;background:var(--bg-deep);color:var(--text);font-family:system-ui,sans-serif;display:flex;flex-direction:column;gap:12px;overflow:hidden}.label{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text-muted)}.live{text-align:center;padding:10px 12px 12px;border:1px solid var(--border);border-radius:12px;background:var(--bg-card)}#coords{font:700 38px ui-monospace,Consolas,monospace;color:var(--teal);letter-spacing:.02em}.hint{font-size:11px;color:var(--text-muted);text-align:center;min-height:17px}.shortcut{display:inline-flex;gap:4px;align-items:center;justify-content:center;margin-top:7px;font-size:11px;color:var(--text-dim)}kbd{padding:2px 5px;border:1px solid var(--border);border-bottom-width:2px;border-radius:5px;background:var(--bg-surface);font:700 10px ui-monospace,Consolas,monospace;color:var(--text)}.saved-head{display:flex;align-items:center;justify-content:space-between}.count{font-size:10px;color:var(--text-muted)}#saved{min-height:0;overflow-y:auto;border:1px solid var(--border);border-radius:10px;background:var(--bg-card);padding:5px}.coord-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;padding:6px 8px;border-bottom:1px solid var(--border);font-size:11px}.coord-row:last-child{border-bottom:0}.coord-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-dim)}.coord-value{font:600 11px ui-monospace,Consolas,monospace;color:var(--text)}
+  </style>
+</head>
+<body>
+  <div class="live">
+    <div class="label">Live mouse coordinates</div>
+    <div id="coords">—, —</div>
+    <div id="hint" class="hint">Hover over the docked Roblox window</div>
+    <div class="shortcut"><kbd>Ctrl</kbd><span>+</span><kbd>Shift</kbd><span>+</span><kbd>C</kbd><span>to copy</span></div>
+  </div>
+  <div class="saved-head"><div class="label">Saved macro coordinates</div><div id="count" class="count"></div></div>
+  <div id="saved"><div class="coord-row"><span class="coord-name">Loading…</span></div></div>
+  <script>
+    let timer=null;
+    function titleFor(key){return key.replace(/_(x|y|w|h)$/,'').split('_').map(s=>s.charAt(0).toUpperCase()+s.slice(1)).join(' ')}
+    function renderSaved(values){
+      const saved=document.getElementById('saved'),rows=[],used=new Set();
+      Object.keys(values||{}).sort().forEach(key=>{if(used.has(key))return;const match=key.match(/^(.*)_x$/),base=match&&match[1],yKey=base&&`${base}_y`;if(base&&Object.prototype.hasOwnProperty.call(values,yKey)){used.add(key);used.add(yKey);rows.push([titleFor(key),values[key]==null||values[yKey]==null?'Auto':`${values[key]}, ${values[yKey]}`])}else if(!/_(x|y)$/.test(key)){used.add(key);rows.push([titleFor(key),values[key]==null?'Auto':String(values[key])])}});
+      saved.innerHTML=rows.map(([name,value])=>`<div class="coord-row"><span class="coord-name" title="${name}">${name}</span><span class="coord-value">${value}</span></div>`).join('')||'<div class="coord-row"><span class="coord-name">No coordinates saved</span></div>';document.getElementById('count').textContent=`${rows.length} values`;
+    }
+    async function start(){if(timer)return;try{renderSaved(await pywebview.api.get_macro_coords())}catch(e){}tick();timer=setInterval(tick,120)}
+    async function tick(){const coords=document.getElementById('coords'),hint=document.getElementById('hint');try{const r=await pywebview.api.get_cursor_game_pos();if(!r||!r.ok){coords.textContent='—, —';hint.textContent=r&&r.reason==='no_roblox'?'Roblox not attached':'Waiting for Roblox…';return}if(!r.inside){coords.textContent='—, —';hint.textContent='Hover over the docked Roblox window';return}coords.textContent=`${r.x}, ${r.y}`;hint.textContent=r.scaled?`Live · scaled from ${r.win_w}×${r.win_h}`:'Live · 1152×756 coordinate space'}catch(e){hint.textContent='Waiting for the app bridge…'}}
+    window.showHotkeyCopied=(x,y)=>{const hint=document.getElementById('hint');hint.textContent=`Copied ${x}, ${y}`;setTimeout(tick,1000)};
+    window.addEventListener('pywebviewready',start);if(window.pywebview)start();
+  </script>
+</body>
+</html>

@@ -120,6 +120,11 @@ SW_RESTORE = 9
 HWND_TOP = 0
 HWND_TOPMOST = -1
 HWND_NOTOPMOST = -2
+RDW_INVALIDATE = 0x0001
+RDW_ERASE = 0x0004
+RDW_ALLCHILDREN = 0x0080
+RDW_UPDATENOW = 0x0100
+RDW_FRAME = 0x0400
 WS_CAPTION = 0x00C00000
 WS_BORDER = 0x00800000
 WS_THICKFRAME = 0x00040000
@@ -626,7 +631,25 @@ def capture_window_rgb(hwnd: int):
 
 
 def hide_window(hwnd: int) -> None:
+    """Hide a native child and repaint the surface it uncovered.
+
+    Roblox and WebView2 are independent compositor surfaces.  ShowWindow
+    removes the Roblox child, but on some GPU/driver combinations it does not
+    invalidate the pixels that child occupied.  WebView2 then keeps presenting
+    pieces of the last game frame as rectangular tiles until some unrelated UI
+    damage happens.  Explicitly redraw the parent and all of its children so a
+    screen switch is complete in one frame instead of relying on incidental
+    repaints.
+    """
+    parent = get_parent(hwnd)
     user32.ShowWindow(hwnd, SW_HIDE)
+    if parent and user32.IsWindow(parent):
+        user32.RedrawWindow(
+            parent,
+            None,
+            None,
+            RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW | RDW_FRAME,
+        )
 
 
 def show_window(hwnd: int) -> None:

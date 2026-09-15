@@ -17,6 +17,28 @@ def runner():
     r._recover_to_lobby = Mock()
     return r
 
+
+def test_recover_to_lobby_returns_immediately_when_lobby_is_already_visible(monkeypatch):
+    macro = MacroRunner(mouse=Mock(), keyboard=Mock(), log=Mock())
+    macro._spam_back_until_gone = Mock()
+    macro._ensure_lobby = Mock(
+        side_effect=AssertionError("an already-visible lobby needs no second wait")
+    )
+    monkeypatch.setattr(
+        runner_module.vision,
+        "find_image",
+        lambda _hwnd, _name: None,
+    )
+    monkeypatch.setattr(
+        runner_module.vision,
+        "find_image_any",
+        lambda _hwnd, _names: ({"score": 1.0}, "nav_play"),
+    )
+
+    assert macro._recover_to_lobby(123, threading.Event()) is True
+    macro._spam_back_until_gone.assert_not_called()
+    macro._ensure_lobby.assert_not_called()
+
 def test_handle_structured_failure_retry_step(runner):
     report = create_failure_report(
         code="TEST_ERR_01",
@@ -478,4 +500,3 @@ def test_crafting_readiness_exception_does_not_block_task_queue(
         in call_args.args[0]
         for call_args in runner._log.call_args_list
     )
-

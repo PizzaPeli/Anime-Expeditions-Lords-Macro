@@ -1213,6 +1213,14 @@ def test_show_docked_reasserts_panel_width_on_mac():
         "showDocked never re-asserts the width a non-Dashboard screen needs"
 
 
+def test_portal_name_uses_the_full_width_task_field_style():
+    """Portal Name is text like the macro picker, not a compact number box."""
+    src = open(os.path.join(os.path.dirname(INDEX_HTML), "app.js"), encoding="utf-8").read()
+    portal_name = src[src.index("fields.push(field('Portal Name'"):]
+    portal_name = portal_name[:portal_name.index("fields.push(field('Portal cards during battle'")]
+    assert 'class="task-select"' in portal_name
+
+
 def test_show_docked_reasserts_panel_width_on_mac_behaviorally(tmp_path):
     """Behavioural twin of the source-contract check above: actually run the
     shipped showDocked() (lifted by brace-matching) against a stand-in DOM and

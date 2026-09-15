@@ -84,6 +84,29 @@ def test_get_client_rect_screen_translates_both_corners(monkeypatch):
     assert window_win.get_client_rect_screen(1) == (16, 30, 1168, 786)
 
 
+def test_hide_window_repaints_parent_and_children(monkeypatch):
+    calls = []
+    monkeypatch.setattr(window_win, "get_parent", lambda hwnd: 22)
+    monkeypatch.setattr(window_win.user32, "ShowWindow",
+                        lambda hwnd, command: calls.append(("hide", hwnd, command)))
+    monkeypatch.setattr(window_win.user32, "IsWindow", lambda hwnd: True)
+    monkeypatch.setattr(
+        window_win.user32,
+        "RedrawWindow",
+        lambda hwnd, rect, region, flags: calls.append(("redraw", hwnd, flags)),
+    )
+
+    window_win.hide_window(11)
+
+    assert calls[0] == ("hide", 11, window_win.SW_HIDE)
+    assert calls[1][0:2] == ("redraw", 22)
+    flags = calls[1][2]
+    assert flags & window_win.RDW_INVALIDATE
+    assert flags & window_win.RDW_ERASE
+    assert flags & window_win.RDW_ALLCHILDREN
+    assert flags & window_win.RDW_UPDATENOW
+
+
 def test_set_dpi_aware_passes_pointer_sized_context(monkeypatch):
     """DPI_AWARENESS_CONTEXT is a pointer-sized pseudo-handle, so -4
     (PER_MONITOR_AWARE_V2) must not be marshalled as a 32-bit int -- it would

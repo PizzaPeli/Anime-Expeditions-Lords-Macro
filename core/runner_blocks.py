@@ -531,8 +531,7 @@ class BlockOps:
             return True
 
         left, top, _, _ = wm.get_window_rect_screen(hwnd)
-        self._mouse.click(left + self._coords["unit_info_reset_x"], top + self._coords["unit_info_reset_y"])
-        time.sleep(0.1)
+        self._reset_unit_info_panel(hwnd)
 
         self._set_status(action=f"Upgrading unit ({state['remaining']} left)...")
         self._mouse.click(left + pos[0], top + pos[1])
@@ -580,7 +579,7 @@ class BlockOps:
             # that runs (another attempt on this same unit, or whatever
             # Battle block comes after it) doesn't have to fight a leftover
             # panel/tooltip still covering the screen.
-            self._mouse.click(left + self._coords["unit_info_reset_x"], top + self._coords["unit_info_reset_y"])
+            self._reset_unit_info_panel(hwnd)
             state["remaining"] -= 1
             state["next_attempt"] = 0.0
             # Gold is clearly coming in, so the give-up count starts over --
@@ -626,8 +625,7 @@ class BlockOps:
             return True
 
         left, top, _, _ = wm.get_window_rect_screen(hwnd)
-        self._mouse.click(left + self._coords["unit_info_reset_x"], top + self._coords["unit_info_reset_y"])
-        time.sleep(0.1)
+        self._reset_unit_info_panel(hwnd)
 
         self._set_status(action="Selling unit...")
         self._mouse.click(left + pos[0], top + pos[1])
@@ -649,8 +647,7 @@ class BlockOps:
             return True
 
         left, top, _, _ = wm.get_window_rect_screen(hwnd)
-        self._mouse.click(left + self._coords["unit_info_reset_x"], top + self._coords["unit_info_reset_y"])
-        time.sleep(0.1)
+        self._reset_unit_info_panel(hwnd)
 
         priority = str(block.get("params", {}).get("priority") or "Boss")
         self._set_status(action=f"Setting target priority ({priority})...")
@@ -769,33 +766,7 @@ class BlockOps:
             image = vision.capture_window_region_bgr(hwnd, self._wave_region)
             if image is None or image.size == 0:
                 raise RuntimeError("Roblox window capture returned no pixels")
-            # Reading this badge is the expensive part of Wait for Wave: on
-            # a Tesseract-only setup it launches a full multi-mask OCR vote.
-            # The game redraws the badge when its number changes, so an
-            # identical later crop can safely reuse a *valid* earlier read.
-            # We still capture the tiny HUD rectangle every poll, which means
-            # a real wave advance is noticed immediately.  Never reuse a
-            # target-reaching read: that path deliberately demands a second,
-            # independent OCR frame before releasing later blocks.
-            cached = state.get("wave_read_cache")
-            must_confirm = bool(state.get("wave_target_confirmation"))
-            if (
-                not must_confirm
-                and cached is not None
-                and np.array_equal(image, cached["image"])
-            ):
-                current, maximum = cached["result"]
-            else:
-                current, maximum = wave_module.read_wave(image)
-                if current is not None:
-                    state["wave_read_cache"] = {
-                        "image": image.copy(),
-                        "result": (current, maximum),
-                    }
-                else:
-                    # Never cache a miss: a transient OCR failure must keep
-                    # receiving the full retry behavior below.
-                    state.pop("wave_read_cache", None)
+            current, maximum = wave_module.read_wave(image)
         except Exception as exc:
             self._log(f'{label}: OCR failed ({exc}) -- retrying in {WAIT_WAVE_POLL_INTERVAL:.0f}s.')
             state["next_check"] = time.time() + WAIT_WAVE_POLL_INTERVAL
@@ -945,10 +916,7 @@ class BlockOps:
                     if self._checkpoint(stop_event):
                         return True
             time.sleep(AUTO_UPGRADE_CLICK_SETTLE)
-            self._mouse.click(
-                left + self._coords["unit_info_reset_x"],
-                top + self._coords["unit_info_reset_y"],
-            )
+            self._reset_unit_info_panel(hwnd)
             return True
 
         # Wait for the info panel to actually finish rendering rather than
@@ -1016,7 +984,7 @@ class BlockOps:
                 return True
         time.sleep(AUTO_UPGRADE_CLICK_SETTLE)
 
-        self._mouse.click(left + self._coords["unit_info_reset_x"], top + self._coords["unit_info_reset_y"])
+        self._reset_unit_info_panel(hwnd)
         return True
 
     def _run_prestart_detect(self, hwnd, stop_event: threading.Event, block: dict, block_num: int):
@@ -1768,15 +1736,13 @@ class BlockOps:
         self._log(f'[Macro] Place Unit "{name}": still not confirmed placed after {n} attempts -- giving up.')
 
     def _reset_unit_info_panel(self, hwnd) -> None:
-        # Closes whatever info panel double-clicking a placed unit opened
-        # (see the verify step above) -- Z first (same deselect pressed
-        # before every placement), then a click on a near-empty corner of
-        # the Roblox screen, (3, 3), well clear of any real UI so it can't
-        # be mistaken for a live game action.
-        self._keyboard.tap(ord("Z"))
-        time.sleep(0.1)
-        left, top, _, _ = wm.get_window_rect_screen(hwnd)
-        self._mouse.click(left + self._coords["unit_info_reset_x"], top + self._coords["unit_info_reset_y"])
+        # Close only UI that is visibly present. MacroRunner supplies the
+        # shared X-glyph detector used by lobby/challenge recovery; avoiding a
+        # fixed corner click means this cannot accidentally become a live
+        # game action after a layout change.
+        close_visible = getattr(self, "_close_x_if_found", None)
+        if close_visible is not None:
+            close_visible(hwnd, threading.Event())
 
     # Windows/Meta-style keys are blocked from the Setting block's custom
     # hotkey box -- letting a macro send these could minimize the game,

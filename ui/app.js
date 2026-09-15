@@ -3186,7 +3186,7 @@ function renderTaskBuilder() {
     fields.push(field('Portals Then Exit', `<input type="number" class="block-input" min="0" max="${MAX_EXTRACT_AFTER}" step="1" value="${t.extract_after}"
       onchange="this.value = normalizeExtractAfter(this.value); setTaskProp('${t.id}', 'extract_after', this.value)">`,
       `How many portals to run before exiting to the lobby -- 0 keeps going until you stop the task (maximum ${MAX_EXTRACT_AFTER})`));
-    fields.push(field('Portal Name', `<input type="text" class="block-input"
+    fields.push(field('Portal Name', `<input type="text" class="task-select"
       value="${escapeHtml(t.portal_name || '')}"
       onchange="setTaskProp('${t.id}', 'portal_name', this.value.trim())">`,
       'Type the name to search for. The first search result is used.'));
@@ -4815,7 +4815,6 @@ const MACRO_COORD_KEYS = [
   'team_loadout_x', 'team_loadout_y', 'team_loadout_row_height',
   'team_button_x', 'team_button_y',
   'screen_middle_x', 'screen_middle_y',
-  'unit_info_reset_x', 'unit_info_reset_y',
   'daily_challenge_tab_x', 'daily_challenge_tab_y',
   // Summer Siege / portal-mode click points (0.21). Every one drives a
   // coord_key resolve in core/runner_blocks._run_click_block, so every
@@ -4833,6 +4832,7 @@ const MACRO_COORD_KEYS = [
   'portal_select_x', 'portal_select_y',
   'portal_chooser_confirm_x', 'portal_chooser_confirm_y',
   'portal_exit_x', 'portal_exit_y',
+  'portal_fishing_spot_x', 'portal_fishing_spot_y',
   'autoplay_x', 'autoplay_y',
 ];
 

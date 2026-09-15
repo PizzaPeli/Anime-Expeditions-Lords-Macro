@@ -42,6 +42,8 @@ SHOP_DISCOVERY_MAX_SCROLLS = 24
 SHOP_SETTLE_DELAY = 1.2
 SHOP_LIST_SETTLE_DELAY = 1.2
 SHOP_MODAL_POST_CLOSE_DELAY = 0.8
+SHOP_MODAL_CLEAR_CHECKS = 3
+SHOP_MODAL_CLEAR_INTERVAL = 0.25
 SHOP_CAPTURE_INTERVAL = 0.12
 # The Gold Shop is a two-column list, two items per row, in a fixed order.
 # These four tables ARE that layout, so they must agree with each other and
@@ -381,6 +383,23 @@ class ShopOps:
         for item_key, item in pending.items():
             if item_key in seen or self._checkpoint(stop_event):
                 continue
+            # A sold-out card can cover enough of its icon that normal card
+            # discovery never establishes the identity match.  It is still
+            # safe to classify the terminal label at this item's calibrated
+            # row and column: this fallback can only mark Out of Stock and is
+            # never allowed to manufacture a card match or authorize a Buy.
+            scroll_amount = SHOP_ITEM_SCROLL_AMOUNTS[item_key]
+            if (self._shop_move_to_scroll_position(
+                    hwnd, scroll_amount, stop_event)
+                    and self._shop_find_slot_out_of_stock(
+                        hwnd, item, scroll_amount, stop_event)):
+                self._shop_save_item_state(
+                    shop_key,
+                    item_key,
+                    self._shop_out_of_stock_state(item),
+                )
+                self._log(f'[Shop] "{item["name"]}" is out of stock.')
+                continue
             period = self._shop_state_period(item.get("state") or {})
             self._shop_save_item_state(
                 shop_key,
@@ -669,6 +688,48 @@ class ShopOps:
         screen_x, screen_y = vision.ref_to_screen(hwnd, x, y)
         self._mouse.click(screen_x, screen_y)
 
+    def _shop_wait_for_modal_closed(
+            self, hwnd, stop_event: threading.Event) -> bool:
+        """Require sustained modal disappearance before claiming a purchase.
+
+        Template matching can miss a single frame while Roblox redraws the
+        modal.  Treating that one miss as a closed modal caused false
+        "purchase executed" reports, so require several consecutive clear
+        observations instead.
+        """
+        names = (
+            auto_shop.AUTO_SHOP_UI_TEMPLATES["cancel"],
+            auto_shop.AUTO_SHOP_UI_TEMPLATES["purchase_modal"],
+        )
+        deadline = time.time() + SHOP_MODAL_CLOSE_TIMEOUT
+        clear_checks = 0
+        missing_templates = set()
+        while time.time() < deadline:
+            if self._checkpoint(stop_event):
+                return False
+            still_showing = False
+            checked_template = False
+            for name in names:
+                try:
+                    match = vision.find_image(hwnd, name)
+                except vision.TemplateNotFound as exc:
+                    if name not in missing_templates:
+                        self._log(f"[Shop] {exc}")
+                        missing_templates.add(name)
+                    continue
+                checked_template = True
+                if match is not None:
+                    still_showing = True
+                    break
+            if checked_template and not still_showing:
+                clear_checks += 1
+                if clear_checks >= SHOP_MODAL_CLEAR_CHECKS:
+                    return True
+            else:
+                clear_checks = 0
+            time.sleep(SHOP_MODAL_CLEAR_INTERVAL)
+        return False
+
     def _shop_confirm_purchase(
             self, hwnd, cancel_match: dict, stop_event: threading.Event) -> bool:
         region = auto_shop_vision.final_buy_region_from_cancel(cancel_match)
@@ -679,17 +740,23 @@ class ShopOps:
             y + height // 2,
         )
         self._mouse.click(screen_x, screen_y)
+        self._log(
+            f"[Shop] Final Buy clicked at ({screen_x}, {screen_y}); "
+            "waiting for sustained modal closure."
+        )
         if self._checkpoint(stop_event):
             return False
-        if self._wait_for_image_gone(
-                hwnd,
-                (auto_shop.AUTO_SHOP_UI_TEMPLATES["cancel"],
-                 auto_shop.AUTO_SHOP_UI_TEMPLATES["purchase_modal"]),
-                SHOP_MODAL_CLOSE_TIMEOUT,
-                stop_event,
-        ):
+        if self._shop_wait_for_modal_closed(hwnd, stop_event):
             time.sleep(SHOP_MODAL_POST_CLOSE_DELAY)
+            self._log(
+                f"[Shop] Purchase modal stayed closed for "
+                f"{SHOP_MODAL_CLEAR_CHECKS} consecutive checks."
+            )
             return True
+        self._log(
+            f"[Shop] Purchase modal closure was not stable within "
+            f"{SHOP_MODAL_CLOSE_TIMEOUT:.0f}s; the purchase is unconfirmed."
+        )
         self._shop_cancel_modal(hwnd, cancel_match)
         return False
 

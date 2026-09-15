@@ -100,6 +100,7 @@ def sim(monkeypatch):
 
     runner = MacroRunner(_Mouse(), _Keyboard(), lambda msg: None)
     runner._run_walk_path_block = lambda *a, **k: None
+    runner._close_x_if_found = lambda *a, **k: False
     return runner
 
 
@@ -111,7 +112,6 @@ def _sell_target(sim, monkeypatch, prestart, battle, target, repeats=2):
 
     task = {"macro": "sim", "mode": "story", "map": "-", "difficulty": "-"}
     stop = threading.Event()
-    reset = (sim._coords["unit_info_reset_x"], sim._coords["unit_info_reset_y"])
     clicked = []
 
     for rep in range(1, repeats + 1):
@@ -125,8 +125,7 @@ def _sell_target(sim, monkeypatch, prestart, battle, target, repeats=2):
             if sim._battle_block_index >= len(blocks):
                 break
             sim._run_battle_blocks_tick(1, stop, blocks, first, macro_name="sim")
-        real = [c for c in sim._mouse.clicks if c != reset]
-        clicked.append(real[-1] if real else None)
+        clicked.append(sim._mouse.clicks[-1] if sim._mouse.clicks else None)
     return clicked
 
 

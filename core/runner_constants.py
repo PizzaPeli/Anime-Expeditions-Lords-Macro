@@ -735,7 +735,6 @@ PLACE_UNIT_VERIFY_ATTEMPTS = 3  # search-then-click retried up to this many time
 # anywhere) still moves on instead of looping forever.
 PLACE_RETRY_UNTIL_PLACED_ATTEMPTS = 5
 MAX_PLACEMENT_THRESHOLD = 0.85
-UNIT_INFO_RESET_CLICK = (3, 3)  # near-empty corner of the Roblox screen -- closes the unit info panel after verifying
 SCREEN_MIDDLE_CLICK = (576, 378)  # dead center of the 1152x756 game client area -- see FIXED_WIN_W/H in core.config
 
 # Battle-phase Upgrade/Sell Unit blocks (see _run_battle_blocks_tick):
@@ -959,8 +958,8 @@ DEFAULT_COORDS = {
     # click point than the matched crop's center.
     "team_button_x": None, "team_button_y": None,
     "screen_middle_x": SCREEN_MIDDLE_CLICK[0], "screen_middle_y": SCREEN_MIDDLE_CLICK[1],
-    "unit_info_reset_x": UNIT_INFO_RESET_CLICK[0], "unit_info_reset_y": UNIT_INFO_RESET_CLICK[1],
     "daily_challenge_tab_x": 250, "daily_challenge_tab_y": 315,
+    "portal_fishing_spot_x": 420, "portal_fishing_spot_y": 200,
     # NOTE: no "daily_challenge_stage" point any more. The Daily Challenge's
     # card sits exactly where the Regular Challenge's first card does, so the
     # fallback reads "challenge_stage_1" instead -- one point, editable in

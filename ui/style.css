@@ -791,8 +791,17 @@ body.nav-rail-active > [id^="screen-"] {
   display: flex; align-items: center; justify-content: space-between; gap: 16px;
   padding: 12px 4px; border-bottom: 1px solid var(--border);
 }
+.setting-row > div:first-child { min-width: 0; }
 .setting-label { font-size: 13px; font-weight: 700; color: var(--text); }
 .setting-desc { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+
+#screen-settings > div:last-child { min-width: 0; }
+@media (max-width: 720px) {
+  #screen-settings > div:first-child { width: 132px !important; }
+  #screen-settings .rp-panel-head { flex-wrap: wrap; }
+  #screen-settings .setting-row { align-items: flex-start; flex-wrap: wrap; }
+  #screen-settings .setting-row > div:last-child:not(:first-child) { max-width: 100%; flex-wrap: wrap; }
+}
 
 /* Resource automation is a growing list (Crafting, Challenge, Bounty),
    so each feature owns one collapsed-by-default card instead of contributing
@@ -1381,11 +1390,10 @@ body.nav-rail-active > [id^="screen-"] {
   from { opacity: 0; transform: translateY(7px) scale(0.985); }
   to   { opacity: 1; transform: translateY(0) scale(1); }
 }
-@keyframes screen-in {
-  from { opacity: 0; transform: translateY(6px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
-.screen-enter { animation: screen-in 0.22s ease both; }
+/* Full-screen animation is deliberately disabled. Roblox is a separate native
+   compositor surface; animating the WebView while that surface is being hidden
+   can leave stale black/text rectangles behind on some Windows GPU drivers. */
+.screen-enter { animation: none; }
 
 /* ---- Theme picker (Settings > General) ----
    4-up grid so the 8 swatches stack as two rows and the whole picker fits

@@ -1773,7 +1773,7 @@
           <div class="setting-row" style="padding: 14px;">
             <div>
               <div class="setting-label">Mouse Coordinates</div>
-              <div class="setting-desc">Open a small live coordinate viewer. Hover over Roblox, copy its <code>x, y</code> value, then use Paste beside any coordinate picker below.</div>
+              <div class="setting-desc">Open a live viewer, hover over Roblox, then press <code>Ctrl+Shift+C</code> to copy the current <code>x, y</code>. It also lists every saved macro coordinate.</div>
             </div>
             <button type="button" onclick="popOutMousePosition()" class="text-xs font-semibold px-3 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--teal); border-color: var(--border);">Open Viewer</button>
           </div>
@@ -1909,18 +1909,14 @@
 
           <div class="setting-row" style="padding: 14px;">
             <div>
-              <div class="setting-label">Neutral Clicks</div>
-              <div class="setting-desc">Middle: dismisses popups. Corner: closes the unit info panel.</div>
+              <div class="setting-label">Neutral Click</div>
+              <div class="setting-desc">Middle: dismisses popups.</div>
             </div>
             <div class="flex items-center gap-2 flex-shrink-0">
               <span class="text-xs" style="color: var(--text-muted);">Middle</span>
               <input id="coord-screen_middle_x" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('screen_middle_x', this.value)">
               <input id="coord-screen_middle_y" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('screen_middle_y', this.value)">
               <button onclick="openCoordPicker('screen_middle')" class="text-xs font-semibold px-2 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);" title="Capture the Roblox screen and click the spot">Pick</button>
-              <span class="text-xs" style="color: var(--text-muted); margin-left: 6px;">Corner</span>
-              <input id="coord-unit_info_reset_x" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('unit_info_reset_x', this.value)">
-              <input id="coord-unit_info_reset_y" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('unit_info_reset_y', this.value)">
-              <button onclick="openCoordPicker('unit_info_reset')" class="text-xs font-semibold px-2 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);" title="Capture the Roblox screen and click the spot">Pick</button>
             </div>
           </div>
 
@@ -1935,6 +1931,18 @@
               <input id="coord-matchmaking_region_w" class="block-input" style="width: 52px;" type="number" onchange="setMacroCoord('matchmaking_region_w', this.value)">
               <input id="coord-matchmaking_region_h" class="block-input" style="width: 52px;" type="number" onchange="setMacroCoord('matchmaking_region_h', this.value)">
               <button onclick="saveMatchmakingRegionDebug(this)" class="text-xs font-semibold px-3 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);">Capture</button>
+            </div>
+          </div>
+
+          <div class="setting-row" style="padding: 14px;">
+            <div>
+              <div class="setting-label">Portal: Fishing Spot</div>
+              <div class="setting-desc">Water/bobber point repeatedly clicked while the Portal battle is running.</div>
+            </div>
+            <div class="flex items-center gap-2 flex-shrink-0">
+              <input id="coord-portal_fishing_spot_x" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('portal_fishing_spot_x', this.value)">
+              <input id="coord-portal_fishing_spot_y" class="block-input" style="width: 56px;" type="number" onchange="setMacroCoord('portal_fishing_spot_y', this.value)">
+              <button onclick="openCoordPicker('portal_fishing_spot')" class="text-xs font-semibold px-2 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--slate); border-color: var(--border);" title="Capture the Roblox screen and click the fishing water spot">Pick</button>
             </div>
           </div>
 
