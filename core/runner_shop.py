@@ -271,10 +271,10 @@ class ShopOps:
         if match is not None:
             # The item icon is its identity proof.  The Buy rectangle is only
             # accepted when it is still visibly attached to that same card.
-            buy_region = auto_shop_vision.initial_buy_region_from_item_match(match)
-            if (self._shop_region_is_visible(buy_region)
-                    and auto_shop_vision.verify_card_identity(
-                        vision.capture_game_bgr(hwnd), item["key"], match)):
+            frame = vision.capture_game_bgr(hwnd)
+            buy_region = auto_shop_vision.find_card_buy_button(frame, match)
+            if (buy_region is not None
+                    and auto_shop_vision.verify_card_identity(frame, item["key"], match)):
                 return match
         return None
 
@@ -560,10 +560,14 @@ class ShopOps:
         return completed
 
     def _shop_open_purchase_modal(
-            self, hwnd, item_match: dict, stop_event: threading.Event):
-        region = auto_shop_vision.initial_buy_region_from_item_match(item_match)
-        buy_crop = vision.capture_game_bgr(hwnd, region)
-        if not auto_shop_vision.buy_button_is_enabled(buy_crop):
+            self, hwnd, item_match: dict, stop_event: threading.Event,
+            item_key: str = None):
+        frame = vision.capture_game_bgr(hwnd)
+        if item_key and not auto_shop_vision.verify_card_identity(frame, item_key, item_match):
+            self._log(f'[Shop] "{item_key}" card identity changed before Buy; skipping it.')
+            return None
+        region = auto_shop_vision.find_card_buy_button(frame, item_match)
+        if region is None:
             if stop_event.is_set():
                 return None
             self._log(
@@ -586,8 +590,8 @@ class ShopOps:
         # what made this report insufficient Gold for a missing template.
         # The modal's own art answers the first; Cancel is still needed for
         # the second, because every other part of this flow is measured FROM
-        # it (amount toggle, final Buy, the cancel click itself all derive
-        # their regions from cancel_match).
+        # it (amount controls and the cancel click derive their regions from
+        # cancel_match; final Buy is located by color beside Cancel).
         cancel_name = auto_shop.AUTO_SHOP_UI_TEMPLATES["cancel"]
         modal_name = auto_shop.AUTO_SHOP_UI_TEMPLATES["purchase_modal"]
         try:
@@ -624,7 +628,7 @@ class ShopOps:
                 self._log(
                     f'[Shop] The purchase modal IS open ("{modal_name}" matched) but '
                     f'"{cancel_name}" was not found on it -- and every part of the purchase '
-                    "(amount toggle, final Buy) is positioned from Cancel, so this pass "
+                    "(amount controls and final Buy) requires Cancel, so this pass "
                     f'cannot continue. Recut "{cancel_name}" from a docked capture.'
                 )
             return None
@@ -732,7 +736,12 @@ class ShopOps:
 
     def _shop_confirm_purchase(
             self, hwnd, cancel_match: dict, stop_event: threading.Event) -> bool:
-        region = auto_shop_vision.final_buy_region_from_cancel(cancel_match)
+        region = auto_shop_vision.find_modal_buy_button(
+            vision.capture_game_bgr(hwnd), cancel_match)
+        if region is None:
+            self._log("[Shop] Green confirmation Buy button was not found beside Cancel; purchase was not clicked.")
+            self._shop_cancel_modal(hwnd, cancel_match)
+            return False
         x, y, width, height = region
         screen_x, screen_y = vision.ref_to_screen(
             hwnd,
@@ -875,6 +884,7 @@ class ShopOps:
                 hwnd,
                 item_match,
                 stop_event,
+                item_key,
             )
         if cancel_match is None:
             if not stop_event.is_set():

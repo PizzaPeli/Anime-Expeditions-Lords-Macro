@@ -1610,6 +1610,28 @@
       <div class="settings-category" data-cat="debug" style="margin-top: 20px;">
         <section class="rp-panel">
           <header class="rp-panel-head">
+            <span class="rp-head-tag" style="--rp-tag: var(--brand);">Maps</span>
+            <span class="rp-head-title">Story, Raid &amp; Challenge Map Setup</span>
+          </header>
+          <div class="setting-row" style="padding: 14px; flex-direction: column; align-items: stretch; gap: 10px;">
+            <div class="setting-desc">Add a map here to make it available in Story or Raid tasks and to let Challenge identify it. Save its in-match name image under UI / labels in Image Manager; save its lobby card under Map cards if you want to select it for a Story or Raid task. Camera Profiles here in Settings are saved per map.</div>
+            <div class="flex items-center gap-2" style="flex-wrap: wrap;">
+              <input id="map-setup-name" class="block-input" type="text" style="flex: 1; min-width: 160px;" placeholder="Map name">
+              <select id="map-setup-mode" class="task-select"><option value="story">Story</option><option value="raid">Raid</option><option value="both">Both</option></select>
+              <input id="map-setup-image" class="block-input" type="text" list="map-setup-image-names" style="flex: 1; min-width: 170px;" placeholder="In-match image name">
+              <datalist id="map-setup-image-names"></datalist>
+              <select id="map-setup-path" class="task-select" style="min-width: 160px;"><option value="">No path</option></select>
+              <button onclick="saveMapSetup()" class="settings-action-btn">Save Map</button>
+              <button onclick="recordMapSetupPath()" class="settings-action-btn">Record Path</button>
+            </div>
+            <div id="map-setup-list" class="flex flex-col gap-1"></div>
+          </div>
+        </section>
+      </div>
+
+      <div class="settings-category" data-cat="debug" style="margin-top: 20px;">
+        <section class="rp-panel">
+          <header class="rp-panel-head">
             <span class="rp-head-tag" style="--rp-tag: var(--slate);">Control</span>
             <span class="rp-head-title">Pathing</span>
             <span class="rp-head-rule"></span>
@@ -1653,6 +1675,20 @@
               <input id="map-walk-name" class="block-input" style="flex: 1; min-width: 200px;" type="text" placeholder="Known or new map name">
               <button id="btn-record-map-walk" type="button" onclick="toggleMapWalkRecording(this)" class="text-xs font-semibold px-3 py-1.5 rounded-lg border flex-shrink-0 settings-action-btn" style="color: var(--brand); border-color: var(--border);">Record</button>
             </div>
+          </div>
+
+          <div class="setting-row" style="padding: 14px; border-bottom: none; flex-direction: column; align-items: stretch; gap: 10px;">
+            <div>
+              <div class="setting-label">Expedition encounter paths</div>
+              <div class="setting-desc">Assign or record a route named Expeditions [Map Name] for that map's encounter NPC. Maps without a recorded route skip the encounter by clicking Continue; the universal Expedition pregame setup stays in place.</div>
+            </div>
+            <div class="flex items-center gap-2" style="flex-wrap: wrap;">
+              <input id="encounter-walk-map" class="block-input" style="flex: 1; min-width: 180px;" type="text" placeholder="Expedition map name">
+              <select id="encounter-walk-path" class="task-select" style="width: 170px;"></select>
+              <button onclick="setEncounterWalkPath()" class="settings-action-btn">Assign</button>
+              <button onclick="recordEncounterWalkPath()" class="settings-action-btn">Record new route</button>
+            </div>
+            <div id="encounter-walk-list" class="flex flex-col gap-1"></div>
           </div>
         </section>
       </div>
@@ -2154,11 +2190,11 @@
   <div id="challenge-maps-modal" class="modal-overlay" style="display:none;" onmousedown="if(event.target===this) closeChallengeMaps()">
     <div class="modal-panel" style="width: 520px; max-width: 94vw;">
       <div class="modal-head">
-        <span class="modal-title">Challenge Story Maps</span>
+        <span class="modal-title">Challenge Maps</span>
         <span class="modal-close" onclick="closeChallengeMaps()">&times;</span>
       </div>
       <div class="modal-body">
-        <div class="wh-hint" style="margin-bottom: 8px;">Regular Challenge rotates one of the Story maps through each slot &mdash; assign the Macro Operation to run for each.</div>
+        <div class="wh-hint" style="margin-bottom: 8px;">These rows come from Story, Raid &amp; Challenge Map Setup in Settings. Add a map and its in-match label image there, then choose its Macro Operation here.</div>
         <div id="challenge-map-list" style="max-height: 60vh; overflow-y: auto;"></div>
       </div>
     </div>
@@ -2360,6 +2396,7 @@
           <span class="flex-1"></span>
           <button class="task-toolbar-btn" onclick="openAssetsFolder(this)" title="Open the Assets folder in File Explorer">Open Folder</button>
           <button id="im-capture-btn" class="pu-set-btn" onclick="startImageCapture()" title="Screenshot your Roblox window and crop new reference images from it">Capture Roblox</button>
+          <button class="task-toolbar-btn" onclick="startNewImageCapture()" title="Capture an image under a new search name">Add New Image</button>
         </div>
 
         <!-- LIBRARY view: card grid, filled by renderImageLibrary(). -->
@@ -2367,6 +2404,7 @@
 
         <!-- CAPTURE view: crop canvas + save bar, hidden until a capture. -->
         <div id="im-capture-wrap" style="display:none;">
+          <div class="setting-desc" style="margin-bottom: 8px;">For a new search image, choose its type, type its name, crop it, then Save. Existing Challenge maps use their exact names under UI / labels.</div>
           <div class="flex items-center gap-2" style="margin-bottom: 8px;">
             <button class="task-toolbar-btn" onclick="backToImageLibrary()">&larr; Library</button>
             <span class="text-[10px]" style="color: var(--text-muted);">Drag a box around the button/text &middot; scroll to zoom &middot; right-drag to pan &middot; crop tight, background included</span>
@@ -2375,6 +2413,11 @@
           </div>
           <canvas id="im-canvas" class="pu-canvas" width="880" height="430"></canvas>
           <div class="flex items-center gap-2" style="margin-top: 10px;">
+            <select id="im-new-category" class="task-select" style="width: 130px;" title="Where this image is used: buttons and in-match labels, map cards, or custom Detect blocks">
+              <option value="ui">UI / labels</option>
+              <option value="maps">Map cards</option>
+              <option value="detect">Detect blocks</option>
+            </select>
             <input id="im-save-name" class="block-input" style="flex: 1;" type="text" list="im-name-list"
                    placeholder="Save as... (pick an existing name to add a variant, or type a new one)">
             <!-- Existing names of the ACTIVE category -- picking one adds

@@ -297,9 +297,10 @@ def test_purchase_modal_clicks_the_green_buy_region_inside_the_item_card(monkeyp
     runner = _runner()
     stop_event = threading.Event()
     item_match = {"x": 429, "y": 245, "w": 61, "h": 55}
-    buy_match = {"x": 391, "y": 382, "w": 140, "h": 42, "cx": 461, "cy": 403}
+    buy_match = {"x": 391, "y": 200, "w": 140, "h": 42, "cx": 461, "cy": 221}
     cancel_match = {"x": 579, "y": 420, "w": 181, "h": 28}
     clicked = []
+    monkeypatch.setattr("core.runner_shop.auto_shop_vision.find_card_buy_button", lambda *_args: (391, 200, 140, 42))
     monkeypatch.setattr(
         "core.runner_shop.vision.click_match",
         lambda _mouse, _hwnd, match: clicked.append(match),
@@ -325,10 +326,11 @@ def test_purchase_modal_waits_only_for_cancel_after_clicking_green_buy(monkeypat
     runner = _runner()
     stop_event = threading.Event()
     item_match = {"x": 429, "y": 245, "w": 61, "h": 55}
-    buy_match = {"x": 391, "y": 382, "w": 140, "h": 42, "cx": 461, "cy": 403}
+    buy_match = {"x": 391, "y": 200, "w": 140, "h": 42, "cx": 461, "cy": 221}
     cancel_match = {"x": 579, "y": 420, "w": 181, "h": 28}
     waited = []
     clicked = []
+    monkeypatch.setattr("core.runner_shop.auto_shop_vision.find_card_buy_button", lambda *_args: (391, 200, 140, 42))
 
     def wait_for_image(_hwnd, name, **kwargs):
         waited.append((name, kwargs.get("region")))
@@ -363,6 +365,7 @@ def test_stopped_buy_wait_does_not_report_a_missing_button(monkeypatch):
     stop_event = threading.Event()
     item_match = {"x": 429, "y": 245, "w": 61, "h": 55}
     runner._log = MagicMock()
+    monkeypatch.setattr("core.runner_shop.auto_shop_vision.find_card_buy_button", lambda *_args: (391, 200, 140, 42))
 
     monkeypatch.setattr(
         "core.runner_shop.vision.capture_game_bgr",
@@ -383,6 +386,10 @@ def test_stopped_buy_wait_does_not_report_a_missing_button(monkeypatch):
         "core.runner_shop.vision.wait_for_image",
         stop_wait,
     )
+    monkeypatch.setattr(
+        "core.runner_shop.vision.wait_for_image_any",
+        lambda *_args, **_kwargs: (stop_wait(), None),
+    )
 
     assert runner._shop_open_purchase_modal(
         1,
@@ -398,6 +405,9 @@ def test_final_buy_that_does_not_close_is_cancelled_at_the_right_edge(monkeypatc
     cancel = {"x": 579, "y": 420, "w": 181, "h": 28}
     monkeypatch.setattr(runner, "_checkpoint", lambda _stop: False)
     monkeypatch.setattr(runner, "_shop_wait_for_modal_closed", lambda *_args: False)
+    frame = np.zeros((600, 900, 3), dtype=np.uint8)
+    frame[420:450, 390:570] = (20, 215, 60)
+    monkeypatch.setattr("core.runner_shop.vision.capture_game_bgr", lambda *_args: frame)
     monkeypatch.setattr(
         "core.runner_shop.vision.ref_to_screen",
         lambda _hwnd, x, y: (x, y),
@@ -406,6 +416,21 @@ def test_final_buy_that_does_not_close_is_cancelled_at_the_right_edge(monkeypatc
     assert runner._shop_confirm_purchase(1, cancel, threading.Event()) is False
 
     assert runner._mouse.click.call_args_list[-1].args == (754, 434)
+
+
+def test_final_buy_follows_button_when_modal_layout_moves(monkeypatch):
+    runner = _runner()
+    cancel = {"x": 650, "y": 500, "w": 181, "h": 28}
+    frame = np.zeros((700, 1000, 3), dtype=np.uint8)
+    frame[500:530, 440:620] = (20, 215, 60)
+    monkeypatch.setattr("core.runner_shop.vision.capture_game_bgr", lambda *_args: frame)
+    monkeypatch.setattr("core.runner_shop.vision.ref_to_screen", lambda _hwnd, x, y: (x, y))
+    monkeypatch.setattr(runner, "_checkpoint", lambda _stop: False)
+    monkeypatch.setattr(runner, "_shop_wait_for_modal_closed", lambda *_args: True)
+    monkeypatch.setattr("core.runner_shop.time.sleep", lambda _seconds: None)
+
+    assert runner._shop_confirm_purchase(1, cancel, threading.Event()) is True
+    assert runner._mouse.click.call_args_list[0].args == (530, 515)
 
 
 @pytest.mark.skip(reason="OCR flow (_shop_process_item) is not used in the public path")

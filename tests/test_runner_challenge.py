@@ -7,13 +7,14 @@ from core import ocr
 from core import vision
 from core import ocr_windows
 from core.runner_challenge import ChallengeOps
-from core.runner_constants import CHALLENGE_STORY_MAPS
 
 
 class ChallengeProbe:
     def __init__(self):
         self.logs = []
         self.debug_calls = []
+        self._map_setups = {"King's Tomb": {"image": "King's Tomb", "image_ready": True},
+                            "New Story Map": {"image": "New Story Map", "image_ready": True}}
 
     def _debug_save(self, hwnd, name, match):
         self.debug_calls.append((hwnd, name, match))
@@ -38,7 +39,7 @@ def test_detect_current_challenge_map_uses_ordered_candidate_search(monkeypatch)
     detected = ChallengeOps._detect_current_challenge_map(probe, 123)
 
     assert detected == "King's Tomb"
-    assert calls == [(123, CHALLENGE_STORY_MAPS)]
+    assert calls == [(123, ("King's Tomb", "New Story Map"))]
     assert probe.debug_calls == [(123, "King's Tomb", match)]
 
 

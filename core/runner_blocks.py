@@ -1242,6 +1242,8 @@ class BlockOps:
         if not first_repeat:
             self._log('[Macro] Repeat of the same stage -- skipping the Walk Path block (already walked on entry).')
             return
+        if task.get("_map_setup_path_ran") and block.get("mode") != "custom":
+            return
 
         map_name = task.get("map")
         if block.get("mode") == "custom" and block.get("pathName"):

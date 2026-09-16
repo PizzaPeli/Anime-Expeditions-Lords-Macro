@@ -545,7 +545,7 @@ function switchScreen(name) {
     refreshAutoShopScreen();
     refreshChallengeScreen();
   }
-  if (name === 'settings') { refreshSavedPaths(); loadMacroCoords(); loadRewardTestMaps(); }
+  if (name === 'settings') { refreshSavedPaths(); refreshMapSetups(); loadMacroCoords(); loadRewardTestMaps(); }
 
   // The Process Log only exists on the Dashboard, and a display:none element
   // has no scroll height -- so while another screen is up the list cannot
@@ -1873,11 +1873,11 @@ function renderCameraProfiles(profiles) {
   cameraProfiles = profiles && typeof profiles === 'object' ? profiles : {};
   const sel = document.getElementById('camera-profile-map');
   if (!sel) return;
-  if (!sel.options.length) {
-    sel.innerHTML = cameraProfileTargets()
-      .map(label => `<option value="${escapeHtml(label)}">${escapeHtml(label)}</option>`).join('');
-    sel.onchange = () => loadCameraProfileIntoForm();
-  }
+  const selected = sel.value;
+  sel.innerHTML = cameraProfileTargets()
+    .map(label => `<option value="${escapeHtml(label)}">${escapeHtml(label)}</option>`).join('');
+  if (selected) sel.value = selected;
+  sel.onchange = () => loadCameraProfileIntoForm();
   const list = document.getElementById('camera-profile-list');
   if (list) {
     const names = Object.keys(cameraProfiles).sort();
@@ -1951,14 +1951,14 @@ async function saveCameraProfile(btn) {
   const key = cameraProfileKey(sel.value);
   try {
     const res = await pywebview.api.set_camera_profile(key, readCameraProfileForm());
-    if (res && res.profiles) renderCameraProfiles(res.profiles);
+    if (res && res.profiles) { renderCameraProfiles(res.profiles); await refreshMapSetups(); }
   } catch (e) {}
 }
 
 async function clearCameraProfile(name) {
   try {
     const res = await pywebview.api.clear_camera_profile(name);
-    if (res && res.profiles) renderCameraProfiles(res.profiles);
+    if (res && res.profiles) { renderCameraProfiles(res.profiles); await refreshMapSetups(); }
   } catch (e) {}
 }
 
@@ -2235,13 +2235,13 @@ async function saveWebhookSettings(silentSave) {
 const TASK_DATA = {
   story: {
     label: 'Story',
-    maps: ['School Grounds', 'Rose Kingdom', 'Fairy King Forest', "King's Tomb", 'Flower Forest', 'East Town'],
+    maps: [], // Loaded from Settings > Map Setup before the task picker opens.
     stages: ['1', '2', '3', '4', '5', 'Infinite', 'Mastery'],
     difficulties: ['Normal', 'Hard'],
   },
   raid: {
     label: 'Raid',
-    maps: ['Spirit City', 'Snowy Castle'],
+    maps: [],
     stages: ['1', '2', '3'],
     fixedDifficulty: 'Hard',
   },
@@ -2294,6 +2294,74 @@ const TASK_DATA = {
     isTower: true,
   },
 };
+
+let mapSetups = {};
+
+async function refreshMapSetups() {
+  try { mapSetups = await pywebview.api.get_map_setups(); } catch (e) { mapSetups = {}; }
+  let images = [];
+  try { images = await pywebview.api.get_map_identification_images(); } catch (e) {}
+  const imageList = document.getElementById('map-setup-image-names');
+  if (imageList) imageList.innerHTML = images.map(n => `<option value="${escapeHtml(n)}"></option>`).join('');
+  TASK_DATA.story.maps = Object.keys(mapSetups).filter(n => ['story', 'both'].includes(mapSetups[n].mode)).sort();
+  TASK_DATA.raid.maps = Object.keys(mapSetups).filter(n => ['raid', 'both'].includes(mapSetups[n].mode)).sort();
+  renderMapSetups();
+  renderCameraProfiles(cameraProfiles);
+  if (currentScreen === 'creation') renderTaskList();
+}
+
+function renderMapSetups() {
+  const list = document.getElementById('map-setup-list');
+  if (!list) return;
+  const names = Object.keys(mapSetups).sort();
+  list.innerHTML = names.length ? names.map(name => {
+    const entry = mapSetups[name];
+    const status = `${entry.image_ready ? '' : ' · in-match image missing'}${entry.card_ready ? '' : ' · map card missing'}`;
+    const camera = entry.camera ? 'custom camera' : 'basic camera';
+    return `<div class="flex items-center gap-2 justify-between text-xs" style="padding: 5px 2px; color: var(--text-dim);">
+      <span><b>${escapeHtml(name)}</b> (${escapeHtml(entry.mode)}) · ${escapeHtml(entry.image)} · ${escapeHtml(entry.path || 'no path')} · ${escapeHtml(camera)}${escapeHtml(status)}</span>
+      <span class="flex items-center gap-1">
+        <button class="settings-action-btn" onclick="editMapSetup('${escJs(name)}')">Edit</button>
+        <button class="settings-action-btn" onclick="editMapCamera('${escJs(name)}')">Camera</button>
+        <button class="settings-action-btn" onclick="removeMapSetup('${escJs(name)}')">Remove</button>
+      </span>
+    </div>`;
+  }).join('') : '<div class="setting-desc">No map setups yet.</div>';
+}
+
+function editMapSetup(name) {
+  const entry = mapSetups[name];
+  if (!entry) return;
+  document.getElementById('map-setup-name').value = name;
+  document.getElementById('map-setup-mode').value = entry.mode;
+  document.getElementById('map-setup-image').value = entry.image;
+  document.getElementById('map-setup-path').value = entry.path || '';
+}
+
+function editMapCamera(name) {
+  const sel = document.getElementById('camera-profile-map');
+  if (!sel) return;
+  sel.value = name;
+  loadCameraProfileIntoForm();
+  sel.closest('.rp-panel')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+async function saveMapSetup() {
+  const name = (document.getElementById('map-setup-name')?.value || '').trim();
+  const mode = document.getElementById('map-setup-mode')?.value || 'story';
+  const image = (document.getElementById('map-setup-image')?.value || '').trim();
+  const path = document.getElementById('map-setup-path')?.value || '';
+  const result = await pywebview.api.set_map_setup(name, mode, image, path);
+  if (!result.ok) { addLog(`[Map Setup] Could not save: ${result.reason || 'error'}.`); return; }
+  await refreshMapSetups();
+  await refreshChallengeScreen();
+}
+
+async function removeMapSetup(name) {
+  await pywebview.api.delete_map_setup(name);
+  await refreshMapSetups();
+  await refreshChallengeScreen();
+}
 
 let taskCards = [];
 let selectedTaskId = null;
@@ -3254,18 +3322,13 @@ async function refreshTaskQueue() {
 // ---------------------------------------------------------------------------
 // Challenge screen: Regular Challenge automation
 // ---------------------------------------------------------------------------
-// Regular Challenge has 3 fixed stage slots that each rotate through one of
-// the Story maps over time (see main.py's CHALLENGE_STORY_MAPS comment) --
+// Regular Challenge has 3 fixed stage slots that each rotate through a map --
 // config here is split the same way the backend models it: the daily play
 // limit tracks each STAGE SLOT (whichever map is currently rotated into it),
 // while Macro Operation assignment is tracked per MAP, since that's what
 // needs to follow the map around as it rotates through slots.
 const CHALLENGE_STAGE_SLOTS = ['1', '2', '3'];
-// Mirrors main.py's CHALLENGE_STORY_MAPS -- keep in sync if Story's map
-// list (TASK_DATA.story.maps) ever changes. This list is what renders the
-// Story Map Setup rows, so a map missing here cannot be assigned a Macro
-// Operation at all; tests/test_challenge_maps.py fails when it drifts.
-const CHALLENGE_STORY_MAPS = ['School Grounds', 'Rose Kingdom', 'Fairy King Forest', "King's Tomb", 'Flower Forest', 'East Town'];
+// Map rows come from the shared Settings registry returned by the backend.
 let challengeState = null;
 
 function renderStoryMapSetupWarning(id, state, featureName) {
@@ -3385,7 +3448,7 @@ function renderChallengeScreen() {
   if (!s) { mapList.innerHTML = '<div class="rh-empty">Couldn\'t load Challenge settings.</div>'; return; }
   const macroOpts = (current) => `<option value="">No Macro</option>` +
     taskTemplates.map(n => `<option value="${escapeHtml(n)}" ${n === current ? 'selected' : ''}>&#9654; ${escapeHtml(n)}</option>`).join('');
-  mapList.innerHTML = CHALLENGE_STORY_MAPS.map(map => {
+  mapList.innerHTML = Object.keys(s.maps || {}).sort().map(map => {
     const info = s.maps[map] || { macro: '' };
     return `
       <div class="task-card" style="--tqc: var(--lilac); cursor: default;">
@@ -4456,7 +4519,43 @@ async function refreshSavedPaths() {
   if (sel) { const prev = sel.value; sel.innerHTML = options; sel.value = prev; }
   const defaultSel = document.getElementById('default-walk-path');
   if (defaultSel) { const prev = defaultSel.value; defaultSel.innerHTML = options; defaultSel.value = prev; }
+  const encounterSel = document.getElementById('encounter-walk-path');
+  if (encounterSel) { const prev = encounterSel.value; encounterSel.innerHTML = options; encounterSel.value = prev; }
+  const setupSel = document.getElementById('map-setup-path');
+  if (setupSel) {
+    const prev = setupSel.value;
+    setupSel.innerHTML = '<option value="">No path</option>' + savedPaths.map(n => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join('');
+    setupSel.value = prev;
+  }
   await loadDefaultWalkPaths();
+  await loadEncounterWalkPaths();
+}
+
+async function loadEncounterWalkPaths() {
+  const list = document.getElementById('encounter-walk-list');
+  if (!list) return;
+  let mapped = {};
+  try { mapped = await pywebview.api.get_encounter_walk_paths(); } catch (e) {}
+  const entries = Object.entries(mapped);
+  list.innerHTML = entries.length ? entries.map(([map, path]) => `
+    <div class="flex items-center gap-2 justify-between text-xs" style="padding: 4px 2px; color: var(--text-dim);">
+      <span><b>${escapeHtml(map)}</b> &rarr; ${escapeHtml(path)}</span>
+      <button class="settings-action-btn" onclick="removeEncounterWalkPath('${escJs(map)}')">Skip instead</button>
+    </div>`).join('') : '<div class="text-xs" style="color: var(--text-muted);">No recorded encounter routes. Encounters will use Continue.</div>';
+}
+
+async function setEncounterWalkPath() {
+  const map = (document.getElementById('encounter-walk-map')?.value || '').trim();
+  const path = document.getElementById('encounter-walk-path')?.value || '';
+  if (!map || !path) { addLog('[Pathing] Enter a map and choose a saved path.'); return; }
+  const result = await pywebview.api.set_encounter_walk_path(map, path);
+  if (!result.ok) { addLog(`[Pathing] Could not assign encounter path: ${result.reason || 'error'}.`); return; }
+  await loadEncounterWalkPaths();
+}
+
+async function removeEncounterWalkPath(map) {
+  await pywebview.api.set_encounter_walk_path(map, '');
+  await loadEncounterWalkPaths();
 }
 
 async function refreshSavedRecordings() {
@@ -4686,6 +4785,8 @@ async function saveMatchmakingRegionDebug(btn) {
 // blocks and Auto Fuel routes share the same recorder and naming flow.
 let pendingRecordingTarget = null;
 let recordingMapWalkName = '';
+let recordingMapWalkKind = 'default';
+let recordingMapSetupDraft = null;
 
 function stopActiveRecording() {
   if (recordingMapWalkName) stopMapWalkRecording();
@@ -4733,6 +4834,7 @@ async function toggleMapWalkRecording(btn) {
       return;
     }
     recordingMapWalkName = mapName;
+    recordingMapWalkKind = 'default';
     const textEl = document.getElementById('rec-popout-text');
     if (textEl) textEl.textContent = `Recording default walk for ${mapName} (WASD + I/O)`;
     document.getElementById('rec-popout').style.display = 'flex';
@@ -4742,7 +4844,11 @@ async function toggleMapWalkRecording(btn) {
 
 async function stopMapWalkRecording() {
   const mapName = recordingMapWalkName;
+  const kind = recordingMapWalkKind;
+  const draft = recordingMapSetupDraft;
   recordingMapWalkName = '';
+  recordingMapWalkKind = 'default';
+  recordingMapSetupDraft = null;
   document.getElementById('rec-popout').style.display = 'none';
   let stopped = null;
   try { stopped = await pywebview.api.stop_path_capture(); } catch (e) {}
@@ -4752,14 +4858,57 @@ async function stopMapWalkRecording() {
     return;
   }
   try {
-    const saved = await pywebview.api.save_pending_shared_path(mapName);
+    const saved = await pywebview.api.save_pending_shared_path(
+      kind === 'encounter' ? `Expeditions ${mapName}` : mapName);
     if (!saved.ok) throw new Error(saved.reason || 'save failed');
-    await pywebview.api.set_default_walk_path(mapName, saved.name);
+    const assigned = kind === 'encounter'
+      ? await pywebview.api.set_encounter_walk_path(mapName, saved.name)
+      : kind === 'setup'
+      ? await pywebview.api.set_map_setup(draft.name, draft.mode, draft.image, saved.name)
+      : await pywebview.api.set_default_walk_path(mapName, saved.name);
+    if (!assigned.ok) throw new Error(assigned.reason || 'assignment failed');
     await refreshSavedPaths();
-    addLog(`[Path Recorder] Saved "${saved.name}" and assigned it as ${mapName}'s Default Auto Walk.`);
+    addLog(`[Path Recorder] Saved "${saved.name}" and assigned it as ${mapName}'s ${kind === 'encounter' ? 'encounter route' : kind === 'setup' ? 'Map Setup path' : 'Default Auto Walk'}.`);
+    if (kind === 'setup') await refreshMapSetups();
   } catch (e) {
     addLog('[Path Recorder] Could not save the map walk path.');
   }
+}
+
+async function recordMapSetupPath() {
+  if (recordingMapWalkName) return;
+  const name = (document.getElementById('map-setup-name')?.value || '').trim();
+  const mode = document.getElementById('map-setup-mode')?.value || 'story';
+  const image = (document.getElementById('map-setup-image')?.value || '').trim();
+  if (!name || !image) { addLog('[Map Setup] Enter a map name and its in-match image before recording.'); return; }
+  const images = await pywebview.api.get_map_identification_images();
+  if (!images.includes(image)) { addLog('[Map Setup] Add the in-match image in Image Manager before recording this map path.'); return; }
+  switchScreen('dashboard');
+  await new Promise(resolve => setTimeout(resolve, 200));
+  const result = await pywebview.api.start_path_recording();
+  if (!result.ok) { addLog(`[Path Recorder] Could not start: ${result.reason || 'error'}.`); return; }
+  recordingMapWalkName = name;
+  recordingMapWalkKind = 'setup';
+  recordingMapSetupDraft = { name, mode, image };
+  const textEl = document.getElementById('rec-popout-text');
+  if (textEl) textEl.textContent = `Recording pregame path for ${name}`;
+  document.getElementById('rec-popout').style.display = 'flex';
+}
+
+async function recordEncounterWalkPath() {
+  if (recordingMapWalkName) return;
+  const mapName = (document.getElementById('encounter-walk-map')?.value || '').trim();
+  if (!mapName) { addLog('[Path Recorder] Enter the expedition map name first.'); return; }
+  switchScreen('dashboard');
+  await new Promise(resolve => setTimeout(resolve, 200));
+  const result = await pywebview.api.start_path_recording();
+  if (!result.ok) { addLog(`[Path Recorder] Could not start: ${result.reason || 'error'}.`); return; }
+  recordingMapWalkName = mapName;
+  recordingMapWalkKind = 'encounter';
+  const textEl = document.getElementById('rec-popout-text');
+  if (textEl) textEl.textContent = `Recording encounter route for ${mapName}`;
+  document.getElementById('rec-popout').style.display = 'flex';
+  addLog(`[Path Recorder] Walk from spawn to ${mapName}'s encounter NPC, then stop recording.`);
 }
 
 async function stopRecordingTarget(target) {
@@ -6096,6 +6245,7 @@ let imState = {
   data: null,       // list_vision_templates() categories, or null before first load
   category: 'ui',   // default folder for a manually-typed new name (see categoryForName)
   saveCategory: null,  // set when a card's "+" is used -- locks the save to THAT card's folder
+  manualCategory: false,
   image: null, naturalW: 0, naturalH: 0,   // the frozen capture (an <img>, drawn to canvas)
   zoom: 1, panX: 0, panY: 0,               // canvas view transform (image px -> canvas px)
   sel: null,        // crop box in IMAGE pixels {x, y, w, h} -- null until a drag happens
@@ -6499,6 +6649,10 @@ async function startImageCapture(prefillName, catKey) {
   // The top "Capture Roblox" button passes nothing, and saveImageCrop then
   // routes a manually-typed name via categoryForName instead.
   imState.saveCategory = catKey || null;
+  imState.manualCategory = false;
+  if (catKey && document.getElementById('im-new-category')) {
+    document.getElementById('im-new-category').value = catKey;
+  }
   const returnScreen = currentScreen === 'dashboard' ? lastNonDashboardScreen : currentScreen;
   // See usePlaceUnitRobloxScreen -- the game must actually show during
   // this hop despite the open modal.
@@ -6535,6 +6689,13 @@ async function startImageCapture(prefillName, catKey) {
     drawImageCanvas();
   };
   img.src = result.data_uri;
+}
+
+function startNewImageCapture() {
+  document.getElementById('im-save-name').value = '';
+  const category = document.getElementById('im-new-category')?.value || 'ui';
+  startImageCapture('', category);
+  imState.manualCategory = true;
 }
 
 function backToImageLibrary() {
@@ -6699,7 +6860,9 @@ async function saveImageCrop() {
   // Folder to save into: locked to the card's category when the capture was
   // started from a card's "+", otherwise routed from the typed name (see
   // categoryForName). Either way the user never has to pick a tab.
-  const catKey = imState.saveCategory || categoryForName(name);
+  const catKey = imState.manualCategory
+    ? (document.getElementById('im-new-category')?.value || 'ui')
+    : (imState.saveCategory || categoryForName(name));
   const catLabel = (imState.data || []).find(c => c.key === catKey)?.label || catKey;
   btn.disabled = true;
   btn.textContent = 'Saving...';
@@ -7499,6 +7662,7 @@ window.addEventListener('pywebviewready', async () => {
   renderPalette();
   renderPhases();
   refreshSavedPaths();
+  await refreshMapSetups();
   refreshSavedRecordings();
   loadSettingsUI();
 

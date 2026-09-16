@@ -12,6 +12,7 @@ import time
 from . import vision
 from . import window as wm
 from . import paths as walk_paths
+from . import settings as cfg
 from .runner_constants import *  # noqa: F401,F403 -- the shared constants namespace
 from .runner_constants import _exp_green, _exp_green_loose, _exp_red  # underscore names, skipped by *
 
@@ -821,12 +822,8 @@ class ExpeditionOps:
         image, nothing map-specific. Clicking it resolves the encounter
         outright.
 
-        Tried before the teleport-and-walk because it is strictly better when
-        it works: it costs milliseconds, it applies on every map rather than
-        the four with a bundled route, and it cannot strand the character
-        somewhere a recorded walk did not expect. Returns False if no
-        Continue shows up, and the caller falls back to the older flow --
-        this is a recent change to the game and the walk is known to work.
+        Used when this map has no recorded encounter path. Returns False if
+        Continue is not visible within the bounded search.
         """
         deadline = time.time() + ENCOUNTER_CONTINUE_TIMEOUT
         while time.time() < deadline:
@@ -883,7 +880,7 @@ class ExpeditionOps:
 
     def _handle_expedition_encounter(self, hwnd, stop_event: threading.Event,
                                        state: dict) -> dict:
-        """Walk an Expedition encounter to its NPC and talk to it.
+        """Walk when a recorded encounter route exists; otherwise skip with Continue.
 
         An encounter node parks the client somewhere no match result can come
         from -- unhandled, the run sits until MATCH_RESULT_TIMEOUT and then
@@ -926,24 +923,20 @@ class ExpeditionOps:
             return state
 
         map_name = (getattr(self, "_current_task", None) or {}).get("map")
-        # An encounter now puts up its own Continue, and the colour engine
-        # already knows that face. If it is there, clicking it ends the
-        # encounter outright -- no teleport, no route, no dialogue -- so it
-        # is tried before any of that work. It also works on maps with no
-        # bundled route, which the walk cannot.
-        if self._encounter_cleared_by_continue(hwnd, stop_event):
-            return self._encounter_done(state)
-
-        path_name = walk_paths.load_shipped_encounter_walk_paths().get(map_name or "")
-        if not path_name:
-            # No recorded route for this map. The Continue look above already
-            # covered it -- that is the whole point of trying Continue FIRST:
-            # it needs nothing map-specific, so it works where the walk
-            # cannot. With neither a Continue nor a route there is genuinely
-            # nothing to do.
-            self._log(f'[Macro] Expedition encounter on "{map_name}", no Continue offered and no '
-                       f"encounter walk mapped for it -- leaving it alone. (Record one and add it "
-                       f"to Assets/default_encounter_walk_paths.json.)")
+        mapped = {**walk_paths.load_shipped_encounter_walk_paths(),
+                  **(cfg.load().get("encounter_walk_paths", {}) or {})}
+        # A recording named for the map also counts before it is assigned in Settings.
+        path_name = mapped.get(map_name or "", "")
+        events = (walk_paths.load_path(path_name).get("events") or []) if path_name else []
+        if not events:
+            path_name = f"Expeditions {map_name}"
+            events = walk_paths.load_path(path_name).get("events") or []
+        if not events:
+            if self._encounter_cleared_by_continue(hwnd, stop_event):
+                self._log(f'[Macro] No recorded encounter path for "{map_name}" -- skipped with Continue.')
+                return self._encounter_done(state)
+            self._log(f'[Macro] No recorded encounter path for "{map_name}" and Continue is not visible -- '
+                      'leaving it alone for a later poll.')
             return self._encounter_done(state)
 
         self._log(f'[Macro] Expedition encounter (score {marker["score"]:.2f}) on "{map_name}" -- '
@@ -1021,10 +1014,6 @@ class ExpeditionOps:
         if self._checkpoint(stop_event):
             return self._encounter_done(state)
 
-        events = (walk_paths.load_path(path_name) or {}).get("events") or []
-        if not events:
-            self._log(f'[Macro] Encounter walk "{path_name}" has no recorded movement -- skipping.')
-            return self._encounter_done(state)
         walk_paths.replay_events(events, self._keyboard, stop_event)
         if self._checkpoint(stop_event):
             return self._encounter_done(state)

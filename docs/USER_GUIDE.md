@@ -123,19 +123,11 @@ recording when possible, because they are easier to adjust after a game update.
 
 ### Expedition encounters
 
-Expedition nodes can drop an encounter that has to be walked to and talked to.
-The macro handles this itself: when the encounter marker appears it teleports to
-spawn, walks that map's route, and interacts. Nothing is needed in your template
-beyond your unit placements.
-
-Routes ship for School Grounds, Rose Kingdom, Flower Forest, and East Town. For
-any other map the encounter is left alone and logged. To add one, record a walk
-from spawn to that map's NPC and map it in
-`Assets/default_encounter_walk_paths.json`:
-
-```json
-{ "Your Map": "Your recorded path name" }
-```
+Expeditions keep one universal pregame setup. Encounters use a separate route
+only when that map has a recording with movement. Otherwise the macro clicks
+Continue to skip the encounter. In **Settings > Pathing > Expedition encounter
+paths**, enter the map name and record a walk from spawn to its NPC, or assign
+an existing route. New recordings are named `Expeditions [Map Name]`.
 
 A route that does not fit your spawn stops safely: the interact prompt has to be
 found before anything is clicked, so a walk that lands somewhere wrong logs and
@@ -197,6 +189,15 @@ For challenges, open **Challenge** separately. Enable Daily and/or the desired
 Regular Challenge slots, select Solo or Matchmaking, and assign an operation
 for each map that may appear. Challenge automation runs before the normal task
 queue.
+
+To add a Story or Raid map without editing code, first capture its in-match
+name in **Settings > Image Manager** under **UI / labels**. Capture its lobby
+map card under **Map cards** if you want to select it in a normal Story or Raid
+task. Then add the map in **Settings > Story, Raid & Challenge Map Setup**, choose
+the label image and an optional saved walking path. Use the **Camera** button
+beside that map to save its camera profile. Challenge uses the same map list.
+Camera and path setup run before the battle even when Auto Play handles combat.
+If the in-match image cannot identify a map, the run uses default Auto Play.
 
 ## 6. Start and monitor a run
 
@@ -346,4 +347,3 @@ was tested, and any platform or real-game testing that is still needed.
 - Discord webhook testing succeeded, if enabled.
 - The computer will not sleep and no scheduled restart is pending.
 - Repeat counts and resource limits are reasonable.
-

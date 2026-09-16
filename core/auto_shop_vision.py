@@ -72,7 +72,6 @@ CARD_TERMINAL_FROM_CENTER = (-68, -55, 140, 207)
 CANCEL_ANCHOR_BASE_WIDTH = 181
 AMOUNT_INPUT_FROM_CANCEL = (-185, -46, 48, 29)
 AMOUNT_TOGGLE_FROM_CANCEL = (131, -46, 48, 29)
-FINAL_BUY_FROM_CANCEL = (-190, -3, 185, 36)
 
 MODAL_OPENED = "opened"
 MODAL_NOT_OPENED = "not_opened"
@@ -158,6 +157,41 @@ def buy_button_is_enabled(crop_bgr: np.ndarray) -> bool:
     return float(green_mask.mean()) >= BUY_BUTTON_GREEN_MIN_FRACTION
 
 
+def find_card_buy_button(frame_bgr: np.ndarray, item_match: Mapping) -> Optional[tuple]:
+    """Find the closest green Buy button above this card's item icon.
+
+    Buy sits at the top of each card. Looking below the icon can click the
+    following row when the shop spacing changes.
+    """
+    if frame_bgr is None or frame_bgr.ndim != 3 or frame_bgr.shape[2] < 3:
+        return None
+    icon_x = int(item_match.get("cx", int(item_match["x"]) + int(item_match["w"]) // 2))
+    icon_y = int(item_match.get("cy", int(item_match["y"]) + int(item_match["h"]) // 2))
+    icon_w = int(item_match["w"])
+    frame_h, frame_w = frame_bgr.shape[:2]
+    left = max(0, icon_x - icon_w * 2)
+    right = min(frame_w, icon_x + icon_w * 2)
+    top = max(0, icon_y - icon_w * 4)
+    bottom = min(frame_h, icon_y)
+    if right <= left or bottom <= top:
+        return None
+    crop = frame_bgr[top:bottom, left:right, :3].astype(np.int16)
+    blue, green, red = (crop[:, :, channel] for channel in range(3))
+    mask = ((green > 135) & (green - red > 45) & (green - blue > 70)).astype(np.uint8) * 255
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((5, 9), np.uint8))
+    candidates = []
+    for contour in cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]:
+        x, y, width, height = cv2.boundingRect(contour)
+        x += left
+        y += top
+        center_x = x + width / 2
+        if (width < icon_w * 0.9 or height < icon_w * 0.3
+                or abs(center_x - icon_x) > icon_w * 0.65):
+            continue
+        candidates.append((y + height, (x, y, width, height)))
+    return max(candidates, default=(0, None))[1]
+
+
 def _region_from_cancel(cancel_match: Mapping, relative_region: tuple) -> tuple:
     try:
         x = int(cancel_match["x"])
@@ -188,9 +222,38 @@ def amount_toggle_region_from_cancel(cancel_match: Mapping) -> tuple:
     return _region_from_cancel(cancel_match, AMOUNT_TOGGLE_FROM_CANCEL)
 
 
-def final_buy_region_from_cancel(cancel_match: Mapping) -> tuple:
-    """Return the confirmation Buy bounds without matching its variable price."""
-    return _region_from_cancel(cancel_match, FINAL_BUY_FROM_CANCEL)
+def find_modal_buy_button(frame_bgr: np.ndarray, cancel_match: Mapping) -> Optional[tuple]:
+    """Locate the green confirmation button beside Cancel by its visible color.
+
+    The price and amount printed on Buy change, so matching its text or using
+    a stored offset from Cancel is unreliable after a modal layout change.
+    """
+    if frame_bgr is None or frame_bgr.ndim != 3 or frame_bgr.shape[2] < 3:
+        return None
+    cx, cy, cw, ch = (int(cancel_match[key]) for key in ("x", "y", "w", "h"))
+    if cw <= 0 or ch <= 0:
+        return None
+    frame_h, frame_w = frame_bgr.shape[:2]
+    left, right = 0, min(frame_w, cx + round(cw * 0.12))
+    top = max(0, cy - round(ch * 1.5))
+    bottom = min(frame_h, cy + round(ch * 2.5))
+    if right <= left or bottom <= top:
+        return None
+    crop = frame_bgr[top:bottom, left:right, :3].astype(np.int16)
+    blue, green, red = (crop[:, :, channel] for channel in range(3))
+    mask = ((green > 135) & (green - red > 45) & (green - blue > 70)).astype(np.uint8) * 255
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((5, 9), np.uint8))
+    candidates = []
+    for contour in cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]:
+        x, y, width, height = cv2.boundingRect(contour)
+        x += left
+        y += top
+        if (width < cw * 0.55 or height < ch * 0.55
+                or x + width > cx + cw * 0.12
+                or abs((y + height / 2) - (cy + ch / 2)) > ch * 0.8):
+            continue
+        candidates.append((width * height, (x, y, width, height)))
+    return max(candidates, default=(0, None))[1]
 
 
 def cancel_click_point(cancel_match: Mapping) -> tuple:

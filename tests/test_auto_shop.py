@@ -324,7 +324,6 @@ def test_modal_regions_are_anchored_to_cancel_in_reference_space():
 
     assert auto_shop_vision.amount_input_region_from_cancel(cancel) == (394, 374, 48, 29)
     assert auto_shop_vision.amount_toggle_region_from_cancel(cancel) == (710, 374, 48, 29)
-    assert auto_shop_vision.final_buy_region_from_cancel(cancel) == (389, 417, 185, 36)
     assert auto_shop_vision.cancel_click_point(cancel) == (754, 434)
 
 

@@ -3,6 +3,7 @@ from unittest.mock import Mock
 
 from core.runner import MacroRunner
 from core.runner_crafting import CraftingOps
+from core import runner_crafting
 
 
 class DummyKeyboard:
@@ -85,6 +86,7 @@ def test_run_crafting_does_not_click_nav_closeui_when_craft_menu_opens(monkeypat
 
     monkeypatch.setattr(runner, "_crafting_wait_for", mock_wait_for)
     monkeypatch.setattr(runner, "_crafting_find", mock_find)
+    monkeypatch.setattr(runner_crafting.vision, "find_image", lambda *_args, **_kwargs: None)
 
     # Execute crafting pass
     runner._run_crafting(123, stop_event, force=True)
@@ -117,6 +119,7 @@ def test_run_crafting_fallback_nav_closeui_when_craft_menu_blocked(monkeypatch):
 
     monkeypatch.setattr(runner, "_crafting_wait_for", mock_wait_for)
     monkeypatch.setattr(runner, "_crafting_find", mock_find)
+    monkeypatch.setattr(runner_crafting.vision, "find_image", lambda *_args, **_kwargs: None)
 
     # Execute crafting pass
     runner._run_crafting(123, stop_event, force=True)

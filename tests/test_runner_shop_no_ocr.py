@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
-from core import auto_shop
+from core import auto_shop, auto_shop_vision
 from core import runner_shop
 from core.runner import MacroRunner
 
@@ -28,6 +28,16 @@ def _item(target=5):
         "target": target,
         "state": auto_shop.fresh_item_state("2026-07-30"),
     }
+
+
+def test_card_buy_tracks_its_icon_instead_of_neighbor_or_next_row():
+    frame = np.zeros((650, 900, 3), dtype=np.uint8)
+    frame[340:374, 390:530] = (20, 215, 60)  # Trait Crystal card
+    frame[340:374, 550:690] = (20, 215, 60)  # Neighboring card
+    frame[520:554, 390:530] = (20, 215, 60)  # Following row
+    match = {"x": 430, "y": 440, "w": 61, "h": 55, "cx": 460, "cy": 467}
+
+    assert auto_shop_vision.find_card_buy_button(frame, match) == (390, 340, 140, 34)
 
 
 def test_visible_numeric_purchase_remains_due_without_reading_stock(monkeypatch):
@@ -149,6 +159,7 @@ def test_open_modal_clicks_the_green_buy_region_without_matching_a_price(monkeyp
     cancel = {"x": 579, "y": 420, "w": 181, "h": 28}
     monkeypatch.setattr("core.runner_shop.vision.wait_for_image_any", lambda *_a, **_k: (cancel, "shop_cancel"))
     clicked = []
+    monkeypatch.setattr("core.runner_shop.auto_shop_vision.find_card_buy_button", lambda *_args: (391, 200, 140, 42))
     monkeypatch.setattr(
         "core.runner_shop.vision.capture_game_bgr",
         lambda *_args, **_kwargs: np.full((43, 142, 3), (0, 255, 70), dtype=np.uint8),
@@ -170,7 +181,7 @@ def test_open_modal_clicks_the_green_buy_region_without_matching_a_price(monkeyp
 
     assert runner._shop_open_purchase_modal(1, item_match, threading.Event()) == cancel
     assert clicked == [
-        {"x": 391, "y": 382, "w": 140, "h": 42, "cx": 461, "cy": 403},
+        {"x": 391, "y": 200, "w": 140, "h": 42, "cx": 461, "cy": 221},
     ]
 
 

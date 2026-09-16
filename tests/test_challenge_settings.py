@@ -1,9 +1,12 @@
 import main
 
+MAPS = ["School Grounds", "New Map"]
+
 
 def _api(logs=None):
     api = main.Api.__new__(main.Api)
     api.push_log = (logs if logs is not None else []).append
+    api.get_map_setups = lambda: {name: {"mode": "story", "image": name} for name in MAPS}
     return api
 
 
@@ -23,7 +26,7 @@ def _state(macros=None, *, enabled=False, daily_enabled=False):
             },
             "maps": {
                 name: {"macro": macros.get(name, "")}
-                for name in main.CHALLENGE_STORY_MAPS
+                for name in MAPS
             },
             "last_reset_date": "2026-07-29",
             "reset_schedule": main.CHALLENGE_RESET_SCHEDULE,
@@ -45,7 +48,7 @@ def _patch_settings(monkeypatch, state):
 def test_challenge_settings_report_incomplete_story_map_setup(monkeypatch):
     macros = {
         name: f"{name} Farm"
-        for name in main.CHALLENGE_STORY_MAPS[:-1]
+        for name in MAPS[:-1]
     }
     state = _state(macros)
     _patch_settings(monkeypatch, state)
@@ -55,7 +58,7 @@ def test_challenge_settings_report_incomplete_story_map_setup(monkeypatch):
     result = _api().get_challenge_settings()
 
     assert result["setup_ready"] is True
-    assert result["missing_maps"] == [main.CHALLENGE_STORY_MAPS[-1]]
+    assert result["missing_maps"] == [MAPS[-1]]
     assert result["invalid_maps"] == []
 
 
@@ -86,7 +89,7 @@ def test_daily_challenge_enables_without_all_macros(monkeypatch):
 def test_clearing_a_challenge_map_keeps_modes_enabled(monkeypatch):
     macros = {
         name: f"{name} Farm"
-        for name in main.CHALLENGE_STORY_MAPS
+        for name in MAPS
     }
     state = _state(macros, enabled=True, daily_enabled=True)
     _patch_settings(monkeypatch, state)

@@ -320,6 +320,7 @@ class MacroRunner(ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, Bl
         # Debug > Camera Profiles. Empty means every mode keeps the built-in
         # sequence it has always had.
         self._camera_profiles = {}
+        self._map_setups = {}
         # Wrapped to remember the most recent action text locally: the
         # stop path (_checkpoint) reports "Stopped. (was: <action>)" so a
         # user stopping a visibly-hung run gets told what it was stuck on
@@ -476,7 +477,8 @@ class MacroRunner(ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, Bl
               expedition_camera_o_ms: float = 100, camera_profiles: dict = None,
               loose_team_ocr_match: bool = False,
               memory_refresh_enabled: bool = False,
-              memory_refresh_hours: float = MEMORY_REFRESH_DEFAULT_HOURS) -> dict:
+              memory_refresh_hours: float = MEMORY_REFRESH_DEFAULT_HOURS,
+              map_setups: dict = None) -> dict:
         if self.is_running():
             return {"ok": False, "reason": "already_running"}
         self._stop_event = threading.Event()
@@ -491,6 +493,7 @@ class MacroRunner(ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, Bl
         except (TypeError, ValueError):
             self._expedition_camera_o_ms = 100.0
         self._camera_profiles = camera_profiles if isinstance(camera_profiles, dict) else {}
+        self._map_setups = map_setups if isinstance(map_setups, dict) else {}
         self._memory_refresh_enabled = bool(memory_refresh_enabled)
         try:
             refresh_hours = float(memory_refresh_hours)
@@ -2135,6 +2138,39 @@ class MacroRunner(ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, Bl
                   f"this task wants it {wanted} -- it did not survive Start Game. Setting it again.")
         self._ensure_autoplay(hwnd, stop_event, want_on)
 
+    def _resolve_in_match_map_setup(self, hwnd, task: dict, default_walk_paths: dict):
+        """Use Image Manager labels to choose the saved map setup safely."""
+        if not task.get("_identified_map"):
+            image_to_map = {entry.get("image"): name for name, entry in self._map_setups.items()
+                            if entry.get("image") and entry.get("image_ready", True)
+                            and entry.get("mode") in (task.get("mode"), "both")}
+            found_name = None
+            if image_to_map:
+                try:
+                    match, found_image = vision.find_image_any(hwnd, tuple(image_to_map))
+                    if match is not None:
+                        found_name = image_to_map[found_image]
+                except vision.TemplateNotFound:
+                    pass
+            if found_name:
+                task["map"] = found_name
+                task["_identified_map"] = True
+                self._log(f'[Macro] In-match map image identified "{found_name}" -- loading its setup.')
+            elif (self._map_setups.get(task.get("map")) or {}).get("legacy") and not (
+                    self._map_setups.get(task.get("map")) or {}).get("image_ready", True):
+                task["_identified_map"] = True
+                self._log(f'[Macro] Legacy map "{task.get("map")}" has no in-match label image yet -- '
+                          'using its selected-map setup until a label is added in Image Manager.')
+            else:
+                task["_map_unknown"] = True
+                task["macro"] = ""
+                task["auto_play"] = "autoplay"
+                default_walk_paths = {}
+                self._log("[Macro] No saved map image matched -- using default Auto Play without a map path or Macro Operation.")
+        if task.get("_identified_map"):
+            task["_map_setup"] = self._map_setups.get(task.get("map")) or {}
+        return task, default_walk_paths
+
     def _play_one_match(self, hwnd, stop_event: threading.Event, task: dict, default_walk_paths: dict,
                           first_repeat: bool = True, webhook: dict = None):
         """Assumes teleport-in already happened -- the initial one from
@@ -2145,6 +2181,9 @@ class MacroRunner(ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, Bl
         Pre Start block so they only fire on the task's first entry into
         this stage, not on every repeat (see _run_prestart). Returns
         "win"/"loss", or None on failure/stop."""
+        if first_repeat and task.get("mode") in ("story", "raid"):
+            task, default_walk_paths = self._resolve_in_match_map_setup(
+                hwnd, task, default_walk_paths)
         # Auto Play first: the button is in-match HUD, so this is the earliest
         # it can be touched, and doing it here means the run auto-plays from
         # the first wave instead of from after Pre Start and the Start Game
@@ -3027,7 +3066,7 @@ class MacroRunner(ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, Bl
         silently thrown away by this becoming data.
         """
         profiles = self._camera_profiles or {}
-        map_name = (task.get("map") or "").strip()
+        map_name = "" if task.get("_map_unknown") else (task.get("map") or "").strip()
         mode = (task.get("mode") or "story").strip().lower()
         if map_name and isinstance(profiles.get(map_name), dict):
             return camera.normalize_profile(profiles[map_name]), f'saved for "{map_name}"'
@@ -3055,12 +3094,8 @@ class MacroRunner(ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, Bl
         # > Debug > Camera Setup 3 tests) -- 730ms rotate, then a short O
         # tap for a small zoom step (duration user-tunable: Settings >
         # Debug > "Expedition Camera Zoom", 100ms default).
-        # Auto Play plays from its own camera; the macro only needs the
-        # top-down pinned view when the MACRO is placing units. Dragging the
-        # camera on an Auto Play task is pure interference -- it moves the
-        # player's view for no benefit and adds a right-click drag that can
-        # leave the cursor in a bad state. So the whole camera step is skipped
-        # unless this task's "Plays The Map" is Macro.
+        # The saved map camera profile runs even when the task uses Auto Play;
+        # users can configure the view for each map independently.
         if first_repeat:
             self._log("[Macro] Pre Start: setting up the camera...")
             self._set_status(action="Setting up camera...")
@@ -3126,7 +3161,14 @@ class MacroRunner(ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, Bl
         # "walk_path" handling / _run_walk_path_block), so it runs wherever
         # it's actually positioned relative to Setting/Place Unit blocks
         # instead of always jumping the whole list.
-        if not task.get("macro"):
+        if first_repeat and task.get("_identified_map"):
+            setup_path = (task.get("_map_setup") or {}).get("path") or ""
+            if setup_path:
+                self._run_walk_path_block(hwnd, stop_event, task,
+                                          {task.get("map"): setup_path},
+                                          {"mode": "auto"}, first_repeat)
+                task["_map_setup_path_ran"] = True
+        if not task.get("macro") and not task.get("_map_setup_path_ran"):
             self._run_walk_path_block(hwnd, stop_event, task, default_walk_paths,
                                       {"mode": "auto"}, first_repeat)
         self._run_prestart_blocks(hwnd, stop_event, task, first_repeat, default_walk_paths)
@@ -4997,9 +5039,47 @@ class MacroRunner(ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, Bl
                         return name
                 except vision.TemplateNotFound:
                     continue
+            if "portal_start" in names or "portal_party" in names:
+                if self._portal_start_button_by_text(hwnd) is not None:
+                    return "portal_start_text"
             if time.time() >= deadline or (stop_event is not None and stop_event.is_set()):
                 return None
             time.sleep(0.4)
+
+    def _portal_start_button_by_text(self, hwnd):
+        """Locate a green Start button on a party screen when its saved art changed.
+
+        Require both the button's green shape and readable Start text; a
+        generic green control must never be enough to start a different portal.
+        Coordinates returned here are reference-space, like image matches.
+        """
+        try:
+            frame = vision.capture_game_bgr(hwnd)
+            if frame is None or frame.size == 0:
+                return None
+            hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+            mask = cv2.inRange(hsv, (35, 85, 75), (85, 255, 255))
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            tess = ocr.get_pytesseract()
+            for contour in sorted(contours, key=cv2.contourArea, reverse=True):
+                x, y, w, h = cv2.boundingRect(contour)
+                if not (100 <= w <= 420 and 24 <= h <= 110 and w >= 2 * h
+                        and y >= 120 and cv2.contourArea(contour) >= w * h * 0.55):
+                    continue
+                crop = frame[max(0, y - 5):min(frame.shape[0], y + h + 5),
+                             max(0, x - 5):min(frame.shape[1], x + w + 5)]
+                if crop.size == 0:
+                    continue
+                enlarged = cv2.resize(crop, None, fx=2, fy=2,
+                                      interpolation=cv2.INTER_CUBIC)
+                text = ocr.ocr_mask(tess, enlarged, "--psm 7")
+                if re.search(r"\bstart\b", text or "", re.IGNORECASE):
+                    return {"x": x, "y": y, "w": w, "h": h,
+                            "cx": x + w // 2, "cy": y + h // 2,
+                            "detector": "green_start_text"}
+        except Exception:
+            return None
+        return None
 
     def _portal_step(self, hwnd, stop_event: threading.Event, image: str, prefix: str,
                        label: str, expect=(), attempts: int = PORTAL_STEP_ATTEMPTS,
@@ -5057,9 +5137,22 @@ class MacroRunner(ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, Bl
                                               stop_event=stop_event)
             except vision.TemplateNotFound as exc:
                 self._log(f"[Macro] {label}: {exc}")
+            if match is None and image == "portal_start":
+                match = self._portal_start_button_by_text(hwnd)
             if match is not None:
-                self._log(f'[Macro] {label} -- found "{image}" (score {match["score"]:.2f}), '
-                          f"clicking it.{suffix}")
+                if image == "portal_tab":
+                    try:
+                        if vision.portal_tab_blue_fraction(hwnd, match) >= vision.PORTAL_TAB_BLUE_MIN_FRACTION:
+                            self._log(f"[Macro] {label} -- tab is already selected at the matched position.")
+                            return True
+                    except Exception:
+                        pass
+                if match.get("detector") == "green_start_text":
+                    self._log(f'[Macro] {label} -- found the green Start button by its text, '
+                              f"clicking it.{suffix}")
+                else:
+                    self._log(f'[Macro] {label} -- found "{image}" (score {match["score"]:.2f}), '
+                              f"clicking it.{suffix}")
                 if not wm.activate_window(hwnd):
                     self._log("[Macro] Couldn't confirm focus before the click -- it may not "
                               "register.")
@@ -5086,10 +5179,29 @@ class MacroRunner(ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, Bl
                 return False
             if not expect:
                 return True
-            seen = self._portal_anchor(hwnd, expect, PORTAL_VERIFY_TIMEOUT, stop_event)
+            seen = None
+            if image == "portal_tab" and match is not None:
+                try:
+                    if vision.portal_tab_blue_fraction(hwnd, match) >= vision.PORTAL_TAB_BLUE_MIN_FRACTION:
+                        seen = "portal_tab_blue_at_clicked_position"
+                except Exception:
+                    pass
+            if seen is None:
+                seen = self._portal_anchor(hwnd, expect, PORTAL_VERIFY_TIMEOUT, stop_event)
             if seen is not None:
                 self._log(f'[Macro] {label} -- confirmed ("{seen}" is on screen).')
                 return True
+            if image == "portal_activate" and match is not None:
+                try:
+                    activate_still_visible = vision.find_image(hwnd, "portal_activate") is not None
+                except vision.TemplateNotFound:
+                    activate_still_visible = False
+                if not activate_still_visible:
+                    self._log("[Macro] Activate disappeared after the click, so the screen may have "
+                              "changed. The party Start button was not recognized; capture "
+                              "portal_start or portal_party in Image Manager. Stopping this "
+                              "attempt instead of clicking the old Activate point on a new screen.")
+                    return False
             self._log(f"[Macro] {label} -- the click doesn't seem to have registered "
                       f"({' / '.join(expect)} never appeared).")
         self._log(f"[Macro] {label} failed after {attempts} attempts -- giving up on this "

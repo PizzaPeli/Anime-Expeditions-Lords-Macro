@@ -258,14 +258,11 @@ RUN_HISTORY_LIMIT = 50  # oldest entries drop off past this -- a running log, no
 # through the Story maps over time, so config/count-tracking is
 # keyed by MAP (which macro to run for it, how many times it's been played
 # today) while the 3 slots are just simple on/off toggles for "attempt
-# whatever's in this slot". CHALLENGE_STORY_MAPS matches TASK_DATA.story's
-# maps in ui/app.js -- a map the game can land on but this list omits gets no
-# Story Map Setup row, so setup_ready reports green while that destination has
-# no macro at all (test_challenge_maps.py guards the three copies). Daily
+# whatever's in this slot". Map choices now come from Settings > Map Setup;
+# Challenge and the task picker both read that registry. Daily
 # counts and the once-a-day Daily Challenge use the game's shared 00:00 UTC
 # rollover; the independent Regular Challenge stage-availability clock still
 # rotates every :00/:30.
-CHALLENGE_STORY_MAPS = ["School Grounds", "Rose Kingdom", "Fairy King Forest", "King's Tomb", "Flower Forest", "East Town"]
 CHALLENGE_STAGE_SLOTS = ["1", "2", "3"]
 CHALLENGE_DAILY_CAP = 10  # fixed, not user-editable -- see get_challenge_settings
 CHALLENGE_RESET_SCHEDULE = "utc_midnight_v1"
@@ -997,7 +994,54 @@ class Api:
         # for the same map overrides it, same as core.paths.load_path lets
         # your own recording under the same name override the shipped one.
         from core import paths as walk_paths
-        return {**walk_paths.load_shipped_default_walk_paths(), **cfg.load().get("default_walk_paths", {})}
+        mapped = {**walk_paths.load_shipped_default_walk_paths(),
+                  **(cfg.load().get("default_walk_paths", {}) or {})}
+        from core import map_setups
+        for name, entry in map_setups.load().items():
+            mapped[name] = entry.get("path") or ""
+        return {map_name: path_name for map_name, path_name in mapped.items()
+                if path_name and (walk_paths.load_path(path_name).get("events") or [])}
+
+    def get_map_setups(self) -> dict:
+        from core import map_setups, vision
+        setups = map_setups.load()
+        profiles = self.get_camera_profiles()
+        return {name: {**entry,
+                       "camera": profiles.get(name),
+                       "image_ready": bool(vision.template_variant_paths(entry.get("image") or "")),
+                       "card_ready": bool(vision.template_variant_paths(name, vision.MAPS_DIR))}
+                for name, entry in setups.items()}
+
+    def get_map_identification_images(self) -> list:
+        from core import vision
+        root = vision.UI_ASSETS_DIR
+        if not os.path.isdir(root):
+            return []
+        names = []
+        for entry in os.listdir(root):
+            full = os.path.join(root, entry)
+            if os.path.isdir(full) and any(f.lower().endswith(".png") for f in os.listdir(full)):
+                names.append(entry)
+            elif entry.lower().endswith(".png"):
+                names.append(entry[:-4])
+        return sorted(set(names), key=str.lower)
+
+    def set_map_setup(self, name: str, mode: str, image: str, path: str = "") -> dict:
+        from core import map_setups, vision
+        if not re.fullmatch(r"[A-Za-z0-9 _\-']+", (image or "").strip()):
+            return {"ok": False, "reason": "invalid_image_name"}
+        if not vision.template_variant_paths((image or "").strip()):
+            return {"ok": False, "reason": "identification_image_missing_in_image_manager"}
+        result = map_setups.save(name, mode, image, path)
+        if result.get("ok"):
+            result["map_setups"] = self.get_map_setups()
+        return result
+
+    def delete_map_setup(self, name: str) -> dict:
+        from core import map_setups
+        result = map_setups.remove(name)
+        result["map_setups"] = self.get_map_setups()
+        return result
 
     def set_default_walk_path(self, map_name: str, path_name: str) -> dict:
         from core import paths as walk_paths
@@ -1008,6 +1052,28 @@ class Api:
         personal.pop((map_name or "").strip(), None)
         cfg.update({"default_walk_paths": personal})
         return {"ok": True, "default_walk_paths": defaults}
+
+    def get_encounter_walk_paths(self) -> dict:
+        """Show only encounter routes whose recordings still contain movement."""
+        from core import paths as walk_paths
+        mapped = {**walk_paths.load_shipped_encounter_walk_paths(),
+                  **(cfg.load().get("encounter_walk_paths", {}) or {})}
+        return {map_name: path_name for map_name, path_name in mapped.items()
+                if path_name and (walk_paths.load_path(path_name).get("events") or [])}
+
+    def set_encounter_walk_path(self, map_name: str, path_name: str) -> dict:
+        """Assign a saved encounter route, or explicitly skip this map."""
+        from core import paths as walk_paths
+        map_name = (map_name or "").strip()
+        path_name = (path_name or "").strip()
+        if not map_name:
+            return {"ok": False, "reason": "map_name_required"}
+        if path_name and not (walk_paths.load_path(path_name).get("events") or []):
+            return {"ok": False, "reason": "path_has_no_recorded_movement"}
+        mapped = dict(cfg.load().get("encounter_walk_paths", {}) or {})
+        mapped[map_name] = path_name  # Empty overrides a built-in mapping.
+        cfg.update({"encounter_walk_paths": mapped})
+        return {"ok": True, "encounter_walk_paths": self.get_encounter_walk_paths()}
 
     # ---- Challenge tab ----
     def _default_challenge_settings(self) -> dict:
@@ -1035,7 +1101,7 @@ class Api:
             "stages": {slot: {"enabled": True, "count": 0, "last_played_at": 0} for slot in CHALLENGE_STAGE_SLOTS},
             # No Macro means the game handles combat with Auto Play. Choosing
             # a macro turns Auto Play off and runs that macro instead.
-            "maps": {m: {"macro": ""} for m in CHALLENGE_STORY_MAPS},
+            "maps": {m: {"macro": ""} for m in self.get_map_setups()},
             "last_reset_date": _current_challenge_reset_period(),
             "reset_schedule": CHALLENGE_RESET_SCHEDULE,
         }
@@ -1084,7 +1150,7 @@ class Api:
             merged_stages[slot]["ready"] = merged_stages[slot]["last_played_at"] < window_start
         merged["stages"] = merged_stages
         merged_maps = {}
-        for m in CHALLENGE_STORY_MAPS:
+        for m in self.get_map_setups():
             saved_map = (saved.get("maps") or {}).get(m) or {}
             merged_maps[m] = {"macro": saved_map.get("macro") or ""}
         merged["maps"] = merged_maps
@@ -1208,7 +1274,7 @@ class Api:
         return {"ok": True}
 
     def set_challenge_map_macro(self, map_name: str, macro: str) -> dict:
-        if map_name not in CHALLENGE_STORY_MAPS:
+        if map_name not in self.get_map_setups():
             return {"ok": False, "reason": "bad_map"}
         challenge = self.get_challenge_settings()
         challenge["maps"][map_name]["macro"] = macro or ""
@@ -1261,7 +1327,7 @@ class Api:
 
     @staticmethod
     def _challenge_macro_setup(settings: dict) -> dict:
-        return Api._story_macro_setup(settings, CHALLENGE_STORY_MAPS)
+        return Api._story_macro_setup(settings, (settings.get("maps") or {}).keys())
 
     def _default_crafting_settings(self) -> dict:
         from core.runner_constants import CRAFT_SPRITES, CRAFT_DEFAULT_EVERY
@@ -1910,6 +1976,7 @@ class Api:
             default_walk_paths, webhook_settings,
             expedition_color_buttons=data.get("expedition_color_buttons", True),
             camera_profiles=self.get_camera_profiles(),
+            map_setups=self.get_map_setups(),
             loose_team_ocr_match=data.get("loose_team_ocr_match", False),
             memory_refresh_enabled=data.get("memory_refresh_enabled", False),
             memory_refresh_hours=data.get("memory_refresh_hours", 4.0))
@@ -2670,7 +2737,8 @@ class Api:
                 pass
 
         def _on_closed():
-            self._log_window = None
+            if self._log_window is win:
+                self._log_window = None
 
         win.events.shown += _seed
         win.events.closed += _on_closed
@@ -2724,7 +2792,8 @@ class Api:
         self._wave_window = win
 
         def _on_closed():
-            self._wave_window = None
+            if self._wave_window is win:
+                self._wave_window = None
         win.events.closed += _on_closed
         return {"ok": True}
 
@@ -2749,7 +2818,8 @@ class Api:
         self._mouse_position_window = win
 
         def _on_closed():
-            self._mouse_position_window = None
+            if self._mouse_position_window is win:
+                self._mouse_position_window = None
         win.events.closed += _on_closed
         return {"ok": True}
 
@@ -4430,6 +4500,18 @@ class Api:
         except Exception as exc:
             self.logger.log(f"Detach-on-close failed: {exc}")
 
+    def close_pop_out_windows(self):
+        """Close windows owned by the main UI without closing the main UI."""
+        for name in ("_log_window", "_wave_window", "_mouse_position_window"):
+            win = getattr(self, name, None)
+            setattr(self, name, None)
+            if win is None:
+                continue
+            try:
+                win.destroy()
+            except Exception:
+                pass  # A pop-out may already have been closed by its own button.
+
     def close_window(self):
         # Quitting the macro must only ever detach Roblox, never take it down
         # with it: Windows destroys child windows when their parent closes,
@@ -4439,6 +4521,7 @@ class Api:
         from core import vision
         vision.close_all_mss()
         self.logger.close()
+        self.close_pop_out_windows()
         if self._window:
             self._window.destroy()
 
@@ -4896,6 +4979,7 @@ def _launch_ui():
     def on_closing():
         # Fallback for close paths other than our custom titlebar button
         # (e.g. Alt+F4): close_window() already handles the normal case.
+        api.close_pop_out_windows()
         api.detach_game_safely()
         api.persist_all_time()
         from core import vision

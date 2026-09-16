@@ -32,24 +32,35 @@ from .runner_constants import *  # noqa: F401,F403 -- the shared constants names
 
 
 class ChallengeOps:
+    def _challenge_image_map(self) -> dict:
+        return {entry.get("image"): name for name, entry in
+                (getattr(self, "_map_setups", {}) or {}).items()
+                if entry.get("image") and entry.get("image_ready", True)}
+
     def _detect_current_challenge_map(self, hwnd) -> str:
         """Regular Challenge is Story's own flow with the game picking a
-        random one of CHALLENGE_STORY_MAPS for you -- this is the "which one
+        random map for you -- this is the "which one
         did it land on" check, tried against each map's reference image
         (Assets/ui/<map>.png, a different purpose from Assets/maps/<map>.png's
         map-CARD search) in turn. Returns the matched map name, or None if
         none of them were found (not yet on a recognizable Challenge screen,
         or the wrong screen entirely)."""
+        image_map = ChallengeOps._challenge_image_map(self)
+        if not image_map:
+            return None
         try:
-            match, map_name = vision.find_image_any(hwnd, CHALLENGE_STORY_MAPS)
+            match, image_name = vision.find_image_any(hwnd, tuple(image_map))
         except vision.TemplateNotFound:
             return None
         if match is not None:
+            map_name = image_map[image_name]
             debug_path = self._debug_save(hwnd, map_name, match)
             suffix = f" Debug: {debug_path}" if debug_path else ""
             self._log(f'[Macro] Challenge map detected: "{map_name}" (score {match["score"]:.2f}).{suffix}')
             return map_name
-        return self._detect_challenge_map_ocr(hwnd)
+        # OCR aliases are a legacy fixed list. A new map belongs to the
+        # Settings registry only when its Image Manager label matches.
+        return None
 
     def _report_challenge_map_miss(self, hwnd, label: str) -> None:
         """Say WHY the map search came up empty, and keep the frame.
@@ -69,7 +80,7 @@ class ChallengeOps:
             best = []
             haystack = vision.capture_game_gray(hwnd)
             if haystack is not None:
-                for map_name in CHALLENGE_STORY_MAPS:
+                for map_name in ChallengeOps._challenge_image_map(self):
                     try:
                         vision.load_template_grays(map_name)
                     except vision.TemplateNotFound:
@@ -552,7 +563,8 @@ class ChallengeOps:
         is_daily = label == "Daily Challenge"
         task = {
             "mode": "story", "is_challenge": True, "is_daily_challenge": is_daily,
-            "map": detected_map, "difficulty": "Hard" if is_daily else "Normal",
+            "map": detected_map, "_identified_map": bool(detected_map),
+            "difficulty": "Hard" if is_daily else "Normal",
             "macro": macro_name, "play_mode": play_mode, "repeat": 1, "team": "", "equipment": "include",
             # Was never set at all, and _settle_autoplay_for_match reads a
             # missing key as "off" -- so a Challenge map with no macro did not

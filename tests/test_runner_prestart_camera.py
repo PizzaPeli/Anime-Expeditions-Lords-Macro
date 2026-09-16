@@ -48,3 +48,18 @@ def test_stop_during_camera_settle_skips_the_drag_immediately(monkeypatch):
 
     assert runner._run_prestart(123, stop_event, {"mode": "story"}, {}) is False
     assert calls == [], "camera setup must not run once Stop has already landed"
+
+
+def test_identified_map_path_runs_before_macro_even_with_autoplay(monkeypatch):
+    runner = _runner()
+    calls = []
+    monkeypatch.setattr(runner_module.camera, "run_camera_profile",
+                        lambda *_args: calls.append("camera"))
+    runner._run_walk_path_block = lambda *_args: calls.append("path")
+    runner._run_prestart_blocks = lambda *_args: calls.append("macro")
+    task = {"mode": "story", "map": "New Map", "macro": "Some Macro",
+            "auto_play": "autoplay", "_identified_map": True,
+            "_map_setup": {"path": "New Map path"}}
+
+    assert runner._run_prestart(123, threading.Event(), task, {}) is True
+    assert calls == ["camera", "path", "macro"]

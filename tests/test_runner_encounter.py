@@ -121,7 +121,10 @@ def _wire(monkeypatch, *, marker=True, prompt=True, events=(("w", "down", 0.0),)
     monkeypatch.setattr(rx.vision, "wait_for_image", wait_for_image)
     monkeypatch.setattr(rx.walk_paths, "load_shipped_encounter_walk_paths",
                         lambda: mapping if mapping is not None else {"Rose Kingdom": "RK route"})
-    monkeypatch.setattr(rx.walk_paths, "load_path", lambda n: {"events": list(events)})
+    monkeypatch.setattr(rx.cfg, "load", lambda: {"encounter_walk_paths": {}})
+    mapped_names = set((mapping if mapping is not None else {"Rose Kingdom": "RK route"}).values())
+    monkeypatch.setattr(rx.walk_paths, "load_path",
+                        lambda n: {"events": list(events) if n in mapped_names else []})
     monkeypatch.setattr(rx.walk_paths, "replay_events",
                         lambda e, kb, stop, sprint=False: replayed.append(True))
     # A clock that only moves when something sleeps. Without this, any
@@ -493,28 +496,51 @@ def _with_continue(monkeypatch, present):
                         lambda h, band, mask, run: {"cx": 575, "cy": 588} if present else None)
 
 
-def test_a_continue_ends_the_encounter_without_walking(monkeypatch):
-    """Strictly better than the walk when it is there: milliseconds, works on
-    any map rather than the four with a bundled route, and cannot strand the
-    character somewhere a recording did not expect."""
+def test_a_recorded_route_takes_priority_over_continue(monkeypatch):
+    """An assigned and populated encounter route must be used."""
     replayed = _wire(monkeypatch)
     _with_continue(monkeypatch, True)
     r = _Runner(task={"map": "Rose Kingdom"})
 
     out = r._handle_expedition_encounter(1, threading.Event(), _settled())
 
-    assert replayed == [], "walked even though Continue was available"
-    assert r.clicked_images == [], "opened Settings even though Continue was available"
+    assert replayed == [True]
+    assert r.clicked_images == ["nav_settings"]
     assert out["handled_at"] > 0.0, "the encounter must still be marked handled"
-    assert any("no walk needed" in m for m in r.logs)
 
 
 def test_without_a_continue_it_still_walks_the_route(monkeypatch):
-    """The walk stays as the fallback -- the Continue is a recent addition
-    and the older flow is the one known to work."""
+    """A recorded route is used even when Continue is absent."""
     replayed = _wire(monkeypatch)
     _with_continue(monkeypatch, False)
     r = _Runner(task={"map": "Rose Kingdom"})
+
+    r._handle_expedition_encounter(1, threading.Event(), _settled())
+
+    assert replayed == [True]
+    assert r.clicked_images == ["nav_settings"]
+
+
+def test_deleted_recording_skips_with_continue(monkeypatch):
+    replayed = _wire(monkeypatch, events=())
+    _with_continue(monkeypatch, True)
+    r = _Runner(task={"map": "Rose Kingdom"})
+
+    r._handle_expedition_encounter(1, threading.Event(), _settled())
+
+    assert replayed == []
+    assert r.clicked_images == []
+    assert any("skipped with Continue" in m for m in r.logs)
+
+
+def test_named_recording_is_used_without_a_mapping(monkeypatch):
+    from core import runner_expedition as rx
+    replayed = _wire(monkeypatch, mapping={})
+    monkeypatch.setattr(rx.walk_paths, "load_path",
+                        lambda name: {"events": [("w", "down", 0.0)]}
+                        if name == "Expeditions New Map" else {"events": []})
+    _with_continue(monkeypatch, True)
+    r = _Runner(task={"map": "New Map"})
 
     r._handle_expedition_encounter(1, threading.Event(), _settled())
 
