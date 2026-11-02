@@ -53,6 +53,8 @@ jobs:
       - name: Resolve release tag
         id: release
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           $version = (Get-Content VERSION -Raw).Trim()
           $tag = "v$version"
@@ -65,10 +67,29 @@ jobs:
             [IO.File]::WriteAllText("$env:RUNNER_TEMP/release-notes.md", $body)
             git config user.name 'github-actions[bot]'
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git tag -a $tag -F "$env:RUNNER_TEMP/release-notes.md"
-            if ($LASTEXITCODE -ne 0) { throw 'Could not create release tag' }
-            git push origin "refs/tags/$tag"
-            if ($LASTEXITCODE -ne 0) { throw 'Could not push release tag' }
+            $oldTag = git rev-parse --verify "refs/tags/$tag" 2>$null
+            if ($LASTEXITCODE -eq 0) {
+              $tagCommit = git rev-list -n 1 $tag
+              $headCommit = git rev-parse HEAD
+              if ($tagCommit -ne $headCommit) {
+                # Recover a failed, unpublished build; never move a released tag.
+                $releaseProbe = gh api "repos/${{ github.repository }}/releases/tags/$tag" 2>&1
+                if ($LASTEXITCODE -eq 0 -or "$releaseProbe" -notmatch 'HTTP 404') {
+                  throw 'Refusing to move a published tag or an unverified release'
+                }
+                git merge-base --is-ancestor $tagCommit HEAD
+                if ($LASTEXITCODE -ne 0) { throw 'Release repair must descend from the original tag' }
+                git tag -f -a $tag -F "$env:RUNNER_TEMP/release-notes.md"
+                if ($LASTEXITCODE -ne 0) { throw 'Could not repair release tag' }
+                git push origin "refs/tags/$tag" "--force-with-lease=refs/tags/${tag}:$oldTag"
+                if ($LASTEXITCODE -ne 0) { throw 'Release tag changed during repair' }
+              }
+            } else {
+              git tag -a $tag -F "$env:RUNNER_TEMP/release-notes.md"
+              if ($LASTEXITCODE -ne 0) { throw 'Could not create release tag' }
+              git push origin "refs/tags/$tag"
+              if ($LASTEXITCODE -ne 0) { throw 'Could not push release tag' }
+            }
           } elseif ('${{ github.ref_name }}' -ne $tag) {
             throw 'Release tag must match VERSION'
           }

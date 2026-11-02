@@ -59,8 +59,8 @@ venv/
 
 # Build output -- see build_pyinstaller.py / build_bootstrap.py. The
 # release workflow builds these fresh in CI; never commit a local build.
-build/
-dist/
+/build/
+/dist/
 *.spec
 .bootstrap_version
 
