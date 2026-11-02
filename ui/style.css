@@ -2523,6 +2523,9 @@ body.compact-mode #compact-strip { left: 0; }
 
 .soul-recommendation {margin-top:18px; padding:14px; border:1px solid var(--border); border-radius:10px;}
 .soul-recommendation details {margin-top:10px;}
+.soul-autoplay-code {display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-top:12px; font-size:13px;}
+.soul-autoplay-code[hidden] {display:none;}
+.soul-autoplay-code input {width:180px; max-width:100%; min-height:36px; font-family:monospace; font-size:16px; user-select:text;}
 .soul-recommendation summary {cursor:pointer; padding:6px 0; font-size:13px;}
 .soul-recommendation img {display:block; width:100%; max-width:720px; height:auto; margin-top:10px; border-radius:8px;}
 

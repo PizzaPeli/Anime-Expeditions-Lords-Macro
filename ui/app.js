@@ -3203,7 +3203,7 @@ function renderSoulPurchases(t) {
     <b>Recommended team &amp; Auto Play for 400+ Candy Corn in under 3 minutes</b>
     <p class="wh-hint">Soul Furnace Infinite: use the team and equipment shown, with units in the same slot order as the Auto Play preset.</p>
     ${setup && setup.team ? `<details><summary>View recommended team and equipment</summary><button class="soul-recommendation-image" onclick="viewSoulRecommendation('team')" title="Open team screenshot at full size"><img loading="lazy" src="${escapeHtml(setup.team)}" alt="Recommended Soul Furnace team with six units and their equipment"></button></details>` : ''}
-    ${setup && setup.autoplay ? `<details><summary>View recommended Auto Play preset</summary><button class="soul-recommendation-image" onclick="viewSoulRecommendation('autoplay')" title="Open Auto Play screenshot at full size"><img loading="lazy" src="${escapeHtml(setup.autoplay)}" alt="Recommended Soul Furnace Auto Play share preset"></button></details>` : ''}
+    ${setup && setup.autoplay_code ? `<label class="soul-autoplay-code">Auto Play import code<input class="block-input" aria-label="Auto Play import code" readonly value="${escapeHtml(setup.autoplay_code)}" onclick="this.select()"></label>` : ''}
   </section>`;
   return `${recommended}<section class="soul-purchase-editor" style="margin-top:20px; border-top:1px solid var(--border); padding-top:16px;">
     <div class="flex items-center justify-between gap-2"><b>Soul Forge Purchases</b>
@@ -3229,11 +3229,14 @@ function viewSoulRecommendation(key) {
     dialog = document.createElement('dialog');
     dialog.id = 'soul-recommendation-dialog';
     dialog.className = 'soul-recommendation-dialog';
-    dialog.innerHTML = '<button class="task-toolbar-btn" onclick="this.closest(\'dialog\').close()">Close screenshot</button><img alt="Soul Furnace recommended setup">';
+    dialog.innerHTML = '<button class="task-toolbar-btn" onclick="this.closest(\'dialog\').close()">Close screenshot</button><label class="soul-autoplay-code">Auto Play import code<input class="block-input" aria-label="Auto Play import code" readonly onclick="this.select()"></label><img alt="Soul Furnace recommended setup">';
     dialog.addEventListener('close', restoreGameIfDashboard);
     document.body.appendChild(dialog);
   }
   dialog.querySelector('img').src = source;
+  const code = soulRecommendation.autoplay_code || '';
+  dialog.querySelector('.soul-autoplay-code').hidden = !code;
+  dialog.querySelector('input').value = code;
   try { window.pywebview && pywebview.api.hide_game(); } catch (e) {}
   dialog.showModal();
 }

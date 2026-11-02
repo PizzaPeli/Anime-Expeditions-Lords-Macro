@@ -3264,14 +3264,18 @@ class Api:
                                               data.get("debug_screenshots", False), coords)
 
     def get_soul_furnace_recommendation(self) -> dict:
-        """Creator-provided screenshots for the Soul Furnace task setup guide."""
+        """Creator-provided team screenshot and Auto Play share code."""
         import base64
         result = {}
-        for key, filename in (("team", "recommended_team.png"), ("autoplay", "recommended_autoplay.png")):
+        for key, filename in (("team", "recommended_team.png"),):
             path = os.path.join(constants.ASSETS_DIR, "reference", "soul_furnace", filename)
             if os.path.isfile(path):
                 with open(path, "rb") as image_file:
                     result[key] = "data:image/png;base64," + base64.b64encode(image_file.read()).decode("ascii")
+        code_path = os.path.join(constants.ASSETS_DIR, "reference", "soul_furnace", "recommended_autoplay.txt")
+        if os.path.isfile(code_path):
+            with open(code_path, encoding="utf-8") as code_file:
+                result["autoplay_code"] = code_file.read().strip()
         return result
 
     def open_assets_folder(self) -> dict:

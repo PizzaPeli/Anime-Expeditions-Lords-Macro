@@ -166,7 +166,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.release.outputs.tag }}
-          name: ${{ steps.release.outputs.tag == 'v0.1.0' && 'v0.1.0 - Halloween + QoL update' || steps.release.outputs.tag }}
+          name: ${{ steps.release.outputs.tag == 'v0.1.1' && 'v0.1.1 - Soul Furnace Team Update' || steps.release.outputs.tag == 'v0.1.0' && 'v0.1.0 - Halloween + QoL update' || steps.release.outputs.tag }}
           prerelease: false
           make_latest: true
           body: ${{ steps.changelog.outputs.body }}

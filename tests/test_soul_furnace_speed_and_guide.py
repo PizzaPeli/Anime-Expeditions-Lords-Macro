@@ -78,7 +78,7 @@ def test_captured_boss_purchase_uses_three_frames_and_still_confirms_forging(mon
     assert soul.PURCHASE_RETRY_SECONDS == 3.0
 
 
-def test_recommendation_api_returns_the_creator_screenshots():
+def test_recommendation_api_returns_team_screenshot_and_autoplay_text():
     path = ROOT / "main.py"
     module = ast.parse(path.read_text(encoding="utf-8"))
     api = next(n for n in module.body if isinstance(n, ast.ClassDef) and n.name == "Api")
@@ -87,7 +87,9 @@ def test_recommendation_api_returns_the_creator_screenshots():
     env = dict(os=os, constants=SimpleNamespace(ASSETS_DIR=str(ROOT / "Assets")))
     exec(compile(ast.Module(body=[method], type_ignores=[]), str(path), "exec"), env)
     result = env[method.name](None)
-    for key in ("team", "autoplay"):
+    assert result["autoplay_code"] == "TWRK-8HPC"
+    assert "autoplay" not in result
+    for key in ("team",):
         prefix, encoded = result[key].split(",", 1)
         assert prefix == "data:image/png;base64"
         original = (ROOT / f"Assets/reference/soul_furnace/recommended_{key}.png").read_bytes()

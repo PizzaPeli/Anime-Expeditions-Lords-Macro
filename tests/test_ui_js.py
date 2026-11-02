@@ -1782,10 +1782,10 @@ def test_lobby_interval_is_rendered_for_every_task_mode_and_matchmaking(tmp_path
 
 
 
-def test_soul_recommendation_shows_team_and_autoplay_screenshots(tmp_path):
+def test_soul_recommendation_shows_team_and_selectable_autoplay_code(tmp_path):
     result = run_js(r"""
         const SOUL_FORGE_ITEMS={final_boss:'Final Boss'};
-        const soulRecommendation={team:'data:image/png;base64,dGVhbQ==',autoplay:'data:image/png;base64,cHJlc2V0'};
+        const soulRecommendation={team:'data:image/png;base64,dGVhbQ==',autoplay_code:'TWRK-8HPC'};
         function escapeHtml(s) { return String(s); }
         eval(extract('soulPurchaseRows')); eval(extract('renderSoulPurchases'));
         const html=renderSoulPurchases({id:'test'});
@@ -1794,9 +1794,12 @@ def test_soul_recommendation_shows_team_and_autoplay_screenshots(tmp_path):
     html=result['html']
     assert '400+ Candy Corn in under 3 minutes' in html
     assert 'View recommended team and equipment' in html
-    assert 'View recommended Auto Play preset' in html
+    assert 'Auto Play import code' in html
     assert 'data:image/png;base64,dGVhbQ==' in html
-    assert 'data:image/png;base64,cHJlc2V0' in html
+    assert 'TWRK-8HPC' in html
+    assert 'readonly' in html
+    assert "this.select()" in html
+    assert html.count('<img ') == 1
     assert 'same slot order' in html
 
 
@@ -1812,3 +1815,23 @@ def test_full_size_setup_screenshot_blocks_game_until_closed(tmp_path):
         console.log(JSON.stringify({whileOpen,afterClose:isBlockingOverlayOpen()}));
     """,tmp_path)
     assert result == {'whileOpen':True,'afterClose':False}
+
+
+def test_team_viewer_shows_autoplay_code_and_restores_game_on_close(tmp_path):
+    result = run_js(r"""
+        const soulRecommendation={team:'data:image/png;base64,dGVhbQ==',autoplay_code:'TWRK-8HPC'};
+        const img={}, input={}, label={};
+        let closed, hidden=0, opened=0;
+        const dialog={querySelector:s=>s==='img'?img:s==='input'?input:label,
+                      addEventListener:(event,fn)=>{if(event==='close') closed=fn;},
+                      showModal:()=>opened++};
+        const document={getElementById:()=>null,createElement:()=>dialog,body:{appendChild:()=>{}}};
+        function restoreGameIfDashboard() {}
+        const window={pywebview:true}, pywebview={api:{hide_game:()=>hidden++}};
+        eval(extract('viewSoulRecommendation'));
+        viewSoulRecommendation('team');
+        console.log(JSON.stringify({source:img.src,code:input.value,codeHidden:label.hidden,
+            hidden,opened,restores:closed===restoreGameIfDashboard}));
+    """, tmp_path)
+    assert result == dict(source='data:image/png;base64,dGVhbQ==',code='TWRK-8HPC',
+                          codeHidden=False,hidden=1,opened=1,restores=True)

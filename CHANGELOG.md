@@ -1,3 +1,9 @@
+# v0.1.1 - Soul Furnace Team Update
+
+- Update the recommended Soul Furnace team and equipment screenshot.
+- Show the Auto Play import code `TWRK-8HPC` as selectable text alongside the team screenshot and in its full-size viewer.
+- Keep the recommended setup guidance for 400+ Candy Corn in under 3 minutes.
+
 # v0.1.0 - Halloween + QoL update
 
 Published as a normal release, with the Windows executable and required editable Assets included.
