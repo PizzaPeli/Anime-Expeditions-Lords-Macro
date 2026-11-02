@@ -1347,7 +1347,6 @@ class BlockOps:
         Clamping shifts the box, so the "closest" test and the returned
         offset are both measured from where the caller actually asked about,
         not from the middle of the captured region."""
-        import numpy as np
         size = PLACE_SEARCH_BOX_SIZE
         half = size // 2
         # Top-left of the box, pulled back inside the window if centering it
