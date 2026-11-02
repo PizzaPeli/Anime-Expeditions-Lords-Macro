@@ -51,6 +51,8 @@ def test_stop_during_camera_settle_skips_the_drag_immediately(monkeypatch):
 
 
 def test_identified_map_path_runs_before_macro_even_with_autoplay(monkeypatch):
+    from core import map_capture
+    monkeypatch.setattr(map_capture, "save_placement_reference", lambda *args, **kwargs: None)
     runner = _runner()
     calls = []
     monkeypatch.setattr(runner_module.camera, "run_camera_profile",
@@ -63,3 +65,26 @@ def test_identified_map_path_runs_before_macro_even_with_autoplay(monkeypatch):
 
     assert runner._run_prestart(123, threading.Event(), task, {}) is True
     assert calls == ["camera", "path", "macro"]
+
+
+def test_placement_capture_follows_camera_and_skips_replays_and_failures(monkeypatch):
+    from core import map_capture
+    runner = _runner()
+    calls = []
+    runner._interruptible_sleep = lambda seconds, *_: calls.append(("settle", seconds))
+    monkeypatch.setattr(map_capture, "save_placement_reference",
+                        lambda *args, **kwargs: calls.append("capture"))
+    monkeypatch.setattr(runner_module.camera, "run_camera_profile",
+                        lambda *_: calls.append("camera"))
+    task = {"mode": "story", "_map_unknown": True}
+    assert runner._run_prestart(123, threading.Event(), task, {}) is True
+    assert calls == [("settle", runner_module.CAMERA_SETUP_SETTLE), "camera", ("settle", 0.3), "capture"]
+    calls.clear()
+    assert runner._run_prestart(123, threading.Event(), task, {}, first_repeat=False) is True
+    assert "capture" not in calls
+    calls.clear()
+    def fail(*_):
+        raise RuntimeError("camera unavailable")
+    monkeypatch.setattr(runner_module.camera, "run_camera_profile", fail)
+    assert runner._run_prestart(123, threading.Event(), task, {}) is True
+    assert "capture" not in calls

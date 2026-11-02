@@ -1,7 +1,24 @@
 import threading
 from unittest.mock import MagicMock
 
+import pytest
+
 from core.runner import MacroRunner
+
+
+@pytest.mark.parametrize("task, enabled", [
+    ({"mode": "portals", "portal_autofishing": False}, False),
+    ({"mode": "portals", "portal_autofishing": True}, True),
+    ({"mode": "portals"}, True),
+    ({"mode": "story", "portal_autofishing": True}, False),
+])
+def test_battle_respects_portal_autofishing_toggle(task, enabled):
+    runner = _runner()
+    runner._start_portal_fishing = MagicMock(return_value=True)
+    runner._checkpoint = MagicMock(return_value=True)
+
+    assert runner._wait_for_match_result(1, threading.Event(), task=task) is None
+    assert runner._start_portal_fishing.call_count == int(enabled)
 
 
 def _runner():

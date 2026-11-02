@@ -1,4 +1,4 @@
-Repeat_Floor.png
+repeat_floor.png
 
 Crop tightly around the Repeat Floor button on the Tower result screen.
 This retries the current floor.

@@ -40,9 +40,16 @@ MAX_TOGGLE_ALREADY_SELECTED = "already_max"
 MAX_TOGGLE_UNKNOWN = "unknown"
 
 AUTO_SHOP_UI_TEMPLATES = {
+    "remote_menu": "shop_remote_menu",
+    "remote_all_shops": "shop_remote_all_shops",
+    "remote_restocking": "shop_remote_restocking",
+    "remote_gold_card": "shop_remote_gold_card",
+    "remote_header": "shop_remote_header",
+    "remote_close": "shop_remote_close",
     "navigation": "nav_shop",
     "destination": "area_gold_shop",
     "shop_tab": "shop_gold_tab",
+    "list_header": "shop_list_header",
     "buy": "shop_buy",
     "amount_max": "shop_amount_max",
     "amount_min": "shop_amount_min",
@@ -60,18 +67,15 @@ AUTO_SHOP_UI_TEMPLATES = {
 }
 
 AUTO_SHOP_ITEMS = (
-    {"key": "cursed_boba", "name": "Cursed Boba", "stock": 50, "template": "shop_cursed_boba"},
-    {"key": "red_flower", "name": "Red Flower", "stock": 75, "template": "shop_red_flower"},
+    {"key": "cursed_boba", "name": "Cursed Boba", "stock": 100, "template": "shop_cursed_boba"},
+    {"key": "red_flower", "name": "Red Flower", "stock": 100, "template": "shop_red_flower"},
     {"key": "frown_fruit", "name": "Frown Fruit", "stock": 100, "template": "shop_frown_fruit"},
-    {"key": "delicious_pie", "name": "Delicious Pie", "stock": 125, "template": "shop_delicious_pie"},
-    {"key": "mana_flask", "name": "Mana Flask", "stock": 150, "template": "shop_mana_flask"},
-    # Meat is the 6th food, added to the game after this catalog was written.
-    # ORDER IS LOAD-BEARING: runner_shop navigates the Gold Shop by scroll
-    # position and column, two items per row, so inserting here shifts every
-    # item below it one slot -- which is exactly what broke Auto Shop right
-    # after the fifth food. runner_shop's four layout tables are updated to
-    # match; change one and you must change all of them.
-    {"key": "meat", "name": "Meat", "stock": 200, "template": "shop_meat"},
+    {"key": "delicious_pie", "name": "Delicious Pie", "stock": 100, "template": "shop_delicious_pie"},
+    {"key": "mana_flask", "name": "Mana Flask", "stock": 100, "template": "shop_mana_flask"},
+    # Catalog order controls the settings display; discovery uses item images.
+    {"key": "meat", "name": "Meat", "stock": 100, "template": "shop_meat"},
+    {"key": "survival_rations", "name": "Survival Rations", "stock": 100, "template": "shop_survival_rations"},
+    {"key": "rice", "name": "Rice", "stock": 100, "template": "shop_rice"},
     {"key": "trait_crystal", "name": "Trait Crystal", "stock": 25, "template": "shop_trait_crystal"},
     {"key": "sprite_grey", "name": "Sprite (Grey)", "stock": 25, "template": "shop_sprite_grey"},
     {
@@ -111,6 +115,25 @@ def discover_items(root=None):
 AUTO_SHOP_ITEMS = discover_items()
 AUTO_SHOP_ITEMS_BY_KEY = {item["key"]: item for item in AUTO_SHOP_ITEMS}
 
+# Distinct keys keep each currency's quantities and progress independent.
+EXPEDITION_SHOP_ITEMS = tuple(
+    {"key": "exp_" + key, "name": name, "stock": stock,
+     "template": "shop_exp_" + key}
+    for key, name, stock in (
+        ("gem", "50x Gem", 250), ("gold", "50x Gold", 500),
+        ("stat_lock", "Stat Lock", 15), ("stat_reroll", "Stat Reroll", 15),
+        # This capture is sold out; its total stock is unknown. Do not infer
+        # a daily maximum from another shop selling the same item.
+        ("trait_crystal", "Trait Crystal", 9999),
+        ("enhanced_katana", "Item", 1),
+        ("equipment_reroll", "Equipment Reroll", 5),
+        ("equipment_lock", "Equipment Lock", 5),
+    )
+)
+SHOP_CATALOGS = {"gold_shop": AUTO_SHOP_ITEMS, "expedition_shop": EXPEDITION_SHOP_ITEMS}
+SHOP_NAMES = {"gold_shop": "Gold Shop", "expedition_shop": "Expedition Shop"}
+AUTO_SHOP_ITEMS_BY_KEY.update({item["key"]: item for item in EXPEDITION_SHOP_ITEMS})
+
 _LEFT_COUNT_PATTERN = re.compile(r"(?<!\d)(\d{1,3})(?!\d)")
 _VALID_STATUSES = {
     STATUS_PENDING,
@@ -140,55 +163,40 @@ def item_definition(item_key: str) -> Mapping:
 
 
 def default_auto_shop_settings() -> dict:
-    """Return the disabled, safest-first settings for the Gold Shop."""
-    return {
-        "enabled": False,
-        "shops": {
-            "gold_shop": {
-                "enabled": False,
-                "items": {
-                    item["key"]: {"enabled": False, "target": 1}
-                    for item in AUTO_SHOP_ITEMS
-                },
-            },
-        },
-    }
+    return {"enabled": False, "view": "list", "shops": {
+        key: {"enabled": False, "items": {
+            item["key"]: {"enabled": False, "target": 1} for item in catalog
+        }} for key, catalog in SHOP_CATALOGS.items()
+    }}
 
 
 def normalize_auto_shop_settings(saved: Optional[Mapping]) -> dict:
-    """Merge persisted input into the known catalog without trusting its shape."""
     defaults = default_auto_shop_settings()
     if not isinstance(saved, Mapping):
         return defaults
-
     defaults["enabled"] = bool(saved.get("enabled", False))
+    defaults["view"] = "squares" if saved.get("view") == "squares" else "list"
     saved_shops = saved.get("shops")
     if not isinstance(saved_shops, Mapping):
         return defaults
-    saved_gold_shop = saved_shops.get("gold_shop")
-    if not isinstance(saved_gold_shop, Mapping):
-        return defaults
-
-    gold_shop = defaults["shops"]["gold_shop"]
-    gold_shop["enabled"] = bool(saved_gold_shop.get("enabled", False))
-    saved_items = saved_gold_shop.get("items")
-    if not isinstance(saved_items, Mapping):
-        return defaults
-
-    for item in AUTO_SHOP_ITEMS:
-        item_key = item["key"]
-        saved_item = saved_items.get(item_key)
-        if not isinstance(saved_item, Mapping):
+    for shop_key, catalog in SHOP_CATALOGS.items():
+        source = saved_shops.get(shop_key)
+        if not isinstance(source, Mapping):
             continue
-        target = saved_item.get("target", 1)
-        try:
-            target = normalize_target(target, int(item["stock"]))
-        except ValueError:
-            target = 1
-        gold_shop["items"][item_key] = {
-            "enabled": bool(saved_item.get("enabled", False)),
-            "target": target,
-        }
+        shop = defaults["shops"][shop_key]
+        shop["enabled"] = bool(source.get("enabled", False))
+        saved_items = source.get("items")
+        if not isinstance(saved_items, Mapping):
+            continue
+        for item in catalog:
+            entry = saved_items.get(item["key"])
+            if not isinstance(entry, Mapping):
+                continue
+            try:
+                target = normalize_target(entry.get("target", 1), int(item["stock"]))
+            except ValueError:
+                target = 1
+            shop["items"][item["key"]] = {"enabled": bool(entry.get("enabled", False)), "target": target}
     return defaults
 
 

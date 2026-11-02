@@ -10,7 +10,7 @@ it over the install dir, skipping anything the user owns (settings.json,
 debug/, Paths/, Templates/, regenerated Assets -- same list .gitignore
 excludes).
 
-Running as a built exe (see build_pyinstaller.py): downloads the release
+Running as a built exe (see scripts/build/build_pyinstaller.py): downloads the release
 zip (the only binary asset a release publishes -- exe + Assets/ side by
 side), extracts the new exe out of it, and swaps the exe file itself --
 robocopying loose .py source over a compiled exe's directory wouldn't do
@@ -355,7 +355,7 @@ nohup ./run.sh >/dev/null 2>&1 &
 
 # ---------------------------------------------------------------------------
 # Assets (the user-editable reference-image folder shipped BESIDE the exe,
-# not inside it -- see build_pyinstaller.py / release.yml / core.constants.
+# not inside it -- see scripts/build/build_pyinstaller.py / release.yml / core.constants.
 # ASSETS_DIR). Sourced from the release zip's Assets/ entries (no separate
 # Assets.zip asset anymore -- see RELEASE_ZIP_NAME). Add-only for anything
 # genuinely new (a new macro step's button crop, a new map's name label),

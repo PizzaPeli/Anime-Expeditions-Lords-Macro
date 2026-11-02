@@ -1249,16 +1249,12 @@ class BlockOps:
         if block.get("mode") == "custom" and block.get("pathName"):
             path_name = block["pathName"]
         else:
-            # A Raid map's Acts (and Event's) can each need a different walk
-            # (e.g. Spirit City Act 3, or each Event villain -- see ACT_ORDER/
-            # EVENT_ACT_ORDER) -- looked up as "<map> Act<n>" first, falling
-            # back to the plain map-name entry other Acts/Story share, so only
-            # the Acts that actually need a different walk need their own
-            # default_walk_paths entry. Event ships "Event Act1"/"Event Act2"
-            # -> Villian1/Villian2 (see Assets/default_walk_paths.json).
+            # A Raid map's Acts can each need a different walk (for example,
+            # Spirit City Act 3), so look up "<map> Act<n>" first and fall
+            # back to the plain map-name entry used by the other Acts/Story.
             path_name = None
             if map_name:
-                if task.get("mode") in ("raid", "event"):
+                if task.get("mode") == "raid":
                     path_name = default_walk_paths.get(f"{map_name} Act{task.get('stage')}")
                 path_name = path_name or default_walk_paths.get(map_name)
         if not path_name:

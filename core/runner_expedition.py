@@ -100,6 +100,10 @@ class ExpeditionOps:
             self._replay_battle_after_restage()
             return None
 
+        # Re-arm on popup disappearance, so repeated frames of one Start
+        # Game cannot rewind Battle, but each later sub-round can.
+        self._battle_replayed = False
+
         # Same idea as the nav_start_game re-check above -- a level-up
         # "Select an upgrade!" reward-card modal (confirmed via a real
         # capture sitting right on top of the extract/continue choice) gets
@@ -501,27 +505,11 @@ class ExpeditionOps:
         self._advance_encounter_dialogue(left, top)
 
     def _replay_battle_after_restage(self) -> None:
-        """A mid-run "Start Game?" stages a new sub-round, and the units
-        already on the board run off it entirely -- reported live, and the
-        reason a template that placed units earlier can finish the match with
-        none of them down.
+        """Replay Battle once per later Start Game popup.
 
-        Their tiles free up with them, which is what makes replaying the
-        Battle phase the right answer rather than a risky one: a unit still
-        standing leaves its tile occupied, so the placement finds no valid
-        tile there and skips it, and only the ones that actually left get put
-        back. No verification and no bookkeeping -- the game's own occupancy
-        is the check.
-
-        The board-disruption clock restarts too, so a Wait for Wave at the top
-        of the phase holds its full quiet period again before the placements
-        re-run. The round is still re-staging, and gold is still accruing
-        toward whatever could not be afforded last time.
-
-        Only the first re-stage of a match does any of this, and the flag
-        resets in _play_one_match -- so every repeat of the stage gets its own
-        replay, while a chatty Start Game popup inside one match cannot rewind
-        the phase over and over and leave the placements never finishing.
+        Pre Start remains once per expedition. Phantom-unit handling and
+        affordability belong to the game; do not probe previously placed
+        units here. The initial popup is already consumed by _play_one_match.
         """
         if self._battle_replayed:
             return
@@ -529,8 +517,8 @@ class ExpeditionOps:
         self._battle_block_index = 0
         self._battle_block_state = {}
         self._last_board_disruption_at = time.time()
-        self._log("[Macro] The round is re-staging, so the units have left the board -- "
-                  "replaying the Battle phase once to put them back.")
+        self._log("[Macro] A later Start Game prompt appeared -- replaying Battle "
+                  "placements once for this round; Pre Start stays complete.")
 
     def _check_expedition_checkpoint_by_color(self, hwnd, stop_event: threading.Event) -> str:
         """The color-first checkpoint engine (see the EXP_COLOR_* block for
@@ -858,7 +846,7 @@ class ExpeditionOps:
             if self._checkpoint(stop_event):
                 break
             try:
-                blocking = vision.find_image(hwnd, "select upgrade card")
+                blocking = vision.find_image(hwnd, "select_upgrade_card")
             except vision.TemplateNotFound:
                 break                      # no image for it -> nothing to wait on
             if blocking is None:

@@ -14,6 +14,8 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body class="h-full w-full flex">
+  <div id="window-resize-grip" role="presentation" title="Drag to resize"
+       onmousedown="if(event.button === 0 && window.pywebview) pywebview.api.begin_resize()"></div>
   <!-- Liquid Glass theme's animated backdrop (see #glass-aurora in
        style.css) -- FIRST child on purpose: later siblings paint above it
        with no z-index involvement. display:none outside the theme. -->
@@ -32,7 +34,7 @@
   </svg>
 
 
-  <!-- Custom left navigation rail (frameless window, no native OS chrome). Hidden while the
+  <!-- Custom top navigation bar (frameless window, no native OS chrome). Hidden while the
        waiting screen shows (see showWaiting()/showDocked() in app.js) so the
        loading state reads as just the spinner, not a half-built app shell. -->
   <div id="titlebar" class="pywebview-drag-region flex items-center justify-between px-4 border-b flex-shrink-0"
@@ -41,7 +43,7 @@
       <button onclick="pywebview.api.minimize_window()" class="titlebar-btn no-drag tooltip-right flex items-center justify-center rounded text-sm" style="color: var(--text-dim);" data-tooltip="Minimize" aria-label="Minimize">
         <span aria-hidden="true">&#8211;</span>
       </button>
-      <button onclick="pywebview.api.maximize_window()" class="titlebar-btn no-drag tooltip-right flex items-center justify-center rounded text-sm" style="color: var(--text-dim);" data-tooltip="Maximize" aria-label="Maximize">
+      <button onclick="pywebview.api.maximize_window()" class="titlebar-btn no-drag tooltip-right flex items-center justify-center rounded text-sm" style="color: var(--text-dim);" data-tooltip="Maximize / Restore" aria-label="Maximize / Restore">
         <span aria-hidden="true">&#9633;</span>
       </button>
       <button onclick="pywebview.api.close_window()" class="titlebar-btn no-drag tooltip-right flex items-center justify-center rounded text-sm" style="color: var(--text-dim);" data-tooltip="Close" aria-label="Close" onmouseover="this.style.background='var(--rose)'; this.style.color='#fff';" onmouseout="this.style.background=''; this.style.color='var(--text-dim)';">
@@ -54,16 +56,7 @@
       <span class="app-name text-sm font-semibold" style="color: var(--text-dim);">Lord's Macro</span>
     </div>
 
-    <div class="titlebar-timers flex items-center gap-3 tooltip-left no-drag" data-tooltip="Time this session / all-time total">
-      <div class="flex flex-col" style="line-height: 1;">
-        <span class="text-[8px] uppercase tracking-wider" style="color: var(--text-muted);">All Time</span>
-        <span id="alltime-time" class="text-xs font-semibold" style="color: var(--lilac);">00:00</span>
-      </div>
-      <div class="flex flex-col" style="line-height: 1;">
-        <span class="text-[8px] uppercase tracking-wider" style="color: var(--text-muted);">Session</span>
-        <span id="session-time" class="text-xs font-semibold" style="color: var(--text-dim);">00:00</span>
-      </div>
-    </div>
+
 
     <div class="titlebar-nav flex items-center gap-1 no-drag">
       <button id="nav-dashboard" onclick="switchScreen('dashboard')" class="nav-btn active no-drag">
@@ -109,21 +102,9 @@
       </button>
     </div>
 
-    <div class="titlebar-footer flex items-center gap-4 no-drag">
-      <div class="footer-wordmark flex flex-col items-start" style="line-height: 1;">
-        <span class="logo-anime text-[8px] uppercase tracking-widest font-bold">Anime</span>
-        <span class="logo-expeditions brand-font text-base font-bold" style="line-height: 1.1;">Expeditions</span>
-        <button type="button" id="ver-badge" class="ver-badge-btn flex items-center gap-1.5 text-[10px] px-2 py-0.5 rounded-md border font-medium no-drag mt-2" style="color: var(--brand); border-color: var(--border); background: var(--bg-surface); cursor: pointer;" title="Click to check for updates" onclick="manualCheckForUpdate()">
-          <svg class="w-3 h-3 ver-badge-icon flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/>
-            <path d="M3 21v-5h5"/>
-            <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/>
-            <path d="M21 3v5h-5"/>
-          </svg>
-          <span>Updates</span>
-          <span id="ver-badge-text">v0.0.1</span>
-        </button>
-      </div>
+    <div id="dashboard-drawer-controls" class="no-drag">
+      <button id="drawer-left-button" class="task-toolbar-btn" onclick="toggleDashboardDrawer('left')" aria-controls="dash-left" aria-expanded="false">Tasks &amp; Controls</button>
+      <button id="drawer-right-button" class="task-toolbar-btn" onclick="toggleDashboardDrawer('right')" aria-controls="dash-side" aria-expanded="false">Status &amp; History</button>
     </div>
   </div>
 
@@ -227,13 +208,54 @@
       <div id="ver-badge-loading" class="text-[10px] font-semibold" style="color: var(--text-muted); margin-top: 14px; letter-spacing: 0.04em;"></div>
     </div>
 
-    <div id="main-layout" class="flex-1 flex min-h-0" style="display: none;">
-      <!-- Left column: game-slot is empty on purpose, Roblox is docked here as a
-           native child window, directly beneath this DOM (not inside it). Logs
-           sit below it, using the width Roblox doesn't need for its own height. -->
-      <div class="flex flex-col flex-shrink-0" style="width: 1152px;">
-        <div id="game-slot" style="height: 756px; flex-shrink: 0;"></div>
-        <div id="dash-log" class="flex-1 flex flex-col p-3 min-h-0">
+    <div id="main-layout" class="flex-1 min-h-0" style="display: none;">
+<div id="dash-left" class="dashboard-side flex flex-col p-3 gap-3 min-h-0 overflow-y-auto" aria-label="Tasks and controls"><section class="rp-panel">
+<header class="rp-panel-head"><span class="rp-head-tag" style="--rp-tag: var(--brand);">Macro</span><span class="rp-head-title">Task Queue</span><span class="rp-head-rule"></span><button class="task-toolbar-btn" onclick="switchScreen('task')">Edit</button></header>
+<div id="dashboard-task-list"><div class="rh-empty">No tasks queued</div></div>
+</section>
+<section class="rp-panel">
+          <header class="rp-panel-head">
+            <span class="rp-head-tag" style="--rp-tag: var(--brand);">Macro</span>
+            <span class="rp-head-title">Controls</span>
+            <span class="rp-head-rule"></span>
+          </header>
+          <div id="task-grid" class="rp-controls">
+            <button id="btn-macro-start" class="rp-btn rp-btn-start ui-btn-glow" onclick="startMacro()">
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M6.5 4.6c0-1.2 1.3-1.9 2.3-1.3l11 6.9c.9.6.9 2 0 2.6l-11 6.9c-1 .6-2.3-.1-2.3-1.3V4.6z"/>
+              </svg>
+              Start
+              <span id="btn-macro-start-key" class="rp-btn-hotkey"></span>
+            </button>
+            <button id="btn-macro-pause" class="rp-btn rp-btn-pause ui-btn-glow" onclick="togglePauseMacro()" disabled>
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+                <rect x="6" y="4.5" width="4" height="15" rx="1.2"/>
+                <rect x="14" y="4.5" width="4" height="15" rx="1.2"/>
+              </svg>
+              <span id="btn-macro-pause-label">Pause</span>
+              <span id="btn-macro-pause-key" class="rp-btn-hotkey"></span>
+            </button>
+            <button id="btn-macro-stop" class="rp-btn rp-btn-stop ui-btn-glow" onclick="stopMacro()" disabled>
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+                <rect x="5" y="5" width="14" height="14" rx="2"/>
+              </svg>
+              Stop
+              <span id="btn-macro-stop-key" class="rp-btn-hotkey"></span>
+            </button>
+          </div>
+        </section>
+<section class="rp-panel dashboard-session"><header class="rp-panel-head"><span class="rp-head-title">Session Time</span></header><div class="titlebar-timers flex items-center gap-3 tooltip-left no-drag" data-tooltip="Time this session / all-time total">
+      <div class="flex flex-col" style="line-height: 1;">
+        <span class="text-[8px] uppercase tracking-wider" style="color: var(--text-muted);">All Time</span>
+        <span id="alltime-time" class="text-xs font-semibold" style="color: var(--lilac);">00:00</span>
+      </div>
+      <div class="flex flex-col" style="line-height: 1;">
+        <span class="text-[8px] uppercase tracking-wider" style="color: var(--text-muted);">Session</span>
+        <span id="session-time" class="text-xs font-semibold" style="color: var(--text-dim);">00:00</span>
+      </div>
+    </div></section></div>
+<div id="dash-center" class="flex flex-col min-h-0"><div id="game-slot" style="height: 756px; flex-shrink: 0;"></div>
+<div id="dash-log" class="flex-1 flex flex-col p-3 min-h-0">
           <section class="rp-panel rp-panel-fill">
             <header class="rp-panel-head">
               <span class="rp-head-tag" style="--rp-tag: var(--brand);">Live</span>
@@ -269,15 +291,8 @@
               <span id="log-jump-count">0</span> new
             </button>
           </section>
-        </div>
-      </div>
-
-      <div id="dash-side" class="flex flex-col p-3 gap-3 min-h-0 overflow-y-auto" style="width: 400px; flex-shrink: 0;">
-        <!-- Status readout: hero Action row + ledger rows with dotted leaders.
-             Wrapped in .rp-hoverpanel so the extra detail rows (.rp-rows-extra)
-             can be absolutely positioned and overlay the panels below on hover
-             instead of pushing them down -- see .rp-rows-extra in style.css. -->
-        <div class="rp-hoverpanel">
+        </div></div>
+<div id="dash-side" class="dashboard-side flex flex-col p-3 gap-3 min-h-0 overflow-y-auto" aria-label="Status and history"><div class="rp-hoverpanel">
         <section class="rp-panel">
           <header class="rp-panel-head">
             <span class="rp-head-tag" style="--rp-tag: var(--lilac);">Live</span>
@@ -369,9 +384,7 @@
           </div>
         </div>
         </div>
-
-        <!-- Scoreboard: session up top, split ratio bars, lifetime footer strip. -->
-        <section class="rp-panel">
+<section class="rp-panel">
           <header class="rp-panel-head">
             <span class="rp-head-tag" style="--rp-tag: var(--teal);">Session</span>
             <span class="rp-head-title">Scoreboard</span>
@@ -416,42 +429,7 @@
             <span>lifetime record</span>
           </div>
         </section>
-
-        <!-- Controls: one primary command, one quiet one. -->
-        <section class="rp-panel">
-          <header class="rp-panel-head">
-            <span class="rp-head-tag" style="--rp-tag: var(--brand);">Macro</span>
-            <span class="rp-head-title">Controls</span>
-            <span class="rp-head-rule"></span>
-          </header>
-          <div id="task-grid" class="rp-controls">
-            <button id="btn-macro-start" class="rp-btn rp-btn-start ui-btn-glow" onclick="startMacro()">
-              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M6.5 4.6c0-1.2 1.3-1.9 2.3-1.3l11 6.9c.9.6.9 2 0 2.6l-11 6.9c-1 .6-2.3-.1-2.3-1.3V4.6z"/>
-              </svg>
-              Start
-              <span id="btn-macro-start-key" class="rp-btn-hotkey"></span>
-            </button>
-            <button id="btn-macro-pause" class="rp-btn rp-btn-pause ui-btn-glow" onclick="togglePauseMacro()" disabled>
-              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
-                <rect x="6" y="4.5" width="4" height="15" rx="1.2"/>
-                <rect x="14" y="4.5" width="4" height="15" rx="1.2"/>
-              </svg>
-              <span id="btn-macro-pause-label">Pause</span>
-              <span id="btn-macro-pause-key" class="rp-btn-hotkey"></span>
-            </button>
-            <button id="btn-macro-stop" class="rp-btn rp-btn-stop ui-btn-glow" onclick="stopMacro()" disabled>
-              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
-                <rect x="5" y="5" width="14" height="14" rx="2"/>
-              </svg>
-              Stop
-              <span id="btn-macro-stop-key" class="rp-btn-hotkey"></span>
-            </button>
-          </div>
-        </section>
-
-        <!-- Run history: fills the remaining rail height, scrolls internally. -->
-        <section class="rp-panel rp-panel-fill" style="min-height: 120px;">
+<section class="rp-panel rp-panel-fill" style="min-height: 120px;">
           <header class="rp-panel-head">
             <span class="rp-head-tag" style="--rp-tag: var(--amber);">Session</span>
             <span class="rp-head-title">Run History</span>
@@ -461,9 +439,8 @@
           <div id="run-history-list" class="rp-log-list overflow-y-auto" style="padding: 4px 0 6px;">
             <div class="rh-empty">No runs yet</div>
           </div>
-        </section>
-      </div>
-    </div>
+        </section></div>
+</div>
   </div>
 
   <!-- ============ TASK screen: queue (left) + labeled builder (right) ============
@@ -777,13 +754,23 @@
                 <button id="toggle-auto-shop-enabled" class="toggle-switch" onclick="toggleAutoShopEnabled(this)"></button>
               </div>
 
+              <div class="auto-shop-toolbar">
+                <div class="seg-toggle" role="tablist" aria-label="Shop">
+                  <button id="auto-shop-tab-gold_shop" class="seg-btn active" role="tab" aria-selected="true" onclick="selectAutoShopTab('gold_shop')">Gold Shop</button>
+                  <button id="auto-shop-tab-expedition_shop" class="seg-btn" role="tab" aria-selected="false" onclick="selectAutoShopTab('expedition_shop')">Expedition Shop</button>
+                </div>
+                <div class="seg-toggle" role="group" aria-label="Shop item layout">
+                  <button id="auto-shop-view-list" class="seg-btn active" aria-pressed="true" onclick="setAutoShopView('list')">List</button>
+                  <button id="auto-shop-view-squares" class="seg-btn" aria-pressed="false" onclick="setAutoShopView('squares')">Squares</button>
+                </div>
+              </div>
               <div class="setting-row" style="padding: 10px 0;">
                 <div>
-                  <div class="setting-label">Gold Shop</div>
+                  <div id="auto-shop-selected-name" class="setting-label">Gold Shop</div>
                   <div class="setting-desc">Choose how many to buy on each pass. Numeric quantities repeat on later passes until sold out.</div>
                 </div>
                 <button id="toggle-gold-shop-enabled" class="toggle-switch"
-                        onclick="toggleAutoShopShopEnabled('gold_shop', this)"></button>
+                        onclick="toggleAutoShopShopEnabled(autoShopTab, this)"></button>
               </div>
 
               <div>
@@ -911,6 +898,13 @@
           <path stroke-linecap="round" stroke-linejoin="round" d="M13.73 21a2 2 0 0 1-3.46 0"/>
         </svg>
         Webhook
+      </button>
+      <button class="settings-cat-btn" data-cat="maps" onclick="setSettingsCategory('maps')">
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9 18l-6 3V6l6-3 6 3 6-3v15l-6 3-6-3z"/>
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9 3v15M15 6v15"/>
+        </svg>
+        Maps
       </button>
       <button class="settings-cat-btn" data-cat="debug" onclick="setSettingsCategory('debug')">
         <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1098,6 +1092,16 @@
                 <button id="keybind-game_auto_upgrade" class="keybind-btn" onclick="startRebind('game_auto_upgrade', this)">Unbound</button>
               </div>
             </div>
+            <div class="setting-row">
+              <div>
+                <div class="setting-label">Copy Mouse Coordinates</div>
+                <div class="setting-desc">Copies the live coordinate while your cursor stays over Roblox.</div>
+              </div>
+              <div class="keybind-group">
+                <button id="keybind-clear-copy_mouse_position" class="keybind-clear-btn" onclick="clearHotkey('copy_mouse_position')" title="Reset to default key (press Esc while capturing to unbind)">&times;</button>
+                <button id="keybind-copy_mouse_position" class="keybind-btn" onclick="startRebind('copy_mouse_position', this)">F8</button>
+              </div>
+            </div>
           </div>
         </section>
       </div>
@@ -1225,17 +1229,6 @@
             <button id="toggle-flicker-free" class="toggle-switch" onclick="toggleSetting('flicker_free_capture', this)"></button>
           </div>
 
-          <!-- Windows-only, applies at next launch: Roblox glued BEHIND a
-               literal hole cut in the GUI over the game slot instead of
-               being reparented inside it -- see core/dock.py's cutout notes. -->
-          <div class="setting-row" style="padding: 14px;" data-win-only>
-            <div>
-              <div class="setting-label">Game Cutout Mode (experimental)</div>
-              <div class="setting-desc">Show Roblox through a cutout in the macro window instead of embedding it inside. Gentler on the game window and modals can never be covered. Applies after restarting the macro.</div>
-            </div>
-            <button id="toggle-game-cutout" class="toggle-switch" onclick="toggleSetting('game_cutout', this)"></button>
-          </div>
-
           <!-- Windows-only, applies at next launch: Windows.Graphics.Capture
                backend for setups where the game captures fully black -- see
                core/wgc_capture.py. Forces cutout mode (needs the game
@@ -1243,7 +1236,7 @@
           <div class="setting-row" style="padding: 14px; border-bottom: none;" data-win-only>
             <div>
               <div class="setting-label">Hardware Capture Fix (Windows.Graphics.Capture)</div>
-              <div class="setting-desc">Turn this on only if image detection fails on a black/blank game (common with NVIDIA GPU scheduling or fullscreen optimizations) even with Flicker-Free Capture off. Reads the game a different way that survives those setups. Also turns on Game Cutout Mode, since it needs Roblox as its own window. Applies after restarting the macro.</div>
+              <div class="setting-desc">Turn this on only if image detection fails on a black/blank game (common with NVIDIA GPU scheduling or fullscreen optimizations) even with Flicker-Free Capture off. Reads the game a different way that survives those setups. Roblox already runs as its own window. Applies after restarting the macro.</div>
             </div>
             <button id="toggle-wgc-capture" class="toggle-switch" onclick="toggleSetting('use_wgc_capture', this)"></button>
           </div>
@@ -1397,10 +1390,10 @@
       </div>
 
       <!-- core.stage_select's map-name search: a debug capture of exactly the
-           band it scans (so a reference crop in Assets/maps/ can be
+           band it scans (so a reference crop in Assets/map_labels/ can be
            checked/tuned against it) plus the scroll-wheel strength it uses
            to move through the map carousel while searching. -->
-      <div class="settings-category" data-cat="debug" style="margin-top: 20px;">
+      <div class="settings-category" data-cat="maps" style="margin-top: 20px;">
         <section class="rp-panel">
           <header class="rp-panel-head">
             <span class="rp-head-tag" style="--rp-tag: var(--slate);">Capture</span>
@@ -1568,7 +1561,7 @@
         </section>
       </div>
 
-      <div class="settings-category" data-cat="debug" style="margin-top: 20px;">
+      <div class="settings-category" data-cat="maps" style="margin-top: 20px;">
         <section class="rp-panel">
           <header class="rp-panel-head">
             <span class="rp-head-tag" style="--rp-tag: var(--slate);">Control</span>
@@ -1607,7 +1600,7 @@
         </section>
       </div>
 
-      <div class="settings-category" data-cat="debug" style="margin-top: 20px;">
+      <div class="settings-category" data-cat="maps" style="margin-top: 20px;">
         <section class="rp-panel">
           <header class="rp-panel-head">
             <span class="rp-head-tag" style="--rp-tag: var(--brand);">Maps</span>
@@ -1629,7 +1622,7 @@
         </section>
       </div>
 
-      <div class="settings-category" data-cat="debug" style="margin-top: 20px;">
+      <div class="settings-category" data-cat="maps" style="margin-top: 20px;">
         <section class="rp-panel">
           <header class="rp-panel-head">
             <span class="rp-head-tag" style="--rp-tag: var(--slate);">Control</span>
@@ -2340,6 +2333,14 @@
           <button class="task-toolbar-btn" onclick="usePlaceUnitRobloxScreen()">Use Roblox Screen</button>
         </div>
 
+        <div id="pu-expedition-tools" style="display:none; margin-bottom:10px;">
+          <p>Enter Expedition and apply its camera setup before capturing (default: tilt down, left arrow 730ms, O 100ms). Use the same camera profile and walk position as your macro. Capturing sends no game input.</p>
+          <div class="flex items-center gap-2 flex-wrap">
+            <button class="task-toolbar-btn" onclick="usePlaceUnitRobloxScreen(true)">Replace Default Expedition Screen</button>
+          </div>
+          <p>All Expedition maps use this one default placement screen, captured on School Grounds. Replacing it leaves existing unit coordinates unchanged; re-pick outdated positions.</p>
+        </div>
+        <p id="pu-capture-note" style="display:none;" role="status"></p>
         <div id="pu-map-grid" class="pu-map-grid"></div>
 
         <div id="pu-canvas-wrap" style="display:none;">

@@ -34,10 +34,10 @@ _INFINITE_WAVE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _CURRENT_ONLY_WAVE_PATTERN = re.compile(
-    r"\b([0-9OS]{1,4})\s+wave\b",
+    r"\b([0-9OS]{1,4})\s*wave\b",
     re.IGNORECASE,
 )
-_WHITELIST = "0123456789/"
+_WHITELIST = "0123456789/waveWAVEOS"
 # psm 8 ("single word") never once produced a clean "<digits> / <digits>"
 # match in testing -- it fuses the two numbers together without the "/"
 # every time ("0/15" -> "015") -- so it's dropped rather than spending a
@@ -65,6 +65,10 @@ def read_wave(region_bgr):
     misread. A wrong digit from one combination gets outvoted by the
     others agreeing on the right one instead.
     """
+    from .wave_digits import read_current_badge
+    current_badge = read_current_badge(region_bgr)
+    if current_badge is not None:
+        return current_badge, None
     # Windows OCR when available (no Tesseract install needed), else
     # Tesseract. Windows OCR has no psm modes, so that loop collapses to a
     # single pass per mask there -- verified to match Tesseract's readings

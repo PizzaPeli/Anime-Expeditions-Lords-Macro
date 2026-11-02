@@ -207,3 +207,61 @@ def test_base_window_manager_and_factory():
     assert hasattr(wm, "activate")
     assert hasattr(wm, "get_rect")
     assert hasattr(wm, "set_bounds")
+
+
+@pytest.mark.parametrize("process,title,expected", [
+    ("roblox account manager.exe", "Roblox Account Manager", False),
+    ("roblox_account_manager.exe", "Roblox", False),
+    ("robloxplayerbeta tools.exe", "Roblox", False),
+    ("", "Roblox Account Manager", False),
+    ("", "Roblox - Account Manager", False),
+    ("robloxplayerbeta_12.exe", "Roblox", True),
+    ("roblox (2).exe", "Roblox", True),
+])
+def test_player_identity_rejects_manager_and_text_suffixes(monkeypatch, process, title, expected):
+    monkeypatch.setattr(window_win, "get_process_name", lambda _: process)
+    assert window_win.is_roblox_process_or_title(1, title) is expected
+
+
+def test_window_manager_find_skips_account_manager(monkeypatch):
+    titles = {1: "Roblox Account Manager", 2: "Roblox"}
+    monkeypatch.setattr(window_win.user32, "IsWindowVisible", lambda _: True)
+    monkeypatch.setattr(window_win.user32, "GetWindowTextLengthW", lambda h: len(titles[h]))
+    def text(h, buffer, size):
+        buffer.value = titles[h]
+    monkeypatch.setattr(window_win.user32, "GetWindowTextW", text)
+    monkeypatch.setattr(window_win, "get_process_name",
+                        lambda h: "roblox account manager.exe" if h == 1 else "robloxplayerbeta.exe")
+    def enumerate_windows(callback, param):
+        for h in titles:
+            if not callback(h, param):
+                break
+    monkeypatch.setattr(window_win.user32, "EnumWindows", enumerate_windows)
+    assert window_win.WindowsWindowManager().find() == 2
+    assert [w["hwnd"] for w in window_win.list_roblox_windows()] == [2]
+
+
+@pytest.mark.parametrize("previous,expected,keep_order", [(30, 30, False), (11, 0, True), (0, 0, False)])
+def test_standalone_stacking_respects_apps_above_macro(monkeypatch, previous, expected, keep_order):
+    calls = []
+    monkeypatch.setattr(window_win.user32, "GetWindow", lambda *_: previous)
+    monkeypatch.setattr(window_win.user32, "SetWindowPos", lambda *args: calls.append(args))
+    window_win.place_above_window(11, 22, 384, 88, 1152, 756)
+    hwnd, after, x, y, w, h, flags = calls[0]
+    assert (hwnd, after, x, y, w, h) == (11, expected, 384, 88, 1152, 756)
+    assert flags & window_win.SWP_NOACTIVATE
+    assert bool(flags & window_win.SWP_NOZORDER) == keep_order
+
+
+
+def test_generic_window_lookup_still_finds_macro(monkeypatch):
+    title = "Lord's Macro"
+    monkeypatch.setattr(window_win.user32, "IsWindowVisible", lambda _: True)
+    monkeypatch.setattr(window_win.user32, "GetWindowTextLengthW", lambda _: len(title))
+    def text(hwnd, buffer, size):
+        buffer.value = title
+    monkeypatch.setattr(window_win.user32, "GetWindowTextW", text)
+    monkeypatch.setattr(window_win.user32, "EnumWindows", lambda callback, param: callback(42, param))
+    monkeypatch.setattr(window_win, "is_roblox_process_or_title",
+                        lambda *_: pytest.fail("Generic macro lookup must not require a Roblox process"))
+    assert window_win.WindowsWindowManager(title).find() == 42

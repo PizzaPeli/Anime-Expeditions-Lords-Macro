@@ -169,7 +169,7 @@ def test_build_pyinstaller_keeps_winrt_winsdk_and_optional_rapidocr(monkeypatch)
     monkeypatch.setattr(subprocess, "run", fake_run)
     monkeypatch.setattr("platform.machine", lambda: "AMD64")
 
-    ns = runpy.run_path("build_pyinstaller.py")
+    ns = runpy.run_path("scripts/build/build_pyinstaller.py")
     cmd = ns["cmd"]
 
     assert "--collect-submodules=winsdk" in cmd

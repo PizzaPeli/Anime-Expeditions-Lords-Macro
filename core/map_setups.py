@@ -12,6 +12,9 @@ INITIAL_MAPS = {
     "King's Tomb": "story",
     "Flower Forest": "story",
     "East Town": "story",
+    "Hollow Desert": "story",
+    "Flaming Monastery": "story",
+    "Crimson Shore": "story",
     "Spirit City": "raid",
     "Snowy Castle": "raid",
 }
@@ -26,6 +29,11 @@ def load() -> dict:
         saved = {name: {"mode": mode, "image": name,
                         "path": old_paths.get(name, ""), "legacy": True}
                  for name, mode in INITIAL_MAPS.items()}
+    # Import newly shipped maps once, preserving custom setups and later removals.
+    if data.get("map_catalog_version", 0) < 1:
+        saved = dict(saved)
+        for name in ("Hollow Desert", "Flaming Monastery", "Crimson Shore"):
+            saved.setdefault(name, {"mode": "story", "image": name, "path": ""})
     return {name: dict(entry) for name, entry in saved.items()
             if isinstance(name, str) and isinstance(entry, dict)}
 
@@ -44,12 +52,12 @@ def save(name: str, mode: str, image: str, path: str = "") -> dict:
     if any(other != name and entry.get("image") == image for other, entry in current.items()):
         return {"ok": False, "reason": "image_already_identifies_another_map"}
     current[name] = {"mode": mode, "image": image, "path": path}
-    settings.update({"map_setups": current})
+    settings.update({"map_setups": current, "map_catalog_version": 1})
     return {"ok": True, "map_setups": current}
 
 
 def remove(name: str) -> dict:
     current = load()
     current.pop(name, None)
-    settings.update({"map_setups": current})
+    settings.update({"map_setups": current, "map_catalog_version": 1})
     return {"ok": True, "map_setups": current}

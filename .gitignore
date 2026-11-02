@@ -43,11 +43,19 @@ settings.json
 # Runtime log -- local troubleshooting only, no reason to version it.
 *.log
 
+# Timestamped TEST_BUILD.bat session evidence. Kept inside the project so it
+# is easy to inspect after a playtest, but never shipped or committed because
+# it includes personal settings and full-window diagnostic screenshots.
+test-output/
+
 # Python
 __pycache__/
 *.pyc
 .venv/
 venv/
+.pytest_cache/
+.ruff_cache/
+.codex-pytest-*/
 
 # Build output -- see build_pyinstaller.py / build_bootstrap.py. The
 # release workflow builds these fresh in CI; never commit a local build.
@@ -59,3 +67,6 @@ dist/
 # Personal Claude Code permission grants -- not team-wide.
 .claude/settings.local.json
 .test-deps/
+
+# User-captured placement references (camera-specific).
+placement_screens/

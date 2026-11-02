@@ -2,7 +2,7 @@
 name label -- OCR was tried first but was too slow in practice (a multi-
 mask/multi-psm Tesseract sweep per card, repeated on every scroll nudge,
 added up fast). Each map gets its own reference image instead
-(Assets/maps/<map name>.png, named to match a Task's `map` field exactly --
+(Assets/map_labels/<map name>.png, named to match a Task's `map` field exactly --
 this folder covers Raid maps too, e.g. "Spirit City", not just Story ones)
 and is found the same way nav_play/nav_back are: grayscale template
 matching against a live capture (see core.vision).
@@ -55,7 +55,7 @@ def _hover_wiggle(mouse) -> None:
 def find_and_click_map(mouse, hwnd, map_name: str, log, stop_event=None, scroll_power: int = DEFAULT_SCROLL_POWER,
                         scroll_nudges: int = SCROLL_NUDGES_PER_PASS, debug_screenshots: bool = False) -> bool:
     """Scans the Story map carousel for map_name (image-matched against
-    Assets/maps/<map_name>.png over the whole name-label band) and
+    Assets/map_labels/<map_name>.png over the whole name-label band) and
     clicks it once found.
 
     If it's not among the 3 currently-visible cards, nudges the carousel
@@ -83,7 +83,7 @@ def find_and_click_map(mouse, hwnd, map_name: str, log, stop_event=None, scroll_
             if stop_event is not None and stop_event.is_set():
                 return False
             # Every reference crop for this map (the original AND any
-            # "<map name> 2.png"-style extras) lives in Assets/maps/
+            # additional variants) lives in Assets/map_labels/
             # <map name>/ and gets tried automatically as a variant of the
             # one map name (see vision.template_variant_paths) -- no more
             # separately-searched " 2" name.

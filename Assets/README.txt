@@ -1,5 +1,5 @@
 This whole folder ships LOOSE beside the exe (never bundled inside it --
-see core/constants.py's ASSETS_DIR and build_pyinstaller.py) so everything
+see core/constants.py's ASSETS_DIR and scripts/build/build_pyinstaller.py) so everything
 here stays user-editable: open a crop, replace it, add extra variants, all
 without rebuilding anything. App updates only ever ADD files that are new
 in a release; they never overwrite something already on disk (see
@@ -22,10 +22,10 @@ item_icons/
   regenerate locally rather than expecting it to already be there after a
   fresh clone.
 
-maps/ + map/
+map_labels/ + map_previews/
   Map-name reference crops (core.stage_select -- same folder-per-name
-  layout as ui/, see maps/README.txt) and the map picker's own background
-  art (map/, plain images, not searched).
+  layout as ui/, see map_labels/README.txt) and the map picker's own background
+  art (map_previews/, plain images, not searched).
 
 stage_data.json
   The game's full stage reward/boss/mission table, scraped from the

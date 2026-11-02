@@ -87,9 +87,9 @@ UI_ASSETS_DIR = os.path.join(constants.ASSETS_DIR, "ui")
 # than by fixed UI-element name. Covers
 # every map (Story AND Raid, e.g. "Spirit City"), not just Story ones --
 # was Assets/story_maps until Raid map crops started living here too. Not
-# the same folder as Assets/map/<Category>/ (the Place Unit picker's full
+# the same folder as Assets/map_previews/<Category>/ (the Place Unit picker's full
 # map preview thumbnails, a completely different, unrelated asset set).
-MAPS_DIR = os.path.join(constants.ASSETS_DIR, "maps")
+MAPS_DIR = os.path.join(constants.ASSETS_DIR, "map_labels")
 
 # Reusable Detect-block images (Image Manager > Detection Images, see
 # main.IMAGE_MANAGER_CATEGORIES). A Detect block references a name that is

@@ -1,4 +1,5 @@
 import os
+import re
 import ctypes
 from ctypes import wintypes
 
@@ -49,6 +50,12 @@ kernel32.TerminateProcess.restype = wintypes.BOOL
 kernel32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
 kernel32.CloseHandle.restype = wintypes.BOOL
 kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+kernel32.QueryFullProcessImageNameW.argtypes = [
+    wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)]
+user32.GetWindow.restype = wintypes.HWND
+user32.GetWindow.argtypes = [wintypes.HWND, wintypes.UINT]
+
 ROBLOX_PROCESS_NAME = "robloxplayerbeta.exe"
 ROBLOX_PROCESS_NAMES = {
     "robloxplayerbeta.exe",
@@ -60,26 +67,16 @@ ROBLOX_PROCESS_NAMES = {
 
 
 def _is_named_or_renamed_variant(proc_name: str, base: str) -> bool:
-    """True if proc_name IS `base` (with or without .exe), or a copy of it
-    renamed with a non-letter suffix -- multi-instance tools that let you run
-    several Roblox windows at once do this, e.g. "robloxplayerbeta_1.exe" or
-    "roblox (2).exe". Deliberately NOT true for an unrelated tool whose name
-    merely happens to start with the same letters, like the real-world
-    "Roblox Account Manager.exe" (a third-party account switcher, not the
-    game) starting with "roblox": there the character right after the base
-    is a lowercase letter ('a'), meaning it's a longer, different word, not a
-    suffix tacked onto a copy of `base` itself."""
-    if not proc_name.startswith(base):
-        return False
-    rest = proc_name[len(base):]
-    return not rest or not rest[0].isalpha()
+    """Accept the player name or a numeric multi-instance copy, never tool names."""
+    name = proc_name.lower().removesuffix(".exe")
+    return re.fullmatch(re.escape(base) + r"(?:[ _-]*\d+| ?\(\d+\))?", name) is not None
 
 
 def is_roblox_process_or_title(hwnd: int, title: str) -> bool:
-    title_lower = title.lower()
+    title_lower = title.strip().lower()
     if "roblox" not in title_lower:
         return False
-    proc_name = get_process_name(hwnd)
+    proc_name = get_process_name(hwnd).lower()
     # Roblox Studio is NOT the game client the macro plays -- but its process
     # is "robloxstudiobeta.exe" (starts with "roblox") and its window title
     # ends in "Roblox Studio", so both checks below would otherwise match it,
@@ -88,20 +85,14 @@ def is_roblox_process_or_title(hwnd: int, title: str) -> bool:
     # rare no-process case below.
     if "studio" in proc_name:
         return False
-    # Was a bare proc_name.startswith("roblox")/("bloxstrap") -- matched the
-    # real game's multi-instance-renamed copies as intended, but ALSO matched
-    # any unrelated tool whose executable name happens to start with those
-    # same letters (reported live: "Roblox Account Manager.exe", a third-
-    # party account switcher, was listed and could be docked as if it were
-    # the game). _is_named_or_renamed_variant only allows an exact name or a
-    # non-letter-suffixed copy of one of the real client's own base names.
+    # Numeric copies support multiple accounts without accepting manager tools.
     if (proc_name in ROBLOX_PROCESS_NAMES
             or _is_named_or_renamed_variant(proc_name, "robloxplayerbeta")
             or _is_named_or_renamed_variant(proc_name, "robloxplayerlauncher")
             or _is_named_or_renamed_variant(proc_name, "roblox")
             or _is_named_or_renamed_variant(proc_name, "bloxstrap")):
         return True
-    if not proc_name and title_lower.startswith("roblox") and "studio" not in title_lower:
+    if not proc_name and title_lower in {"roblox", "roblox player"}:
         return True
     return False
 
@@ -176,7 +167,9 @@ class WindowsWindowManager(BaseWindowManager):
                 return True
             buf = ctypes.create_unicode_buffer(length + 1)
             user32.GetWindowTextW(hwnd, buf, length + 1)
-            if self.title_substring.lower() in buf.value.lower():
+            if (self.title_substring.lower() in buf.value.lower()
+                    and (self.title_substring.lower() != config.ROBLOX_WINDOW_TITLE.lower()
+                         or is_roblox_process_or_title(hwnd, buf.value))):
                 matches.append(hwnd)
                 return False
             return True
@@ -737,6 +730,24 @@ def move_window(hwnd: int, x: int, y: int, w: int, h: int) -> None:
 
 def bring_to_top(hwnd: int) -> None:
     user32.SetWindowPos(hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE)
+
+
+def is_minimized(hwnd: int) -> bool:
+    return bool(user32.IsIconic(hwnd))
+
+
+def place_above_window(hwnd: int, gui_hwnd: int, x: int, y: int, w: int, h: int) -> None:
+    """Keep the game immediately above the macro in normal desktop stacking.
+
+    Insert below whatever is above the macro, so unrelated foreground apps
+    stay above both windows. Never activate or enter the topmost band.
+    """
+    previous = user32.GetWindow(gui_hwnd, 3)  # GW_HWNDPREV
+    flags = SWP_NOACTIVATE | 0x0040  # SWP_SHOWWINDOW
+    if previous == hwnd:
+        flags |= SWP_NOZORDER
+        previous = 0
+    user32.SetWindowPos(hwnd, previous or HWND_TOP, x, y, w, h, flags)
 
 
 def place_topmost(hwnd: int, x: int, y: int, w: int, h: int) -> None:

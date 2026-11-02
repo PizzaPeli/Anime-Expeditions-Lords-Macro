@@ -3,7 +3,7 @@ Tiny bootstrapper for Lord's Macro | Anime Expeditions.
 
 Downloads the real app from GitHub Releases on first run (or when a newer
 version is out) and launches it. Built as its own separate, much smaller
-exe (see build_bootstrap.py) -- the full app is 40+ MB because of
+exe (see scripts/build/build_bootstrap.py) -- the full app is 40+ MB because of
 OpenCV/numpy/pywebview, which this script never imports, so the
 bootstrapper itself ends up small enough to share directly (e.g. on
 Discord) instead of the full download.

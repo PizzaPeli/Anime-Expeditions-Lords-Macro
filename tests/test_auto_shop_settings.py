@@ -32,6 +32,28 @@ def test_auto_shop_defaults_expose_gold_shop_catalog_and_daily_state(monkeypatch
     assert all(item["target"] == 1 for item in gold_shop["items"])
 
 
+def test_new_foods_are_selectable_with_older_saved_shop_settings(monkeypatch, tmp_path):
+    api = _api(monkeypatch, tmp_path)
+    settings.update({"auto_shop": {
+        "enabled": True,
+        "shops": {"gold_shop": {"enabled": True, "items": {
+            "trait_crystal": {"enabled": True, "target": "max"},
+        }}},
+    }})
+    current = api.get_auto_shop_settings()
+    items = {item["key"]: item for item in current["shops"]["gold_shop"]["items"]}
+    assert items["trait_crystal"]["enabled"] is True
+    for key, name in (("survival_rations", "Survival Rations"), ("rice", "Rice")):
+        assert items[key]["name"] == name
+        assert items[key]["enabled"] is False
+        assert api.set_auto_shop_item_enabled("gold_shop", key, True) == {"ok": True}
+        assert api.set_auto_shop_item_target("gold_shop", key, "max") == {"ok": True}
+    reloaded = {item["key"]: item for item in api.get_auto_shop_settings()["shops"]["gold_shop"]["items"]}
+    for key in ("survival_rations", "rice"):
+        assert reloaded[key]["enabled"] is True
+        assert reloaded[key]["target"] == "max"
+
+
 def test_auto_shop_setters_persist_only_known_shop_items_and_targets(monkeypatch, tmp_path):
     api = _api(monkeypatch, tmp_path)
 

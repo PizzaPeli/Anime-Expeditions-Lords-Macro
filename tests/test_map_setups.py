@@ -1,6 +1,18 @@
 from core import map_setups
 
 
+def test_halloween_catalog_import_preserves_customizations_and_removals(monkeypatch):
+    custom = {"mode": "both", "image": "Custom label", "path": "Custom route"}
+    stored = {"map_setups": {"Hollow Desert": custom}}
+    monkeypatch.setattr(map_setups.settings, "load", lambda: stored)
+    monkeypatch.setattr(map_setups.settings, "update", lambda change: stored.update(change))
+    loaded = map_setups.load()
+    assert loaded["Hollow Desert"] == custom
+    assert loaded["Flaming Monastery"]["path"] == ""
+    map_setups.remove("Crimson Shore")
+    assert "Crimson Shore" not in map_setups.load()
+
+
 def test_map_setup_list_is_expandable_and_keeps_legacy_paths(monkeypatch):
     stored = {"default_walk_paths": {"Rose Kingdom": "Old Rose route"}}
     monkeypatch.setattr(map_setups.settings, "load", lambda: stored)

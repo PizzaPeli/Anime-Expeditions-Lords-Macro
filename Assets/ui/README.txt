@@ -141,7 +141,7 @@ expedition_flower_forest.png / expedition_rose_kingdom.png
   screen. School Grounds has NO image here: it's whatever's selected by
   default when the screen opens, so no search/click happens for it at all.
 
-Traitless_Tower.png
+traitless_tower.png
   Tower's Traitless option on the Tower screen. Normal needs no image; it is
   clicked only when Traitless is selected for the task. Crop tightly around
   the Traitless option and add variants if needed.
@@ -224,7 +224,7 @@ King's Tomb.png / Flower Forest.png
   map) -- Challenge is Story's own flow, just with the game picking a
   random one of these 5 maps for you instead of you picking it, so this
   is a "which one did it land on" check, NOT the map-card search
-  Assets/maps/<map>.png does (different folder, different purpose --
+  Assets/map_labels/<map>.png does (different folder, different purpose --
   that one's for scrolling/clicking a map by NAME in Story's own map
   carousel, this is for recognizing a map that's already showing).
 
@@ -295,7 +295,7 @@ extract_confirm.png
   Extract button, optional/best-effort like nav_disband.png (missing just
   skips this step rather than failing). Clicking through both lands on the
   reward screen -- Expedition's equivalent of victory.png. A "Select an
-  upgrade!" level-up reward-card modal (select upgrade card.png) can land
+  upgrade!" level-up reward-card modal (select_upgrade_card.png) can land
   on top of any of this, or right after Victory before Repeat/Leave Stage
   even renders -- dismissed with a middle-screen click wherever it might
   show up.

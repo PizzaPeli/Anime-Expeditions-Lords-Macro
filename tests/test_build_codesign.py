@@ -29,20 +29,20 @@ def _read(name):
 
 
 def test_build_reads_stable_identity_from_env():
-    build = _read("build_pyinstaller.py")
+    build = _read("scripts/build/build_pyinstaller.py")
     assert "MACOS_CODESIGN_IDENTITY" in build
     assert 'os.environ.get("MACOS_CODESIGN_IDENTITY"' in build
 
 
 def test_build_signs_with_the_identity_when_set():
-    build = _read("build_pyinstaller.py")
+    build = _read("scripts/build/build_pyinstaller.py")
     # Stable path: pass the identity as the --sign argument (not the ad-hoc
     # dash), so a cert-signed bundle keys its TCC grant to the certificate.
     assert '["codesign", "--force", "--deep", "--sign", identity, app_path]' in build
 
 
 def test_build_keeps_adhoc_fallback_without_a_cert():
-    build = _read("build_pyinstaller.py")
+    build = _read("scripts/build/build_pyinstaller.py")
     # Local/no-secret builds must keep working: ad-hoc signing stays as the
     # else branch. Asserting the exact argv list keeps that from drifting.
     assert '["codesign", "--force", "--deep", "--sign", "-", app_path]' in build
@@ -85,7 +85,7 @@ def test_workflows_are_conditional_on_the_secret():
 
 
 def test_cert_script_is_idempotent_safe():
-    script = _read(pathlib.PurePath("tools", "make_macos_codesign_cert.sh").as_posix())
+    script = _read(pathlib.PurePath("scripts", "macos", "make_codesign_cert.sh").as_posix())
     # The whole point of reusing ONE cert is that rotating it silently would
     # break every existing user's macOS grants. A re-run must refuse unless
     # the owner explicitly asks to rotate.

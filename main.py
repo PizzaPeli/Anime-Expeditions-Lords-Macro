@@ -23,6 +23,7 @@ from core import share
 from core import webhook
 from core.window import WindowManager
 from core.dock import GameDocker
+from core.ui_layout import GAME_TOP, SIDE_PANEL_MIN, centered_game_offset, fit_window_rect
 from core.mouse import Mouse
 from core.keyboard import Keyboard
 from core.logger import Logger
@@ -78,12 +79,12 @@ REWARD_SCROLLBAR_COLOR = 0x373737
 # reference crops (one folder per searched name, see core.vision.
 # template_variant_paths), and the keys double as path components in the
 # save/delete endpoints below, so an unexpected value must never reach a
-# filesystem path. Assets/map (the Place Unit picker's full map art) and
+# filesystem path. Assets/map_previews (the Place Unit picker's full map art) and
 # Assets/item_icons (reward icon matching) are different systems entirely
 # and deliberately not editable from here.
 IMAGE_MANAGER_CATEGORIES = {
     "ui": ("ui", "UI Buttons"),
-    "maps": ("maps", "Map Names"),
+    "maps": ("map_labels", "Map Names"),
     # Reusable images the Detect block searches for. Saved once here, then
     # referenced by name from any Detect block (core/detect.py). Same
     # folder-per-name layout every other category uses -- Assets/detect/<name>/.
@@ -92,10 +93,10 @@ IMAGE_MANAGER_CATEGORIES = {
 
 GUI_TITLE = "Lord's Macro | Anime Expeditions"
 PANEL_WIDTH = 400
-TITLEBAR_H = 44  # custom HTML titlebar, since the window is frameless (no native OS titlebar)
-NAV_RAIL_WIDTH = 160  # labeled vertical replacement for the former horizontal titlebar
+TITLEBAR_H = GAME_TOP  # top navigation; matches the fixed DOM game-slot origin
+NAV_RAIL_WIDTH = 0  # navigation now uses the top bar, not horizontal game space
 LOGS_H = 160  # log strip under the docked Roblox window, same width as the game
-GUI_WIDTH_FULL = NAV_RAIL_WIDTH + config.FIXED_WIN_W + PANEL_WIDTH
+GUI_WIDTH_FULL = config.FIXED_WIN_W + 2 * SIDE_PANEL_MIN
 GUI_WIDTH_COMPACT = PANEL_WIDTH
 GUI_HEIGHT_FULL = TITLEBAR_H + config.FIXED_WIN_H + LOGS_H
 GUI_HEIGHT_COMPACT = TITLEBAR_H + 380  # tall enough for the waiting screen's full stack (emblem +
@@ -106,7 +107,7 @@ GUI_HEIGHT_COMPACT = TITLEBAR_H + 380  # tall enough for the waiting screen's fu
 # control strip, dropping the empty side-panel column and the log gap. Width
 # is the game's own width and height is titlebar + game + strip, so the game
 # is never clipped (only the empty margins are removed) or hidden -- it stays
-# visible and clickable, and docking is never touched. Strip height mirrors
+# visible and clickable; the resize callback recenters it. Strip height mirrors
 # #compact-strip's height in ui/style.css.
 COMPACT_STRIP_H = 50
 GUI_WIDTH_COMPACT_FIT = NAV_RAIL_WIDTH + config.FIXED_WIN_W
@@ -165,6 +166,10 @@ HOTKEY_DEFAULTS = {
     # Collapses the whole dashboard to a small always-on-top strip (and back)
     # -- for when the macro's running fine and the full UI is just clutter.
     "toggle_compact": "f7",
+    # Copies the live point shown by Settings > Debug > Mouse Coordinates.
+    # A single function key is much easier to press while the cursor remains
+    # parked over Roblox than the old Ctrl+Shift+C chord.
+    "copy_mouse_position": "f8",
 }
 
 # Stage-detail panel (shown after clicking a stage row on the Select Stage
@@ -471,22 +476,14 @@ class Api:
 
     def __init__(self):
         self._window = None
-        # The HTML title rail owns the maximize/restore control, so keep its
-        # state here rather than relying on a backend-specific window flag.
-        # restore() returns to the OS-saved bounds from immediately before
-        # maximize(), preserving the user's previous window format.
+        # Track native fullscreen for the custom fullscreen/restore control.
         self._window_is_maximized = False
         self._log_window = None
         self._wave_window = None  # the Wave Monitor pop-out (see pop_out_wave_monitor)
         self._log_history = []
         self._mouse_position_window = None
         self.docker = GameDocker()
-        # Cutout mode (Settings > Debug, Windows only, applies at launch):
-        # Roblox stays a top-level window glued BEHIND a literal hole cut in
-        # this GUI over the game slot, instead of being reparented inside it
-        # -- see core/dock.py's cutout notes. Captures must read the game's
-        # own window contents in this mode (the screen shows our solid GUI
-        # whenever the hole is closed), hence force_window_capture.
+        # Windows arranges Roblox independently to avoid reparenting black screens.
         _cfg = cfg.load()
         # A Tesseract that was installed into a non-PATH location (winget's
         # per-user %LOCALAPPDATA% path, most often) is remembered when it is
@@ -515,7 +512,7 @@ class Api:
         # applied before any search runs.
         from core import vision as _vision
         _vision.set_name_thresholds(_cfg.get("image_thresholds", {}))
-        self.game_cutout = sys.platform != "darwin" and bool(_cfg.get("game_cutout", False))
+        self.game_cutout = sys.platform != "darwin"
         # WGC capture (see core/wgc_capture.py) fixes black-frame capture on
         # hardware-accelerated / flip-model Roblox. Opt-in (default off): it
         # reads the game window by title, so it needs Roblox to stay a
@@ -529,21 +526,12 @@ class Api:
             wgc_capture.set_enabled(True)
         self.docker.cutout = self.game_cutout
         self._cutout_game_visible = False  # show_game/hide_game drive this; watchdog re-glues only while visible
-        # NOTE for future attempts: a LITERAL see-through slot was tried two
-        # ways and both are dead ends over this UI stack -- SetWindowRgn is
-        # bypassed by WebView2's DirectComposition (on the top level AND on
-        # the Chrome child hwnds), and LWA_COLORKEY only keys content in the
-        # GDI redirection surface, which GPU-composited WebView2 skips
-        # (behavior verified live either way, including under
-        # --disable-gpu-compositing / --disable-gpu). A panel-collapse idle
-        # layout was also tried and reverted (read as broken UI) -- with no
-        # game docked, cutout mode simply shows the normal layout with an
-        # empty slot.
         if self.game_cutout:
             from core import vision
             vision.force_window_capture()
         self.game_hwnd = None
         self.gui_hwnd = None
+        self._game_layout_lock = threading.Lock()
         # Manual multi-instance attach (Settings > Debug > "Select Roblox
         # Window") -- see _dock_watchdog and attach_roblox_window/
         # detach_roblox_window below. pinned_hwnd forces the watchdog's next
@@ -829,6 +817,7 @@ class Api:
         challenge = self.get_challenge_settings()
         return {
             "docked": self.docker.docked,
+            "tasks": data.get("tasks", []),
             **self._run_status,
             "last_run": _format_ago(history[0]["at"]) if history else "-",
             "runs_per_hour": self._calculate_runs_per_hour(history),
@@ -850,6 +839,7 @@ class Api:
                 {
                     "result": h.get("result"), "map": h.get("map"),
                     "duration": h.get("duration"), "ago": _format_ago(h.get("at")),
+                    "mode": h.get("mode"), "challenge": h.get("challenge"),
                 }
                 for h in history
             ],
@@ -862,7 +852,7 @@ class Api:
         elapsed = time.time() - self.session_start
         cfg.update({"all_time_seconds": self._all_time_base + elapsed})
 
-    def _record_match_result(self, result: str, map_name: str, duration: str) -> None:
+    def _record_match_result(self, result: str, map_name: str, duration: str, task: dict = None) -> None:
         # Called from core.runner (a background thread) right after a
         # Victory/Defeat screen is read -- session counts update in memory
         # immediately; all_time counts and run_history persist to disk so
@@ -876,7 +866,13 @@ class Api:
         data = cfg.load()
         key = "all_time_wins" if is_win else "all_time_losses"
         history = data.get("run_history", [])
-        history.insert(0, {"result": result, "map": map_name or "-", "duration": duration or "-", "at": time.time()})
+        task = task or {}
+        challenge = ("Daily Challenge" if task.get("is_daily_challenge") else
+                     f"Challenge #{task['challenge_slot']}" if task.get("challenge_slot") else
+                     "Challenge" if task.get("is_challenge") else None)
+        history.insert(0, {"result": result, "map": map_name or "-", "duration": duration or "-",
+                           "at": time.time(), "mode": "challenge" if challenge else task.get("mode"),
+                           "challenge": challenge})
         cfg.update({key: data.get(key, 0) + 1, "run_history": history[:RUN_HISTORY_LIMIT]})
 
     def get_settings(self) -> dict:
@@ -904,7 +900,7 @@ class Api:
             # app.js showSubscribePrompt) -- flips true the moment it's
             # dismissed either way, so it never reappears.
             "subscribe_prompted": data.get("subscribe_prompted", False),
-            "game_cutout": data.get("game_cutout", False),
+            "game_cutout": self.game_cutout,
             "use_wgc_capture": data.get("use_wgc_capture", False),
             "flicker_free_capture": data.get("flicker_free_capture", True),
             # Reopen Roblox and resume the run if the game closes/crashes
@@ -1497,61 +1493,29 @@ class Api:
 
     def _canonical_auto_shop_settings(self, source) -> dict:
         period = current_auto_shop_period()
-        source_shops = source.get("shops") if isinstance(source, dict) else {}
+        source = source if isinstance(source, dict) else {}
+        source_shops = source.get("shops")
         source_shops = source_shops if isinstance(source_shops, dict) else {}
-        source_gold = source_shops.get("gold_shop")
-        source_gold = source_gold if isinstance(source_gold, dict) else {}
-        source_items = self._auto_shop_item_map(source_gold.get("items"))
-        normalized = auto_shop.normalize_auto_shop_settings({
-            "enabled": source.get("enabled", False) if isinstance(source, dict) else False,
-            "shops": {
-                "gold_shop": {
-                    **source_gold,
-                    "items": source_items,
-                },
-            },
-        })
-
-        gold_config = normalized["shops"]["gold_shop"]
-        canonical = {
-            "enabled": normalized["enabled"],
-            "shops": {
-                "gold_shop": {
-                    "enabled": gold_config["enabled"],
-                    "state": {},
-                    "items": {},
-                },
-            },
-        }
-        for definition in auto_shop.AUTO_SHOP_ITEMS:
-            item_key = definition["key"]
-            source_item = source_items.get(item_key)
-            source_item = source_item if isinstance(source_item, dict) else {}
-            config_item = gold_config["items"][item_key]
-            canonical["shops"]["gold_shop"]["items"][item_key] = {
-                "enabled": config_item["enabled"],
-                "target": config_item["target"],
-                "state": auto_shop.normalize_item_state(
-                    source_item.get("state"),
-                    period,
-                ),
-            }
-
-        shop_state = auto_shop.normalize_shop_state(
-            source_gold.get("state"),
-            period,
-        )
-        has_pending = any(
-            (item.get("state") or {}).get("status") in (
-                auto_shop.STATUS_PENDING,
-                auto_shop.STATUS_PENDING_NOT_LOCATED,
-            )
-            for item in canonical["shops"]["gold_shop"]["items"].values()
-        )
-        if has_pending and shop_state.get("status") == auto_shop.STATUS_FAILED_TODAY:
-            shop_state = auto_shop.fresh_shop_state(period)
-        canonical["shops"]["gold_shop"]["state"] = shop_state
-
+        mapped = {}
+        for key in auto_shop.SHOP_CATALOGS:
+            shop = source_shops.get(key)
+            shop = shop if isinstance(shop, dict) else {}
+            mapped[key] = {**shop, "items": self._auto_shop_item_map(shop.get("items"))}
+        canonical = auto_shop.normalize_auto_shop_settings({**source, "shops": mapped})
+        for key, catalog in auto_shop.SHOP_CATALOGS.items():
+            shop = canonical["shops"][key]
+            for definition in catalog:
+                item_key = definition["key"]
+                entry = mapped[key]["items"].get(item_key)
+                entry = entry if isinstance(entry, dict) else {}
+                shop["items"][item_key]["state"] = auto_shop.normalize_item_state(entry.get("state"), period)
+            shop_state = auto_shop.normalize_shop_state(mapped[key].get("state"), period)
+            has_pending = any(item["state"].get("status") in (
+                auto_shop.STATUS_PENDING, auto_shop.STATUS_PENDING_NOT_LOCATED
+            ) for item in shop["items"].values())
+            if has_pending and shop_state.get("status") == auto_shop.STATUS_FAILED_TODAY:
+                shop_state = auto_shop.fresh_shop_state(period)
+            shop["state"] = shop_state
         return canonical
 
     def _save_auto_shop_settings(self, settings: dict) -> dict:
@@ -1559,33 +1523,51 @@ class Api:
         cfg.update({"auto_shop": canonical})
         return canonical
 
+    @staticmethod
+    def _auto_shop_icon(definition) -> str:
+        import base64
+        from core.constants import ASSETS_DIR
+        folder = os.path.join(ASSETS_DIR, "ui", definition["template"])
+        if definition.get("template_dir"):
+            folder = definition["template_dir"]
+        try:
+            names = sorted(name for name in os.listdir(folder) if name.endswith(".png"))
+            if "icon.png" in names:
+                names.remove("icon.png")
+                names.insert(0, "icon.png")
+            if names:
+                with open(os.path.join(folder, names[0]), "rb") as handle:
+                    return "data:image/png;base64," + base64.b64encode(handle.read()).decode("ascii")
+        except OSError:
+            pass
+        return ""
+
     def get_auto_shop_settings(self) -> dict:
         saved = cfg.load().get("auto_shop") or {}
         canonical = self._canonical_auto_shop_settings(saved)
         if canonical != saved:
             cfg.update({"auto_shop": canonical})
-
-        gold_shop = canonical["shops"]["gold_shop"]
         return {
-            "enabled": canonical["enabled"],
+            "enabled": canonical["enabled"], "view": canonical["view"],
             "reset_schedule": auto_shop.AUTO_SHOP_RESET_SCHEDULE,
-            "shops": {
-                "gold_shop": {
-                    "name": "Gold Shop",
-                    "enabled": gold_shop["enabled"],
-                    "state": gold_shop["state"],
-                    "items": [
-                        {
-                            "key": definition["key"],
-                            "name": definition["name"],
-                            "daily_maximum": definition["stock"],
-                            **gold_shop["items"][definition["key"]],
-                        }
-                        for definition in auto_shop.AUTO_SHOP_ITEMS
-                    ],
-                },
-            },
+            "shops": {key: {
+                "name": auto_shop.SHOP_NAMES[key],
+                "enabled": canonical["shops"][key]["enabled"],
+                "state": canonical["shops"][key]["state"],
+                "items": [{"key": definition["key"], "name": definition["name"],
+                    "daily_maximum": definition["stock"], "icon": self._auto_shop_icon(definition),
+                    **canonical["shops"][key]["items"][definition["key"]]
+                } for definition in catalog],
+            } for key, catalog in auto_shop.SHOP_CATALOGS.items()},
         }
+
+    def set_auto_shop_view(self, view: str) -> dict:
+        if view not in ("list", "squares"):
+            return {"ok": False, "reason": "bad_view"}
+        settings = self.get_auto_shop_settings()
+        settings["view"] = view
+        self._save_auto_shop_settings(settings)
+        return {"ok": True}
 
     def set_auto_shop_enabled(self, enabled: bool) -> dict:
         settings = self.get_auto_shop_settings()
@@ -2849,39 +2831,105 @@ class Api:
         if self._window:
             self._window.minimize()
 
+    def begin_resize(self):
+        """Give the frameless window a native bottom-right resize grip."""
+        if sys.platform == "win32":
+            import ctypes
+            hwnd = self.gui_hwnd or WindowManager(GUI_TITLE).find()
+            if hwnd:
+                ctypes.windll.user32.ReleaseCapture()
+                ctypes.windll.user32.SendMessageW(ctypes.c_void_p(hwnd), 0xA1, 17, 0)
+
     def maximize_window(self):
-        """Toggle the custom-chrome window between maximized and restored."""
+        """Use Windows maximize/restore within the monitor's usable desktop."""
         if self._window:
-            if self._window_is_maximized:
+            if sys.platform == "win32":
+                self.fit_window_to_work_area(toggle_maximize=True)
+            elif self._window_is_maximized:
                 self._window.restore()
                 self._window_is_maximized = False
             else:
                 self._window.maximize()
                 self._window_is_maximized = True
 
+    def fit_window_to_work_area(self, toggle_maximize=False, maximize=False):
+        """Constrain frameless sizing to WorkingArea, which excludes the taskbar."""
+        if sys.platform != "win32" or not self._window or self._window.native is None:
+            return
+        from System import Action
+        from System.Drawing import Rectangle, Size
+        from System.Windows.Forms import Screen, FormWindowState
+        native = self._window.native
+
+        def apply():
+            area = Screen.FromControl(native).WorkingArea
+            native.MaximizedBounds = area
+            # A previous dashboard minimum must not force the native frame
+            # beyond the desktop. Roblox itself retains its fixed dimensions.
+            minimum = native.MinimumSize
+            native.MinimumSize = Size(min(minimum.Width, area.Width), min(minimum.Height, area.Height))
+            if toggle_maximize:
+                if native.WindowState == FormWindowState.Maximized:
+                    native.WindowState = FormWindowState.Normal
+                else:
+                    native.WindowState = FormWindowState.Maximized
+            if maximize:
+                native.WindowState = FormWindowState.Maximized
+            if native.WindowState == FormWindowState.Normal:
+                bounds = native.Bounds
+                native.Bounds = Rectangle(*fit_window_rect(
+                    bounds.X, bounds.Y, bounds.Width, bounds.Height,
+                    (area.X, area.Y, area.Width, area.Height)))
+            self._window_is_maximized = native.WindowState == FormWindowState.Maximized
+
+        native.Invoke(Action(apply))
+
+    def set_layout_minimum(self, dashboard: bool, compact: bool = False):
+        """Keep the native game fully visible; editors can reflow smaller."""
+        if sys.platform != "win32" or not self._window:
+            return
+        from System import Action
+        from System.Drawing import Size
+        width = config.FIXED_WIN_W if dashboard else 800
+        height = (TITLEBAR_H + config.FIXED_WIN_H + (COMPACT_STRIP_H if compact else 100)) if dashboard else 600
+        native = self._window.native
+        if native is not None:
+            native.Invoke(Action(lambda: setattr(native, "MinimumSize", Size(width, height))))
+            self.fit_window_to_work_area()
+
+    def dock_game_centered(self, game_hwnd, gui_hwnd):
+        """Dock from native client geometry, independent of saved game coordinates."""
+        with self._game_layout_lock:
+            if self.stopping.is_set():
+                return
+            left, _, right, _ = wm.get_client_rect_screen(gui_hwnd)
+            x, y = centered_game_offset(right - left)
+            self.docker.dock(game_hwnd, gui_hwnd, x=x, y=y)
+
+    def sync_game_position(self, *args):
+        """Resize callback: only move the fixed viewport; never reveal a hidden game."""
+        if (sys.platform == "darwin" or self.stopping.is_set() or not self.docker.docked
+                or not self.game_hwnd or not self.gui_hwnd):
+            return
+        if self.game_cutout and not self._cutout_game_visible:
+            return
+        self.dock_game_centered(self.game_hwnd, self.gui_hwnd)
+
     def show_game(self):
-        # Only touches visibility, not docking state: the Roblox window stays
-        # parented/borderless the whole time, so this is just a toggle.
-        # Cutout mode expresses visibility as LAYERING instead: the game
-        # floats topmost exactly over the game slot (see core/dock.py's
-        # cutout notes for why a literal region hole can't work over
-        # WebView2), and "hidden" is parked at the bottom of the z-order.
+        # Requested visibility survives minimize/restore; the docker checks IsIconic.
         if self.game_cutout:
             self._cutout_game_visible = True
             if self.docker.docked and self.game_hwnd and wm.is_window(self.game_hwnd) and self.gui_hwnd:
-                self.docker.dock(self.game_hwnd, self.gui_hwnd, x=NAV_RAIL_WIDTH, y=TITLEBAR_H)
+                self.dock_game_centered(self.game_hwnd, self.gui_hwnd)
             return
         if self.game_hwnd and wm.is_window(self.game_hwnd):
             wm.show_window(self.game_hwnd)
 
     def hide_game(self):
-        # Cutout mode: demote to the bottom of the z-order -- everything
-        # (this GUI included) covers the game, which keeps rendering for
-        # the window-content captures this mode forces.
         if self.game_cutout:
             self._cutout_game_visible = False
             if self.game_hwnd and wm.is_window(self.game_hwnd):
-                wm.send_to_bottom(self.game_hwnd)
+                wm.hide_window(self.game_hwnd)
             return
         if self.game_hwnd and wm.is_window(self.game_hwnd):
             wm.hide_window(self.game_hwnd)
@@ -2944,12 +2992,9 @@ class Api:
         (AppHelper.callAfter) while this runs on the JS-bridge/watchdog thread,
         hence the settle sleep before reading the result back.
 
-        There is deliberately no AX fallback like the Windows path's
-        MoveWindow: the window is created resizable=False, and the
-        Accessibility API honours that style mask -- setting kAXSizeAttribute
-        on it fails with kAXErrorFailure (-25200), verified on a real Mac.
-        setFrame_display_ (what pywebview calls) is not restricted that way,
-        so it is the only mechanism that works here.
+        Use pywebview's setFrame_display_ path; the previous fixed-window
+        implementation verified this on macOS, where the AX resize fallback
+        failed with kAXErrorFailure (-25200).
 
         Records what the window ACTUALLY ended up at in _mac_panel_width, not
         what was asked for: that field is the short-circuit for repeat calls,
@@ -3013,6 +3058,7 @@ class Api:
                     wm.move_window(gui_hwnd, x, y, w, h)
             except Exception as exc:
                 self.push_log(f"[Compact] native resize failed: {exc}")
+        self.fit_window_to_work_area()
 
     def enter_compact(self) -> None:
         """F7 compact view: trim the window down to just the docked game plus
@@ -3026,6 +3072,7 @@ class Api:
             # there's no empty in-window column to trim -- the CSS-hidden
             # panels are the whole effect there.
             return
+        self.set_layout_minimum(True, True)
         self._resize_gui_keep_pos(GUI_WIDTH_COMPACT_FIT, GUI_HEIGHT_COMPACT_FIT)
 
     def exit_compact(self) -> None:
@@ -3033,6 +3080,7 @@ class Api:
         panel + log have room again."""
         if not self._window or sys.platform == "darwin":
             return
+        self.set_layout_minimum(True)
         self._resize_gui_keep_pos(GUI_WIDTH_FULL, GUI_HEIGHT_FULL)
 
     def skip_waiting(self):
@@ -3057,6 +3105,7 @@ class Api:
                 self._mac_panel_ready = True
             self.push_log("Skipped waiting for Roblox.")
             return
+        was_maximized = self._window_is_maximized
         if self._window:
             # A resize issued on a minimized window -- or, it turns out,
             # under some DPI-scaling states -- can be silently dropped,
@@ -3067,6 +3116,7 @@ class Api:
             # verify the resize actually took, falling back to a native
             # MoveWindow if it didn't -- otherwise every screen except the
             # waiting placeholder renders squeezed into ~400px.
+            self.set_layout_minimum(True)
             self._window.restore()
             time.sleep(0.2)
             self._window.resize(GUI_WIDTH_FULL, GUI_HEIGHT_FULL)
@@ -3082,6 +3132,7 @@ class Api:
                     if (right - left, bottom - top) != (GUI_WIDTH_FULL, GUI_HEIGHT_FULL):
                         self.push_log("Warning: the window didn't fully resize -- some screens may look "
                                       "cramped. Try resizing or maximizing it by hand.")
+        self.fit_window_to_work_area(maximize=was_maximized)
         self.push_log("Skipped waiting for Roblox.")
 
     def launch_roblox(self) -> dict:
@@ -3212,6 +3263,17 @@ class Api:
         return self.runner.start_debug_test(lambda: self.game_hwnd, mode, macro_name,
                                               data.get("debug_screenshots", False), coords)
 
+    def get_soul_furnace_recommendation(self) -> dict:
+        """Creator-provided screenshots for the Soul Furnace task setup guide."""
+        import base64
+        result = {}
+        for key, filename in (("team", "recommended_team.png"), ("autoplay", "recommended_autoplay.png")):
+            path = os.path.join(constants.ASSETS_DIR, "reference", "soul_furnace", filename)
+            if os.path.isfile(path):
+                with open(path, "rb") as image_file:
+                    result[key] = "data:image/png;base64," + base64.b64encode(image_file.read()).decode("ascii")
+        return result
+
     def open_assets_folder(self) -> dict:
         # Settings > General > "Open Assets Folder" (also the Image
         # Manager's "Open Folder" button) -- THE assets location now, not an
@@ -3219,11 +3281,11 @@ class Api:
         # constants.ASSETS_DIR) precisely so its images can be opened/
         # replaced/added to directly. One folder per searched name; every
         # image inside gets tried (core.vision.template_variant_paths).
-        # Creates ui/ and maps/ (empty) if somehow absent, so there's
+        # Creates ui/ and map_labels/ (empty) if somehow absent, so there's
         # somewhere obvious to drop files into instead of a folder that
         # doesn't exist yet.
         try:
-            for sub in ("ui", "maps"):
+            for sub in ("ui", "map_labels"):
                 os.makedirs(os.path.join(constants.ASSETS_OVERRIDE_DIR, sub), exist_ok=True)
             # Platform split lives in _open_in_file_manager -- mac needs
             # `open` (os.startfile is Windows-only), and there the folder is
@@ -4113,7 +4175,15 @@ class Api:
         uri = maps.map_image_data_uri(category, name)
         if not uri:
             return {"ok": False, "reason": "not_found"}
-        return {"ok": True, "data_uri": uri}
+        return {"ok": True, "data_uri": uri, "capture_note": maps.map_capture_note(category, name)}
+
+    def save_expedition_placement_screen(self, name: str, data_uri: str) -> dict:
+        from core import maps
+        try:
+            maps.save_expedition_screen(name, data_uri)
+            return {"ok": True}
+        except (ValueError, OSError) as exc:
+            return {"ok": False, "reason": str(exc)}
 
     def get_portal_chooser_picker_image(self) -> dict:
         # Portal-in-chooser coordinate picker: now shares get_roblox_snapshot's
@@ -4610,7 +4680,8 @@ def _launch_ui():
         height=start_h,
         x=start_x,
         y=start_y,
-        resizable=False,
+        resizable=True,
+        min_size=(GUI_WIDTH_COMPACT, GUI_HEIGHT_COMPACT),
         frameless=True,
         easy_drag=False,  # dragging is handled by the .pywebview-drag-region element in ui/index.html instead
     )
@@ -4834,6 +4905,7 @@ def _launch_ui():
                     # minimized window is silently dropped and it restores at the
                     # old compact size (verified against pywebview 6.2.1), which
                     # docked Roblox into a 400px-wide window. Restore first.
+                    was_maximized = api._window_is_maximized
                     window.restore()
                     time.sleep(0.2)
                     window.resize(GUI_WIDTH_FULL, GUI_HEIGHT_FULL)
@@ -4859,6 +4931,7 @@ def _launch_ui():
                                 api.push_log(f"Warning: Macro window size ({r - l}x{b - t}) is smaller than requested "
                                              f"({GUI_WIDTH_FULL}x{GUI_HEIGHT_FULL}) due to display resolution or DPI scaling. Docking anyway.")
                         api.gui_hwnd = gui_hwnd
+                        api.fit_window_to_work_area(maximize=was_maximized)
                         # Final stopping re-check: several sleeps have passed
                         # since the one guarding this branch, and a dock()
                         # committed AFTER close set stopping would re-parent
@@ -4866,18 +4939,12 @@ def _launch_ui():
                         # the cascade the whole close path exists to prevent.
                         if api.stopping.is_set():
                             return
-                        api.docker.dock(hwnd, gui_hwnd, x=NAV_RAIL_WIDTH, y=TITLEBAR_H)
+                        api.dock_game_centered(hwnd, gui_hwnd)
                         # Stay hidden until the JS side explicitly shows it for the Task
                         # screen (showDocked() does that) — Info/Settings/Macro Manager are the
                         # default/other screens now, and Roblox is a native window that
                         # would otherwise render on top of them regardless of DOM state.
-                        # Cutout mode never hides the window (captures read its
-                        # contents) -- "hidden" there is parked at the bottom of
-                        # the z-order until show_game promotes it.
-                        if api.docker.cutout:
-                            wm.send_to_bottom(hwnd)
-                        else:
-                            wm.hide_window(hwnd)
+                        wm.hide_window(hwnd)
                         api.pinned_hwnd = None  # dock succeeded -- back to normal auto-tracking of this hwnd
                         api.push_ui("showDocked")
                         api.push_log("Roblox docked.")
@@ -4886,17 +4953,13 @@ def _launch_ui():
             except Exception as exc:
                 api.push_log(f"Dock watchdog error: {exc}")
 
-            # Cutout mode's glue: while the game is meant to be visible,
-            # re-assert its over-the-slot position every tick (tracks a
-            # dragged GUI, heals lost topmost). Skipped while hidden --
-            # re-promoting the game over the Settings screen every 2s would
-            # BE the bug.
+            # Follow the macro and restore visibility after minimizing.
             try:
                 if (sys.platform != "darwin" and api.docker.cutout and api.docker.docked
                         and api._cutout_game_visible
                         and api.game_hwnd and wm.is_window(api.game_hwnd)
                         and api.gui_hwnd and wm.is_window(api.gui_hwnd)):
-                    api.docker.dock(api.game_hwnd, api.gui_hwnd, x=NAV_RAIL_WIDTH, y=TITLEBAR_H)
+                    api.dock_game_centered(api.game_hwnd, api.gui_hwnd)
             except Exception:
                 pass
 
@@ -4960,8 +5023,7 @@ def _launch_ui():
             "macro_stop": lambda: api.stop_macro(),
         }
         for action, fn in actions.items():
-            key = ("ctrl+shift+c" if action == "copy_mouse_position"
-                   else hotkeys.get(action) or HOTKEY_DEFAULTS.get(action, ""))
+            key = hotkeys.get(action) or HOTKEY_DEFAULTS.get(action, "")
             if not key:
                 continue
             try:
@@ -4970,6 +5032,7 @@ def _launch_ui():
                 pass
 
     def on_shown():
+        api.fit_window_to_work_area(maximize=True)
         threading.Thread(target=_dock_watchdog, daemon=True).start()
         _register_hotkeys(api.get_hotkeys())
         api._on_hotkeys_changed = _register_hotkeys
@@ -5002,6 +5065,10 @@ def _launch_ui():
     atexit.register(_on_app_exit)
 
     window.events.shown += on_shown
+    window.events.resized += api.sync_game_position
+    window.events.moved += api.sync_game_position
+    window.events.minimized += api.sync_game_position
+    window.events.restored += api.sync_game_position
     window.events.closing += on_closing
     webview.start()
     # webview.start() returns once the window is gone -- detach here too, in

@@ -7,7 +7,6 @@ Methods here run with MacroRunner's full self: shared state and helpers
 (_log, _coords, _checkpoint, _click_found_image, ...) resolve normally.
 """
 import difflib
-import os
 import re
 import threading
 import time
@@ -41,7 +40,7 @@ class ChallengeOps:
         """Regular Challenge is Story's own flow with the game picking a
         random map for you -- this is the "which one
         did it land on" check, tried against each map's reference image
-        (Assets/ui/<map>.png, a different purpose from Assets/maps/<map>.png's
+        (Assets/ui/<map>.png, a different purpose from Assets/map_labels/<map>.png's
         map-CARD search) in turn. Returns the matched map name, or None if
         none of them were found (not yet on a recognizable Challenge screen,
         or the wrong screen entirely)."""
@@ -63,52 +62,15 @@ class ChallengeOps:
         return None
 
     def _report_challenge_map_miss(self, hwnd, label: str) -> None:
-        """Say WHY the map search came up empty, and keep the frame.
-
-        "never recognized a map -- stopping" is the least actionable line in
-        the log: it cannot distinguish "the art is close but under
-        threshold" (a re-cut fixes it) from "nothing on this screen looks
-        remotely like a map" (we are not where we think we are) from "OCR is
-        missing entirely". All three have happened. So on the way out, run
-        ONE more pass at a deliberately generous threshold and print the
-        best score each map actually reached, then write the frame to
-        debug/ -- unconditionally, not behind the Debug Screenshots toggle,
-        because this path already ends the run and one PNG per stopped run
-        is not the flood that toggle exists to prevent.
-        """
-        try:
-            best = []
-            haystack = vision.capture_game_gray(hwnd)
-            if haystack is not None:
-                for map_name in ChallengeOps._challenge_image_map(self):
-                    try:
-                        vision.load_template_grays(map_name)
-                    except vision.TemplateNotFound:
-                        best.append(f"{map_name}: no reference image")
-                        continue
-                    # The diagnostic matcher, not the polling one: it reports
-                    # the strongest candidate across every variant and scale
-                    # even when nothing clears threshold, which is the whole
-                    # point of asking here.
-                    probe = vision.find_in_gray_multiscale_diagnostic(haystack, map_name)
-                    top = probe.get("best")
-                    best.append(f"{map_name}: {top['score']:.2f}" if top
-                                else f"{map_name}: no score")
-            if best:
-                self._log(f"[Macro] {label}: best map scores this frame -- " + "; ".join(best))
-        except Exception as exc:
-            self._log(f"[Macro] {label}: couldn't score the map templates ({exc}).")
-        try:
-            frame = vision.capture_game_bgr(hwnd)
-            if frame is not None:
-                os.makedirs(vision.DEBUG_DIR, exist_ok=True)
-                path = os.path.join(
-                    vision.DEBUG_DIR,
-                    f"challenge_map_miss_{time.strftime('%Y%m%d_%H%M%S')}.png")
-                cv2.imwrite(path, frame)
-                self._log(f"[Macro] {label}: saved the unrecognized screen to {path}")
-        except Exception as exc:
-            self._log(f"[Macro] {label}: couldn't save the map-miss frame ({exc}).")
+        """Preserve one Roblox frame and detection details for this failed check."""
+        from .map_capture import save_map_miss
+        is_daily = label == "Daily Challenge"
+        save_map_miss(
+            hwnd, task={"mode": "daily_challenge" if is_daily else "challenge",
+                        "name": label, "is_challenge": True,
+                        "is_daily_challenge": is_daily,
+                        "challenge_slot": None if is_daily else label.removeprefix("Challenge #")},
+            candidates=ChallengeOps._challenge_image_map(self), log=self._log)
 
     def _challenge_map_ocr_crops(self, frame):
         """Daily Challenge map label crops, HUD-anchored first and fixed relative fallback second."""
@@ -563,7 +525,9 @@ class ChallengeOps:
         is_daily = label == "Daily Challenge"
         task = {
             "mode": "story", "is_challenge": True, "is_daily_challenge": is_daily,
+            "challenge_slot": None if is_daily else label.removeprefix("Challenge #"),
             "map": detected_map, "_identified_map": bool(detected_map),
+            "_map_miss_reported": not bool(detected_map),
             "difficulty": "Hard" if is_daily else "Normal",
             "macro": macro_name, "play_mode": play_mode, "repeat": 1, "team": "", "equipment": "include",
             # Was never set at all, and _settle_autoplay_for_match reads a

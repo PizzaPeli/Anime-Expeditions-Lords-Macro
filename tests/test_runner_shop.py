@@ -595,7 +595,7 @@ def test_out_of_stock_after_purchase_is_logged_and_saved(monkeypatch):
     item = _settings()["shops"]["gold_shop"]["items"][0]
     stop_event = threading.Event()
     read_observation = MagicMock(
-        return_value={"left": 50, "signature": "00", "out_of_stock": False}
+        return_value={"left": 100, "signature": "00", "out_of_stock": False}
     )
     terminal_labels = iter([None, "shop_out_of_stock"])
     monkeypatch.setattr(
@@ -662,16 +662,17 @@ def test_confirmed_purchase_reuses_the_current_scroll_position(monkeypatch):
     assert saved[-1][2]["status"] == auto_shop.STATUS_COMPLETED
 
 
-def test_gold_shop_navigation_waits_for_teleport_before_camera_and_interaction(
-        monkeypatch):
+def test_gold_shop_navigation_does_not_travel_or_interact_with_npc(monkeypatch):
     runner = _runner()
     stop_event = threading.Event()
     events = []
     monkeypatch.setattr(runner, "_checkpoint", lambda _stop: False)
+    monkeypatch.setattr("core.runner_shop.vision.find_image", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("core.runner_shop.vision.ref_to_screen", lambda _hwnd, x, y: (x, y))
     monkeypatch.setattr(
         runner,
         "_click_found_image",
-        lambda _hwnd, name, *_args: events.append(f"click:{name}") or {"score": 1},
+        lambda _hwnd, name, *_args, **_kwargs: events.append(f"click:{name}") or {"score": 1},
     )
     monkeypatch.setattr(
         runner,
@@ -680,15 +681,11 @@ def test_gold_shop_navigation_waits_for_teleport_before_camera_and_interaction(
     )
     monkeypatch.setattr(
         "core.runner_shop.vision.wait_for_image",
-        lambda _hwnd, name, **_kwargs: events.append(f"wait:{name}") or {"score": 1},
+        lambda _hwnd, name, **_kwargs: events.append(f"wait:{name}") or {"x": 737, "y": 214, "score": 1},
     )
     monkeypatch.setattr(
         "core.runner_shop.wm.activate_window",
         lambda _hwnd: events.append("focus") or True,
-    )
-    monkeypatch.setattr(
-        "core.runner_shop.camera.tilt_camera_top_down",
-        lambda *_args: events.append("camera"),
     )
     monkeypatch.setattr("core.runner_shop.time.sleep", lambda _seconds: None)
     runner._keyboard.tap.side_effect = lambda key: events.append(f"key:{key}")
@@ -696,13 +693,11 @@ def test_gold_shop_navigation_waits_for_teleport_before_camera_and_interaction(
     assert runner._shop_enter_gold_shop(1, stop_event) is True
 
     assert events[:3] == [
-        "click:nav_area",
-        "click:nav_shop",
-        "click:area_gold_shop",
+        "click:shop_remote_menu",
+        "click:shop_remote_all_shops",
+        "click:shop_remote_restocking",
     ]
-    assert events.index("nav_play_gone") < events.index("focus")
-    assert events.index("focus") < events.index("camera")
-    assert events.index("camera") < events.index(f"key:{ord('E')}")
-    assert events.index(f"key:{ord('E')}") < events.index("click:shop_gold_tab")
-    assert events.index("click:shop_gold_tab") < events.index("wait:shop_cursed_boba")
-    assert events[-1] == "wait:shop_cursed_boba"
+    runner._mouse.click.assert_called_once_with(774, 379)
+    runner._keyboard.tap.assert_not_called()
+    assert "nav_play_gone" not in events
+    assert events[-1] == "wait:shop_remote_header"

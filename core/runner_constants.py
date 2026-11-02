@@ -333,39 +333,6 @@ SNOWY_CASTLE_ACT_VERIFY_TIMEOUT = 3.0
 ACT_CLICK_BASE = (250, 267)  # Act 1's click point
 ACT_ROW_HEIGHT = 129
 
-# Event mode: reached straight from the lobby via its own nav_event button
-# (NOT through Play like Story/Raid/Expedition/Challenge), then the
-# event_gamemode card, then one of the Act cards (each a villain). There's no
-# map carousel and no difficulty picker -- picking the Act IS the whole
-# selection, so it goes straight from the Act to the Solo/Matchmaking tail
-# (nav_select_stage + nav_start, or enter_matchmaking) the other modes share.
-# The image folder names are exactly as they ship under Assets/ui/ -- the
-# mixed "villian"/"villain" spelling is intentional, it matches the real
-# folders. Mirrors TASK_DATA.event.stages in ui/app.js.
-# Act 4 (Villian Invasion "Crow - Dawn") is a relic-gated Act: it costs 1 Crow
-# Relic to enter, so its card shows locked ("0/1x Owned", VILLIAN4_CLOSE_IMAGE)
-# until you've banked one. It's selectable now, and farm tasks can auto-divert
-# to it when a relic drops (see runner._run_act4_diversion / DROP_RELIC_IMAGE).
-EVENT_ACT_ORDER = ["1", "2", "3", "4"]
-# Values are a tuple of candidate crops per Act (any match wins), so an Act
-# card that shows in more than one visual state can be matched in whichever
-# it's currently in.
-EVENT_ACT_IMAGES = {
-    "1": ("villian1",),
-    "2": ("villian2",),
-    "3": ("villain3",),
-    "4": ("villian4",),
-}
-# Acts from this one on can sit below the fold on the Event gamemode screen
-# and only come into view by scrolling the villain list -- picking one of
-# these runs the same wheel-scroll search Story maps use (see
-# _reach_event_act_selected / _scroll_find_and_click). Acts before it are
-# already on screen and get a plain wait-then-click. The scroll search checks
-# what's already visible first, so it's a no-op for an Act that didn't need
-# scrolling anyway.
-EVENT_ACT_SCROLL_FROM_INDEX = 2  # 0-based into EVENT_ACT_ORDER: index 2 == Act "3"
-EVENT_SCREEN_TIMEOUT = 10.0  # how long to wait for each Event screen (nav_event / event_gamemode / the Act card) to appear
-
 # Tournament mode: reached through Play like Story/Raid -- its nav_tournament
 # button sits on the same gamemode menu (picked instead of Story), NOT via its
 # own lobby entry the way Event's nav_event is. After nav_tournament comes a
@@ -378,28 +345,17 @@ EVENT_SCREEN_TIMEOUT = 10.0  # how long to wait for each Event screen (nav_event
 # the matching entry to TASK_DATA.tournament.maps to offer another type. The
 # image folder names ship under Assets/ui/ exactly as written below.
 TOURNAMENT_TYPE_ORDER = ["Solo Tournament"]
-# Values are a tuple of candidate crops per type (any match wins), same shape
-# as EVENT_ACT_IMAGES, so a card shown in more than one visual state can still
-# be matched.
+# Values are a tuple of candidate crops per type (any match wins).
 TOURNAMENT_TYPE_IMAGES = {
     "Solo Tournament": ("solo_tournament",),
 }
 TOURNAMENT_SCREEN_TIMEOUT = 10.0  # how long to wait for each Tournament screen (nav_tournament / the type card / nav_entertournament) to appear
-TOWER_SCREEN_TIMEOUT = 10.0  # how long to wait for each Tower screen (nav_tower / Traitless_Tower / nav_select_stage) to appear
+TOWER_SCREEN_TIMEOUT = 10.0  # how long to wait for each Tower screen (nav_tower / traitless_tower / nav_select_stage) to appear
 
 # Reference-window region (x, y, w, h) of the Tower game mode.
 # The tower's recent floor is always in this region but it is
 # subject to change.
 TOWER_CARD_REGION = (565, 230, 770 - 565, 351 - 230)  # (565, 230) -> (770, 351)
-
-# Villian Invasion Act 4 ("Crow - Dawn") relic gate. DROP_RELIC_IMAGE is the
-# Crow Relic reward shown on the Victory screen (relics only drop on a win) --
-# spotting it is what triggers a farm task's optional auto-divert to Act 4.
-# VILLIAN4_CLOSE_IMAGE is Act 4's locked card ("requires 1 Crow Relic / 0/1x
-# Owned"); seeing it means there's no relic to spend, so the divert backs out.
-DROP_RELIC_IMAGE = "drop_relic"
-VILLIAN4_CLOSE_IMAGE = "villian4_close"
-EVENT_ACT4_STAGE = "4"
 
 # Infinite/Mastery are locked to Hard in-game with no picker shown for them
 # (see ui/app.js's TASK_DATA.story comment) -- no difficulty click happens
@@ -423,7 +379,7 @@ EXPEDITION_MAP_IMAGES = {
 # on" check once you're in. Map names and image names now come from the
 # Settings registry; a detection miss falls back to Auto Play. Reference
 # images live in Assets/ui/<image name>.png
-# (a different folder/purpose than Assets/maps/<map>.png, which is the
+# (a different folder/purpose than Assets/map_labels/<map>.png, which is the
 # scrolling map-CARD search used to pick a map by hand -- these instead
 # confirm which map is already showing).
 # Daily Challenge shows its map as a ~10px label rather than the art the
@@ -654,7 +610,7 @@ REJOIN_POLL_INTERVAL = 2.0
 START_GAME_CHECK_TIMEOUT = 1.5
 NAV_CLICK_TIMEOUT = 8.0  # nav_settings / nav_search in the Auto Vote Start fallback
 REPEAT_STAGE_MODAL_CLEAR_TIMEOUT = 5.0  # how long to wait for the Victory/Defeat banner to actually clear after Repeat Stage
-REWARD_CARD_CLEAR_TIMEOUT = 6.0  # how long to spend dismissing "select upgrade card" before Repeat/Leave Stage
+REWARD_CARD_CLEAR_TIMEOUT = 6.0  # how long to spend dismissing "select_upgrade_card" before Repeat/Leave Stage
 # Character/reward portraits on Victory can open a centered Obtainments
 # modal. Its Close button stays in this middle-bottom band even when the
 # underlying result panel and hotbar shift slightly.

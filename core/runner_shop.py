@@ -1,12 +1,12 @@
-"""Daily Gold Shop automation executed only from lobby-safe runner boundaries."""
+"""Shop automation executed only from lobby-safe runner boundaries."""
 
 import hashlib
 import threading
 import time
+import cv2
 
 from . import auto_shop
 from . import auto_shop_vision
-from . import camera
 from . import keys
 from . import vision
 from . import window as wm
@@ -37,29 +37,23 @@ SHOP_OUT_OF_STOCK_BANDS = {
 SHOP_OUT_OF_STOCK_DEFAULT_BAND = (218, 110)
 SHOP_LIST_ACTION_VIEWPORT = (390, 218, 316, 362)
 SHOP_DISCOVERY_VIEWPORT = (390, 180, 316, 440)
+SHOP_SCROLLBAR_VIEWPORT = (707, 218, 7, 358)
 SHOP_DISCOVERY_SCROLL_AMOUNT = -120
-SHOP_DISCOVERY_MAX_SCROLLS = 24
+SHOP_DISCOVERY_MAX_SCROLLS = 48
+SHOP_DISCOVERY_CAPTURE_ATTEMPTS = 3
+SHOP_DISCOVERY_RECHECK_DELAY = 0.35
 SHOP_SETTLE_DELAY = 1.2
-SHOP_LIST_SETTLE_DELAY = 1.2
+SHOP_LIST_SETTLE_DELAY = 2.0
 SHOP_MODAL_POST_CLOSE_DELAY = 0.8
 SHOP_MODAL_CLEAR_CHECKS = 3
 SHOP_MODAL_CLEAR_INTERVAL = 0.25
 SHOP_CAPTURE_INTERVAL = 0.12
-# The Gold Shop is a two-column list, two items per row, in a fixed order.
-# These four tables ARE that layout, so they must agree with each other and
-# with AUTO_SHOP_ITEMS' order in core/auto_shop.py. Row positions belong to the
-# ROW INDEX, not to the items in it -- when Meat was added as the 6th food it
-# did not add a row (11 items in 6 rows became 12 in 6), so the scroll amounts
-# below are unchanged from before it and only the item-to-row mapping moved.
-# Verified against the live shop, rows overlapping so each pair is confirmed
-# twice:
-#
-#   row 0  scroll     0   Cursed Boba (L)       Red Flower (R)
-#   row 1  scroll  -120   Frown Fruit (L)       Delicious Pie (R)
-#   row 2  scroll  -480   Mana Flask (L)        Meat (R)          <- Meat here
-#   row 3  scroll  -720   Trait Crystal (L)     Sprite (Grey) (R)
-#   row 4  scroll  -960   Equipment Reroll (L)  Equipment Lock (R)
-#   row 5  bottom         Stat Reroll (L)       Stat Lock (R)
+SHOP_CATALOG_VIEWPORT = (350, 198, 570, 396)
+# Relative to the Gold Shop title, not a fixed grid slot. Both the All Shops
+# and Restocking layouts put Open Shop here; Buy All is to its right.
+SHOP_REMOTE_OPEN_FROM_TITLE = (37, 165)
+# Historical layout retained for legacy helpers only. The active Auto Shop
+# sweep discovers item cards visually and never uses these slot tables.
 SHOP_ITEM_SCROLL_STEPS = {
     "cursed_boba": 0,
     "red_flower": 0,
@@ -129,11 +123,11 @@ class ShopOps:
             self._log(f"[Shop] Couldn't read Auto Shop settings: {exc}")
             return {}
 
-    def _auto_shop_due_items(self, settings=None) -> list:
+    def _auto_shop_due_items(self, settings=None, shop_key=SHOP_KEY) -> list:
         settings = settings or self._auto_shop_settings()
         if not settings.get("enabled"):
             return []
-        shop = (settings.get("shops") or {}).get(SHOP_KEY) or {}
+        shop = (settings.get("shops") or {}).get(shop_key) or {}
         if not shop.get("enabled"):
             return []
         if (shop.get("state") or {}).get("status") == auto_shop.STATUS_FAILED_TODAY:
@@ -146,8 +140,8 @@ class ShopOps:
         ]
 
     def _auto_shop_wants_in(self) -> bool:
-        """Return whether the Gold Shop has any actionable configured item."""
-        return bool(self._auto_shop_due_items())
+        """Return whether either shop has an actionable configured item."""
+        return any(self._auto_shop_due_items(shop_key=key) for key in auto_shop.SHOP_CATALOGS)
 
     def _shop_save_item_state(self, shop_key: str, item_key: str, state: dict) -> None:
         if self._save_auto_shop_item_state is None:
@@ -171,9 +165,10 @@ class ShopOps:
 
     @staticmethod
     def _shop_region_is_visible(
-            region: tuple, allow_top_clip: bool = False) -> bool:
+            region: tuple, allow_top_clip: bool = False, shop_key=SHOP_KEY) -> bool:
         x, y, width, height = region
-        view_x, view_y, view_width, view_height = SHOP_LIST_ACTION_VIEWPORT
+        view_x, view_y, view_width, view_height = (
+            (275, 250, 590, 326) if shop_key == "expedition_shop" else SHOP_LIST_ACTION_VIEWPORT)
         min_y = 180 if allow_top_clip else view_y
         return (
             x >= view_x
@@ -258,24 +253,50 @@ class ShopOps:
             return None
         definition = auto_shop.item_definition(item["key"])
         template = definition["template"]
-        try:
-            match = vision.find_image(
-                hwnd,
-                template,
-                region=SHOP_DISCOVERY_VIEWPORT,
-                template_dir=definition.get("template_dir", vision.UI_ASSETS_DIR),
-            )
-        except vision.TemplateNotFound as exc:
-            self._log(f"[Shop] {exc}")
-            return None
-        if match is not None:
-            # The item icon is its identity proof.  The Buy rectangle is only
-            # accepted when it is still visibly attached to that same card.
+        shop_key = getattr(self, "_active_shop_key", SHOP_KEY)
+        bounds = (275, 250, 590, 326) if shop_key == "expedition_shop" else SHOP_DISCOVERY_VIEWPORT
+        reason = None
+        for attempt in range(SHOP_DISCOVERY_CAPTURE_ATTEMPTS):
+            if self._checkpoint(stop_event):
+                return None
+            # Match the icon, identity and controls in one frame. Animated
+            # cards can otherwise change between the separate captures.
             frame = vision.capture_game_bgr(hwnd)
+            if frame is None or not frame.size:
+                reason = "screen capture was unavailable"
+                continue
+            viewport = auto_shop_vision.crop_region(frame, bounds)
+            try:
+                match = vision.find_in_gray_multiscale(
+                    cv2.cvtColor(viewport, cv2.COLOR_BGR2GRAY), template,
+                    template_dir=definition.get("template_dir", vision.UI_ASSETS_DIR))
+            except vision.TemplateNotFound as exc:
+                self._log(f"[Shop] {exc}")
+                return None
+            if match is None:
+                if attempt + 1 < SHOP_DISCOVERY_CAPTURE_ATTEMPTS:
+                    time.sleep(SHOP_DISCOVERY_RECHECK_DELAY)
+                continue
+            for field in ("x", "cx"):
+                match[field] += bounds[0]
+            for field in ("y", "cy"):
+                match[field] += bounds[1]
             buy_region = auto_shop_vision.find_card_buy_button(frame, match)
-            if (buy_region is not None
-                    and auto_shop_vision.verify_card_identity(frame, item["key"], match)):
-                return match
+            if auto_shop_vision.verify_card_identity(frame, item["key"], match):
+                if (buy_region is not None
+                        and self._shop_region_is_visible(buy_region, shop_key=shop_key)):
+                    return match
+                # Sold-out cards have a disabled Buy. Identify the card first,
+                # then read its own terminal label, regardless of its row.
+                if self._shop_find_terminal_label(hwnd, match, stop_event, frame=frame):
+                    return match
+                reason = "its controls were clipped or disabled"
+            else:
+                reason = "its card identity did not match"
+            if attempt + 1 < SHOP_DISCOVERY_CAPTURE_ATTEMPTS:
+                time.sleep(SHOP_DISCOVERY_RECHECK_DELAY)
+        if reason:
+            self._log(f'[Shop] Saw "{item["name"]}", but {reason}; continuing the scan.')
         return None
 
     def _shop_find_slot_out_of_stock(
@@ -349,6 +370,8 @@ class ShopOps:
         """
         pending = {item["key"]: item for item in items}
         seen = set()
+        unchanged_scrolls = 0
+        self._log("[Shop] Scanning slowly: small scrolls, 2s settling, and three checks per item.")
         x, y = vision.ref_to_screen(hwnd, *SHOP_LIST_CENTER)
         self._mouse.move_to(x, y)
         self._mouse.nudge()
@@ -358,6 +381,7 @@ class ShopOps:
         for _step in range(SHOP_DISCOVERY_MAX_SCROLLS + 1):
             if self._checkpoint(stop_event):
                 return
+            self._log(f"[Shop] Checking list position {_step + 1}...")
             for item_key, item in tuple(pending.items()):
                 if item_key in seen or self._checkpoint(stop_event):
                     continue
@@ -372,34 +396,22 @@ class ShopOps:
 
             if len(seen) == len(pending) or self._checkpoint(stop_event):
                 break
+            # Keep item tooltips out of the list capture after a purchase.
+            self._mouse.move_to(x, y)
             before = self._shop_discovery_signature(hwnd)
             self._mouse.scroll(SHOP_DISCOVERY_SCROLL_AMOUNT)
             time.sleep(SHOP_LIST_SETTLE_DELAY)
             after = self._shop_discovery_signature(hwnd)
-            if before is not None and before == after:
-                self._log("[Shop] Reached the end of the Gold Shop list.")
+            unchanged_scrolls = unchanged_scrolls + 1 if before is not None and before == after else 0
+            if unchanged_scrolls >= 2:
+                self._log("[Shop] Reached the end of the shop list.")
                 break
 
         for item_key, item in pending.items():
             if item_key in seen or self._checkpoint(stop_event):
                 continue
-            # A sold-out card can cover enough of its icon that normal card
-            # discovery never establishes the identity match.  It is still
-            # safe to classify the terminal label at this item's calibrated
-            # row and column: this fallback can only mark Out of Stock and is
-            # never allowed to manufacture a card match or authorize a Buy.
-            scroll_amount = SHOP_ITEM_SCROLL_AMOUNTS[item_key]
-            if (self._shop_move_to_scroll_position(
-                    hwnd, scroll_amount, stop_event)
-                    and self._shop_find_slot_out_of_stock(
-                        hwnd, item, scroll_amount, stop_event)):
-                self._shop_save_item_state(
-                    shop_key,
-                    item_key,
-                    self._shop_out_of_stock_state(item),
-                )
-                self._log(f'[Shop] "{item["name"]}" is out of stock.')
-                continue
+            # A label at an old slot cannot identify an item after a reorder.
+            # Only a freshly identified card may supply its terminal state.
             period = self._shop_state_period(item.get("state") or {})
             self._shop_save_item_state(
                 shop_key,
@@ -411,13 +423,16 @@ class ShopOps:
                 "it remains pending for a later Auto Shop pass."
             )
 
-    @staticmethod
-    def _shop_discovery_signature(hwnd):
+    def _shop_discovery_signature(self, hwnd):
         """Return a compact viewport fingerprint for physical-end detection."""
-        frame = vision.capture_game_bgr(hwnd, SHOP_DISCOVERY_VIEWPORT)
+        bounds = (903, 250, 7, 326) if getattr(self, "_active_shop_key", SHOP_KEY) == "expedition_shop" else SHOP_SCROLLBAR_VIEWPORT
+        frame = vision.capture_game_bgr(hwnd, bounds)
         if frame is None or not frame.size:
             return None
-        return hashlib.sha256(frame[::12, ::12].tobytes()).digest()
+        # Animated item backgrounds never stop changing at the bottom. The
+        # scrollbar position does; coarse brightness removes capture noise.
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        return hashlib.sha256((gray > 35).tobytes()).digest()
 
     def _shop_synthetic_item_match(self, item: dict, scroll_amount: int) -> dict:
         """Construct synthetic item match coordinates from calibrated slot position."""
@@ -524,7 +539,7 @@ class ShopOps:
 
     def _shop_find_terminal_label(
             self, hwnd, item_match: dict, stop_event: threading.Event,
-            wait: bool = False):
+            wait: bool = False, frame=None):
         region = auto_shop_vision.card_terminal_region_from_item_match(
             item_match
         )
@@ -532,6 +547,19 @@ class ShopOps:
             auto_shop.AUTO_SHOP_UI_TEMPLATES["out_of_stock"],
             auto_shop.AUTO_SHOP_UI_TEMPLATES["max_inventory"],
         )
+        if frame is not None:
+            try:
+                crop = auto_shop_vision.crop_region(frame, region)
+            except ValueError:
+                return None
+            gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+            for name in names:
+                try:
+                    if vision.find_in_gray_multiscale(gray, name) is not None:
+                        return name
+                except vision.TemplateNotFound:
+                    continue
+            return None
         try:
             if wait:
                 match, name = vision.wait_for_image_any(
@@ -1155,105 +1183,93 @@ class ShopOps:
                 auto_shop.record_item_failure(pending, period),
             )
 
-    def _shop_enter_gold_shop(
-            self, hwnd, stop_event: threading.Event) -> bool:
-        for name, action in (
-            ("nav_area", "Opening Areas..."),
-            (auto_shop.AUTO_SHOP_UI_TEMPLATES["navigation"], "Opening Shop..."),
-            (auto_shop.AUTO_SHOP_UI_TEMPLATES["destination"], "Entering Gold Shop..."),
-        ):
-            self._set_status(action=action)
-            if self._click_found_image(
-                    hwnd,
-                    name,
-                    SHOP_NAV_TIMEOUT,
-                    stop_event,
-            ) is None:
-                return False
-            if self._checkpoint(stop_event):
-                return False
-            if name != auto_shop.AUTO_SHOP_UI_TEMPLATES["destination"]:
-                time.sleep(0.3)
+    def _shop_enter_gold_shop(self, hwnd, stop_event: threading.Event) -> bool:
+        return self._shop_enter_remote_shop(hwnd, stop_event, SHOP_KEY)
 
-        # Check for teleport fade-out immediately after clicking the destination
-        self._wait_for_image_gone(
-            hwnd,
-            ("nav_play",),
-            SHOP_NAV_TIMEOUT,
-            stop_event,
-        )
-        self._set_status(action="Loading Gold Shop...")
-        try:
-            loaded = vision.wait_for_image(
-                hwnd,
-                "nav_play",
-                timeout=SHOP_LOAD_TIMEOUT,
-                stop_event=stop_event,
-            )
-        except vision.TemplateNotFound:
-            loaded = None
-        if loaded is None:
-            return False
-        time.sleep(1.5)
-        # Advisory, like the one at the top of _run_auto_shop and for the same
-        # reason -- and with the 0.28.6 log as proof the check itself is the
-        # unreliable part, not the clicks. That run reports "couldn't confirm
-        # focus" on nav_area, nav_shop AND area_gold_shop, and yet each one is
-        # found and clicked and the NEXT screen appears: the input was landing
-        # the whole time. A refused SetForegroundWindow is a hint, never a
-        # verdict, so it must not be the thing that ends a shop run.
-        if not self._force_focus(hwnd):
-            self._log("[Shop] Couldn't confirm Roblox focus before opening Gold Shop -- continuing anyway.")
-        time.sleep(0.3)
-        camera.tilt_camera_top_down(self._mouse, hwnd)
-        time.sleep(0.5)
-
-        # Retry pressing E and locating shop_tab up to 3 times
-        tab_match = None
-        for attempt in range(3):
-            if self._checkpoint(stop_event):
-                return False
-            self._set_status(action="Selecting Gold Shop...")
-            self._keyboard.tap(ord("E"))
-            tab_match = self._click_found_image(
-                hwnd,
-                auto_shop.AUTO_SHOP_UI_TEMPLATES["shop_tab"],
-                3.0,
-                stop_event,
-            )
-            if tab_match is not None:
-                break
-            time.sleep(0.5)
-
-        if tab_match is None:
-            self._log("[Shop] Couldn't find the Gold Shop tab after pressing E.")
-            return False
+    def _shop_enter_remote_shop(
+            self, hwnd, stop_event: threading.Event, shop_key=SHOP_KEY) -> bool:
+        """Open the requested shop remotely without moving the player."""
         if self._checkpoint(stop_event):
             return False
-        time.sleep(SHOP_SETTLE_DELAY)
+        templates = dict(auto_shop.AUTO_SHOP_UI_TEMPLATES)
+        if shop_key == "expedition_shop":
+            templates.update(remote_header="shop_remote_expedition_header", remote_gold_card="shop_remote_expedition_card")
+        shop_name = auto_shop.SHOP_NAMES[shop_key]
         try:
+            if vision.find_image(hwnd, templates["remote_header"]) is not None:
+                return True
+            catalog_open = vision.find_image(hwnd, templates["remote_restocking"]) is not None
+            if not catalog_open:
+                menu_open = vision.find_image(hwnd, templates["remote_all_shops"]) is not None
+                if not menu_open:
+                    self._set_status(action="Opening the global menu...")
+                    if self._click_found_image(
+                            hwnd, templates["remote_menu"], SHOP_NAV_TIMEOUT, stop_event,
+                            region=(210, 5, 55, 55)) is None:
+                        return False
+                self._set_status(action="Opening All Shops...")
+                if self._click_found_image(
+                        hwnd, templates["remote_all_shops"], SHOP_NAV_TIMEOUT, stop_event,
+                        region=(220, 155, 240, 85)) is None:
+                    return False
+            if self._checkpoint(stop_event):
+                return False
+            self._set_status(action=f"Finding {shop_name}...")
+            if self._click_found_image(
+                    hwnd, templates["remote_restocking"], SHOP_NAV_TIMEOUT, stop_event,
+                    region=(215, 330, 130, 50)) is None:
+                return False
+            # Let the filter finish rearranging the cards before locating the
+            # title. An immediate match can otherwise refer to the old row.
+            time.sleep(SHOP_SETTLE_DELAY)
+            card = vision.wait_for_image(
+                hwnd, templates["remote_gold_card"], region=SHOP_CATALOG_VIEWPORT,
+                timeout=SHOP_NAV_TIMEOUT, stop_event=stop_event)
+            if card is None or self._checkpoint(stop_event):
+                return False
+            dx, dy = SHOP_REMOTE_OPEN_FROM_TITLE
+            x, y = card["x"] + dx, card["y"] + dy
+            vx, vy, width, height = SHOP_CATALOG_VIEWPORT
+            if not (vx <= x < vx + width and vy <= y < vy + height):
+                self._log(f"[Shop] {shop_name}'s Open Shop button is clipped -- not clicking.")
+                return False
+            self._set_status(action=f"Opening {shop_name} remotely...")
+            self._mouse.click(*vision.ref_to_screen(hwnd, x, y))
             opened = vision.wait_for_image(
-                hwnd,
-                auto_shop.item_definition("cursed_boba")["template"],
-                timeout=SHOP_OPEN_TIMEOUT,
-                stop_event=stop_event,
-            )
-        except vision.TemplateNotFound:
-            opened = None
-        return opened is not None
+                hwnd, templates["remote_header"], region=(225, 165, 200, 45),
+                timeout=SHOP_OPEN_TIMEOUT, stop_event=stop_event)
+        except vision.TemplateNotFound as exc:
+            self._log(f"[Shop] Remote {shop_name} reference missing: {exc}")
+            return False
+        if opened is None or self._checkpoint(stop_event):
+            return False
+        self._log(f"[Shop] {shop_name} opened remotely.")
+        time.sleep(SHOP_SETTLE_DELAY)
+        return not self._checkpoint(stop_event)
 
-    def _run_auto_shop(
-            self, hwnd, stop_event: threading.Event) -> None:
+    def _run_auto_shop(self, hwnd, stop_event: threading.Event) -> None:
+        try:
+            for shop_key in auto_shop.SHOP_CATALOGS:
+                if stop_event.is_set():
+                    break
+                self._active_shop_key = shop_key
+                self._run_auto_shop_for_shop(hwnd, stop_event, shop_key)
+        finally:
+            self._active_shop_key = SHOP_KEY
+
+    def _run_auto_shop_for_shop(
+            self, hwnd, stop_event: threading.Event, shop_key=SHOP_KEY) -> None:
         settings = self._auto_shop_settings()
-        due_items = self._auto_shop_due_items(settings)
+        due_items = self._auto_shop_due_items(settings, shop_key)
         if not due_items:
             return
-        shop = settings["shops"][SHOP_KEY]
+        shop = settings["shops"][shop_key]
+        shop_name = auto_shop.SHOP_NAMES[shop_key]
         period = self._shop_state_period(shop.get("state") or {})
         self._log(f"[Shop] Starting Auto Shop for {len(due_items)} item(s).")
         self._set_status(
             current_task="Auto Shop",
-            action="Preparing Gold Shop...",
+            action=f"Preparing {shop_name}...",
             mode="shop",
             map="-",
             stage="-",
@@ -1276,37 +1292,43 @@ class ShopOps:
         time.sleep(0.5)
         if not self._ensure_lobby(hwnd, stop_event):
             return
-        if not self._shop_enter_gold_shop(hwnd, stop_event):
+        entered = (self._shop_enter_gold_shop(hwnd, stop_event) if shop_key == SHOP_KEY
+                   else self._shop_enter_remote_shop(hwnd, stop_event, shop_key))
+        if not entered:
             failed = auto_shop.record_navigation_failure(
                 shop.get("state"),
                 period,
             )
-            self._shop_save_shop_state(SHOP_KEY, failed)
+            self._shop_save_shop_state(shop_key, failed)
             if not stop_event.is_set():
                 self._recover_to_lobby(hwnd, stop_event)
             return
 
         self._shop_save_shop_state(
-            SHOP_KEY,
+            shop_key,
             auto_shop.fresh_shop_state(period),
         )
         self._shop_run_no_ocr_sweep(
             hwnd,
-            SHOP_KEY,
+            shop_key,
             due_items,
             stop_event,
         )
 
         if not stop_event.is_set():
             try:
-                close_match = vision.find_image(hwnd, "nav_closeui")
+                close_match = vision.find_image(
+                    hwnd, auto_shop.AUTO_SHOP_UI_TEMPLATES["remote_close"],
+                    region=(880, 160, 50, 50))
             except vision.TemplateNotFound:
                 close_match = None
             if close_match is not None:
                 vision.click_match(self._mouse, hwnd, close_match)
                 time.sleep(SHOP_SETTLE_DELAY)
-            self._log("[Shop] Auto Shop pass finished. Returning to the lobby.")
-            self._recover_to_lobby(hwnd, stop_event)
+                self._log(f"[Shop] Auto Shop pass finished. {shop_name} closed.")
+            else:
+                self._log(f"[Shop] Couldn't close {shop_name} -- recovering the lobby.")
+                self._recover_to_lobby(hwnd, stop_event)
 
     def _run_auto_shop_if_due(
             self, hwnd, stop_event: threading.Event) -> None:

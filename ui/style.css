@@ -2309,3 +2309,224 @@ li.fail .onb-ingame-name { color: var(--rose); }
   border-radius: 4px;
   margin-right: 4px;
 }
+
+/* Shared shop catalog: keep controls usable at narrow widths. */
+.auto-shop-toolbar { display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; margin-top: 12px; }
+.auto-shop-toolbar .seg-toggle { width: auto; max-width: 100%; flex-wrap: wrap; }
+.auto-shop-toolbar .seg-btn { min-height: 34px; white-space: normal; }
+.auto-shop-items { display: grid; gap: 10px; min-width: 0; }
+.auto-shop-list { grid-template-columns: minmax(0, 1fr); }
+.auto-shop-squares { grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); }
+.auto-shop-item { display: grid; min-width: 0; margin-bottom: 0 !important; }
+.auto-shop-item-body {
+  display: grid; width: 100%; min-width: 0; gap: 12px;
+  grid-template-columns: minmax(0, 1fr) auto; align-items: center;
+}
+.auto-shop-item-header { grid-column: 1 / -1; display: flex; justify-content: center; min-width: 0; }
+.auto-shop-list .auto-shop-item-header:empty { display: none; }
+.auto-shop-item-info { flex-wrap: nowrap; }
+.auto-shop-icon { width: 44px; height: 44px; object-fit: contain; flex-shrink: 0; border-radius: 8px; }
+.auto-shop-item .toggle-switch { flex-shrink: 0; }
+.auto-shop-item .tq-title { overflow-wrap: anywhere; white-space: normal; }
+.auto-shop-reset { display: block; margin: 0; min-height: 32px; padding: 3px 10px; font-size: 11px; border-color: rgba(224, 86, 122, 0.4); color: var(--rose); white-space: nowrap; }
+.auto-shop-item-controls { flex-wrap: wrap; max-width: 100%; }
+.auto-shop-item-controls .seg-toggle { width: auto; }
+.auto-shop-item-controls button { min-height: 32px; }
+.auto-shop-squares .auto-shop-item-body {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: 32px minmax(min-content, 1fr) auto;
+  align-items: center;
+}
+.auto-shop-squares .auto-shop-item { aspect-ratio: 1; min-height: 240px; align-items: stretch; }
+.auto-shop-squares .auto-shop-item-header { min-height: 32px; }
+.auto-shop-squares .auto-shop-item-info { width: 100%; gap: 8px !important; }
+.auto-shop-squares .auto-shop-icon { width: 54px; height: 54px; }
+.auto-shop-squares .auto-shop-item-controls { justify-content: space-between; align-self: end; margin-top: 0; }
+@media (max-width: 600px) {
+  .auto-shop-list .auto-shop-item-body { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Responsive chrome. Native Roblox stays at (160,44), sized 1152x756.
+   Only its neighbours consume the additional space. */
+body > [id^="screen-"] { min-width: 0; }
+#window-resize-grip {
+  position: fixed; right: 0; bottom: 0; width: 16px; height: 16px;
+  cursor: nwse-resize; z-index: 1000;
+  background: repeating-linear-gradient(135deg, transparent 0 3px, var(--text-muted) 3px 4px);
+  clip-path: polygon(100% 0, 100% 100%, 0 100%);
+}
+:root[data-platform="mac"] #window-resize-grip { display: none; }
+#titlebar { flex: 0 0 160px; overflow-y: auto; }
+#titlebar > * { flex-shrink: 0; }
+#main-layout { min-width: 0; }
+#dash-side {
+  width: auto !important;
+  flex: 1 1 400px !important;
+  min-width: 320px;
+  container-type: inline-size;
+}
+#dash-log { min-height: 50px; }
+#screen-task > div,
+#screen-resource > div,
+#screen-creation > div:last-child { min-width: 0; }
+#screen-task, #screen-resource, #screen-settings, #screen-creation {
+  container-type: inline-size;
+}
+#screen-task .rp-panel-head,
+#screen-task .rp-panel > .flex,
+#screen-creation > div:last-child > .flex:first-child,
+#creation-loadout,
+.modal-head { flex-wrap: wrap; }
+#screen-creation > div:first-child,
+#screen-settings > div:first-child { overflow-y: auto; }
+#task-builder, #screen-resource .rp-panel-fill, #screen-settings > div:last-child {
+  container-type: inline-size;
+}
+.task-builder-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); }
+.setting-row { gap: 12px; }
+.setting-row > div:first-child { min-width: 0; }
+.setting-desc { overflow-wrap: anywhere; }
+.task-toolbar-btn, .settings-action-btn, .modal-close, .rp-controls button {
+  flex-shrink: 0;
+  min-height: 32px;
+}
+.modal-panel { max-width: calc(100% - 24px); min-width: 0; }
+.modal-body { min-height: 0; min-width: 0; }
+.modal-overlay { overflow: auto; }
+.modal-panel .flex.items-center.gap-2 { flex-wrap: wrap; }
+@container (max-width: 660px) {
+  .setting-row { flex-wrap: wrap; }
+  .setting-row > div:last-child { max-width: 100%; }
+  .setting-row > .flex { flex-wrap: wrap; }
+  .grid-cols-2, .grid-cols-4 { grid-template-columns: minmax(0, 1fr); }
+  .setting-row[style*="grid-column"] { grid-column: 1 !important; }
+  .fuel-path-row { grid-template-columns: minmax(0, 1fr); }
+}
+.block-row, .detect-head { flex-wrap: wrap; }
+.block-row > .flex { flex-wrap: wrap; min-width: 0; }
+.block-row input, .block-row select { max-width: 100%; }
+.block-actions { flex-wrap: wrap; }
+.detect-branches { flex-wrap: wrap; }
+.detect-branch { min-width: min(100%, 240px); }
+@media (max-width: 1160px) {
+  #screen-task { flex-direction: column; overflow-y: auto; }
+  #screen-task > div { flex: 0 0 auto !important; min-height: 320px; }
+  #screen-task .rp-panel-fill { min-height: 320px; }
+  #screen-creation > div:first-child { width: 150px !important; }
+}
+/* Balanced Desk uses the existing panel, theme and control styles. Only
+   geometry changes. The native viewport is centered in the WHOLE window. */
+body { flex-direction: column; }
+body.nav-rail-active > [id^="screen-"] { padding-top: 0; }
+#titlebar {
+  width: 100%; height: 88px !important; flex: 0 0 88px;
+  padding: 0 12px !important; gap: 0 16px;
+  display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  grid-template-rows: 44px 44px;
+  border-right: 0; border-bottom: 1px solid var(--border) !important;
+  overflow: visible;
+}
+/* Inline display:flex is set by the existing waiting/docking flow. */
+#titlebar[style*="display: flex"] { display: grid !important; }
+.titlebar-brand {
+  grid-column: 1; grid-row: 1 / 3; flex-direction: row;
+  padding: 0; gap: 10px !important;
+}
+.cat-logo { width: 64px; height: 64px; }
+.app-name { width: auto; text-align: left; }
+.titlebar-nav {
+  grid-column: 2; grid-row: 1 / 3; flex-direction: row;
+  justify-self: center; justify-content: center;
+  align-items: center !important; overflow-x: auto; min-width: 0;
+  scrollbar-width: thin;
+}
+.nav-btn { width: auto; flex-shrink: 0; min-height: 34px; }
+.window-controls {
+  position: static; grid-column: 3; grid-row: 1; align-self: center;
+  justify-self: end;
+}
+.titlebar-footer {
+  grid-column: 3; grid-row: 2; margin: 0; align-self: center;
+  flex-direction: row; gap: 0 !important;
+}
+.footer-wordmark { padding: 0; }
+.footer-wordmark > .logo-anime, .footer-wordmark > .logo-expeditions { display: none; }
+.footer-wordmark #ver-badge { margin-top: 0; }
+#dashboard-drawer-controls { display: none; grid-column: 2; grid-row: 2; gap: 8px; align-items: center; }
+#main-layout {
+  position: relative; min-width: 0;
+  grid-template-columns: var(--game-left, calc((100% - 1152px) / 2)) 1152px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+}
+#dash-left { grid-column: 1; grid-row: 1; }
+#dash-center { grid-column: 2; grid-row: 1; width: 1152px; }
+#game-slot { width: 1152px; height: 756px; flex: 0 0 756px; }
+#dash-side { grid-column: 3; grid-row: 1; width: auto !important; min-width: 0; display: flex; }
+.dashboard-side { min-width: 0; }
+.dashboard-side .rp-panel-head { flex-wrap: wrap; }
+.dashboard-side .rp-row { flex-wrap: wrap; }
+.dashboard-side .rp-row-value { white-space: normal; overflow-wrap: anywhere; }
+.dashboard-side .rp-controls { grid-template-columns: 1fr; }
+#dash-log { padding: 12px 0 0; min-height: 100px; }
+#dashboard-task-list { max-height: 420px; overflow-y: auto; }
+.dashboard-queue-row {
+  display: flex; flex-direction: column; gap: 5px; width: 100%;
+  padding: 12px; text-align: left; border-bottom: 1px solid var(--border);
+}
+.dashboard-queue-row:hover { background: var(--bg-surface); }
+.dashboard-queue-row .tq-title, .dashboard-queue-row .tq-meta { white-space: normal; overflow-wrap: anywhere; }
+.dashboard-session .titlebar-timers { padding: 12px; border: 0; }
+/* Drawers replace the log area, rather than covering the native Roblox
+   child window. The running game stays visible and at the same size. */
+body.dashboard-collapsed .dashboard-side { display: none !important; }
+body.dashboard-collapsed[data-screen="dashboard"]:not(.compact-mode) #dashboard-drawer-controls { display: flex; }
+body.dashboard-collapsed[data-screen="dashboard"]:not(.compact-mode) .titlebar-nav { grid-row: 1; }
+body.dashboard-collapsed[data-dashboard-drawer="left"] #dash-left,
+body.dashboard-collapsed[data-dashboard-drawer="right"] #dash-side {
+  display: grid !important; position: absolute; top: 768px; bottom: 0;
+  left: 12px; right: 12px; width: auto !important; min-width: 0;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  align-content: start; align-items: start;
+  padding: 12px; background: var(--bg-card);
+  border: 1px solid var(--border); border-radius: 12px;
+  z-index: 60; overflow-y: auto;
+}
+body.dashboard-collapsed[data-dashboard-drawer] #dash-log { visibility: hidden; }
+#dashboard-drawer-controls [aria-expanded="true"] { color: var(--brand); border-color: var(--brand); }
+body.compact-mode #dash-left, body.compact-mode #dash-side, body.compact-mode #dash-log { display: none !important; }
+body.compact-mode #compact-strip { left: 0; }
+@media (max-width: 1000px) {
+  .cat-logo { width: 42px; height: 42px; }
+  .app-name { font-size: 14px !important; }
+  #titlebar { gap: 0 8px; padding: 0 8px !important; }
+}
+/* macOS still arranges Roblox as a separate native window. Keep its
+   dashboard usable without reserving an embedded game rectangle. */
+:root[data-platform="mac"] #main-layout { flex-direction: column; overflow-y: auto; }
+:root[data-platform="mac"] #main-layout > #dash-left,
+:root[data-platform="mac"] #main-layout > #dash-side {
+  width: 100% !important; flex: 0 0 auto !important; order: 0;
+  min-height: auto; overflow: visible;
+}
+:root[data-platform="mac"] #main-layout > #dash-center {
+  width: 100% !important; flex: 0 0 200px; order: 1; min-height: 200px;
+}
+:root[data-platform="mac"] #dash-center #game-slot { display: none; }
+:root[data-platform="mac"] #dash-log { padding: 12px; }
+
+/* Purchase rows keep controls readable and wrap within the task editor. */
+.soul-purchase-row {display:flex; flex-wrap:wrap; align-items:end; gap:8px; margin-top:12px;}
+.soul-purchase-row label {display:flex; flex-direction:column; gap:5px; min-width:110px; flex:1; color:var(--text-muted); font-size:12px;}
+.soul-purchase-row label:first-child {min-width:190px; flex:2;}
+.soul-purchase-row input,.soul-purchase-row select {width:100%; min-height:34px;}
+.soul-purchase-row .task-toolbar-btn {min-width:34px; min-height:34px; flex-shrink:0;}
+
+.soul-recommendation {margin-top:18px; padding:14px; border:1px solid var(--border); border-radius:10px;}
+.soul-recommendation details {margin-top:10px;}
+.soul-recommendation summary {cursor:pointer; padding:6px 0; font-size:13px;}
+.soul-recommendation img {display:block; width:100%; max-width:720px; height:auto; margin-top:10px; border-radius:8px;}
+
+.soul-recommendation-image {display:block; border:0; padding:0; background:transparent; cursor:zoom-in; max-width:100%;}
+.soul-recommendation-dialog {max-width:92vw; max-height:92vh; overflow:auto; padding:16px; background:var(--bg, #090909); color:var(--text, #eee); border:1px solid var(--border); border-radius:12px;}
+.soul-recommendation-dialog::backdrop {background:rgba(0,0,0,.75);}
+.soul-recommendation-dialog img {display:block; width:auto; max-width:100%; height:auto; margin-top:12px;}

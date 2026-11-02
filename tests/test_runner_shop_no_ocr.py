@@ -35,7 +35,7 @@ def test_card_buy_tracks_its_icon_instead_of_neighbor_or_next_row():
     frame[340:374, 390:530] = (20, 215, 60)  # Trait Crystal card
     frame[340:374, 550:690] = (20, 215, 60)  # Neighboring card
     frame[520:554, 390:530] = (20, 215, 60)  # Following row
-    match = {"x": 430, "y": 440, "w": 61, "h": 55, "cx": 460, "cy": 467}
+    match = {"x": 430, "y": 220, "w": 61, "h": 55, "cx": 460, "cy": 247}
 
     assert auto_shop_vision.find_card_buy_button(frame, match) == (390, 340, 140, 34)
 
@@ -245,7 +245,7 @@ def test_dynamic_sweep_resets_once_and_stops_at_the_physical_list_end(monkeypatc
     items = [_item(), {**_item(), "key": "red_flower", "name": "Red Flower", "daily_maximum": 75}]
     found = []
     processed = []
-    signatures = iter([b"top", b"middle", b"bottom", b"bottom"])
+    signatures = iter([b"top", b"middle", b"bottom", b"bottom", b"bottom", b"bottom"])
     monkeypatch.setattr(runner, "_checkpoint", lambda _stop: False)
     monkeypatch.setattr(runner, "_shop_discovery_signature", lambda _hwnd: next(signatures))
     monkeypatch.setattr(
@@ -273,6 +273,7 @@ def test_dynamic_sweep_resets_once_and_stops_at_the_physical_list_end(monkeypatc
         (runner_shop.SHOP_SCROLL_RESET_AMOUNT,),
         (runner_shop.SHOP_DISCOVERY_SCROLL_AMOUNT,),
         (runner_shop.SHOP_DISCOVERY_SCROLL_AMOUNT,),
+        (runner_shop.SHOP_DISCOVERY_SCROLL_AMOUNT,),
     ]
 
 
@@ -296,7 +297,7 @@ def test_dynamic_sweep_keeps_unlocated_item_pending_without_a_fallback_click(mon
     assert saved_items[-1][2]["status"] == auto_shop.STATUS_PENDING_NOT_LOCATED
 
 
-def test_dynamic_sweep_recognizes_sold_out_card_when_its_icon_is_hidden(monkeypatch):
+def test_dynamic_sweep_does_not_assign_an_old_slots_sold_out_label(monkeypatch):
     saved_items = []
     runner = _runner(saved_items)
     item = _item()
@@ -318,6 +319,6 @@ def test_dynamic_sweep_recognizes_sold_out_card_when_its_icon_is_hidden(monkeypa
 
     runner._shop_run_no_ocr_sweep(1, "gold_shop", [item], threading.Event())
 
-    assert moved_to == [runner_shop.SHOP_ITEM_SCROLL_AMOUNTS[item["key"]]]
-    assert saved_items[-1][2]["status"] == auto_shop.STATUS_OUT_OF_STOCK
+    assert moved_to == []
+    assert saved_items[-1][2]["status"] == auto_shop.STATUS_PENDING_NOT_LOCATED
     runner._shop_try_fallback_modal.assert_not_called()

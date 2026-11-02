@@ -28,6 +28,12 @@ def _identity_references(item_key):
         return [frame] if frame is not None else []
     references = []
     root = Path(auto_shop.ASSETS_DIR) / "reference" / "auto_shop"
+    for path in sorted((root / "identities" / item_key).glob("*.png")):
+        frame = image_io.read_image(str(path))
+        if frame is not None:
+            references.append(frame)
+    if references:
+        return references
     for path in sorted(root.glob("gold_shop_*.png")):
         frame = image_io.read_image(str(path))
         if frame is None:
@@ -46,17 +52,24 @@ def _identity_references(item_key):
 def verify_card_identity(frame, item_key, match):
     """Verify the icon/name portion of the card, excluding price and stock."""
     try:
-        actual = crop_region(frame, _region_from_item_match(match, IDENTITY_FROM_CENTER))
+        x, y, width, height = _region_from_item_match(match, IDENTITY_FROM_CENTER)
+        # Icon variants have different crop centers. Align the same card's
+        # identity locally rather than requiring identical crop coordinates.
+        left, top = max(0, x - 20), max(0, y - 20)
+        right = min(frame.shape[1], x + width + 20)
+        bottom = min(frame.shape[0], y + height + 20)
+        actual = crop_region(frame, (left, top, right - left, bottom - top))
     except ValueError:
         return False
     actual = cv2.cvtColor(actual[:, :, :3], cv2.COLOR_BGR2GRAY)
     for reference in _identity_references(item_key):
-        if reference.shape[:2] != actual.shape[:2]:
+        if (reference.shape[0] > actual.shape[0]
+                or reference.shape[1] > actual.shape[1]):
             continue
         mask = reference[:, :, 3] if reference.shape[2] == 4 else None
         expected = cv2.cvtColor(reference[:, :, :3], cv2.COLOR_BGR2GRAY)
         method = cv2.TM_CCORR_NORMED if mask is not None else cv2.TM_CCOEFF_NORMED
-        score = cv2.matchTemplate(actual, expected, method, mask=mask)[0, 0]
+        score = cv2.matchTemplate(actual, expected, method, mask=mask).max()
         if np.isfinite(score) and score >= 0.90:
             return True
     return False
@@ -158,11 +171,7 @@ def buy_button_is_enabled(crop_bgr: np.ndarray) -> bool:
 
 
 def find_card_buy_button(frame_bgr: np.ndarray, item_match: Mapping) -> Optional[tuple]:
-    """Find the closest green Buy button above this card's item icon.
-
-    Buy sits at the top of each card. Looking below the icon can click the
-    following row when the shop spacing changes.
-    """
+    """Find Buy below the icon within this card's own control band."""
     if frame_bgr is None or frame_bgr.ndim != 3 or frame_bgr.shape[2] < 3:
         return None
     icon_x = int(item_match.get("cx", int(item_match["x"]) + int(item_match["w"]) // 2))
@@ -171,8 +180,8 @@ def find_card_buy_button(frame_bgr: np.ndarray, item_match: Mapping) -> Optional
     frame_h, frame_w = frame_bgr.shape[:2]
     left = max(0, icon_x - icon_w * 2)
     right = min(frame_w, icon_x + icon_w * 2)
-    top = max(0, icon_y - icon_w * 4)
-    bottom = min(frame_h, icon_y)
+    top = max(0, icon_y + 55)
+    bottom = min(frame_h, icon_y + 160)
     if right <= left or bottom <= top:
         return None
     crop = frame_bgr[top:bottom, left:right, :3].astype(np.int16)
@@ -188,8 +197,8 @@ def find_card_buy_button(frame_bgr: np.ndarray, item_match: Mapping) -> Optional
         if (width < icon_w * 0.9 or height < icon_w * 0.3
                 or abs(center_x - icon_x) > icon_w * 0.65):
             continue
-        candidates.append((y + height, (x, y, width, height)))
-    return max(candidates, default=(0, None))[1]
+        candidates.append((y, (x, y, width, height)))
+    return min(candidates, default=(0, None))[1]
 
 
 def _region_from_cancel(cancel_match: Mapping, relative_region: tuple) -> tuple:

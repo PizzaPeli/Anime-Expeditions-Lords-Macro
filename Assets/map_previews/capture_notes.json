@@ -1,0 +1,17 @@
+{
+  "Hollow Desert": {
+    "phase": "before_camera_setup",
+    "note": "Captured before camera setup. Use a fresh Roblox screenshot after camera setup before choosing placement coordinates.",
+    "act": 3
+  },
+  "Flaming Monastery": {
+    "phase": "before_camera_setup",
+    "note": "Captured before camera setup. Use a fresh Roblox screenshot after camera setup before choosing placement coordinates.",
+    "act": 5
+  },
+  "Crimson Shore": {
+    "phase": "before_camera_setup",
+    "note": "Captured before camera setup. Use a fresh Roblox screenshot after camera setup before choosing placement coordinates.",
+    "act": 4
+  }
+}

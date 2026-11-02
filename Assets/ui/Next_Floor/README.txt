@@ -1,4 +1,4 @@
-Next_Floor.png
+next_floor.png
 
 Crop tightly around the Next Floor button on the Tower result screen.
 This advances the run to the next floor.

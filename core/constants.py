@@ -69,7 +69,7 @@ if IS_FROZEN and sys.platform == "darwin":
 UI_DIR = os.path.join(BUNDLE_DIR, "ui")
 
 # APP_DIR, not BUNDLE_DIR, ON PURPOSE: Assets/ is deliberately NOT bundled
-# into the exe anymore (see build_pyinstaller.py -- releases ship a zip with
+# into the exe anymore (see scripts/build/build_pyinstaller.py -- releases ship a zip with
 # the exe and a loose Assets/ folder side by side). The whole point is that
 # every reference image the macro searches for is a plain .png the user can
 # open, replace, or add variants to (see core.vision.template_variant_paths

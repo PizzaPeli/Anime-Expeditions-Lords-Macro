@@ -13,7 +13,7 @@
     <div class="label">Live mouse coordinates</div>
     <div id="coords">—, —</div>
     <div id="hint" class="hint">Hover over the docked Roblox window</div>
-    <div class="shortcut"><kbd>Ctrl</kbd><span>+</span><kbd>Shift</kbd><span>+</span><kbd>C</kbd><span>to copy</span></div>
+    <div class="shortcut"><kbd id="copy-key">F8</kbd><span>to copy</span></div>
   </div>
   <div class="saved-head"><div class="label">Saved macro coordinates</div><div id="count" class="count"></div></div>
   <div id="saved"><div class="coord-row"><span class="coord-name">Loading…</span></div></div>
@@ -25,7 +25,7 @@
       Object.keys(values||{}).sort().forEach(key=>{if(used.has(key))return;const match=key.match(/^(.*)_x$/),base=match&&match[1],yKey=base&&`${base}_y`;if(base&&Object.prototype.hasOwnProperty.call(values,yKey)){used.add(key);used.add(yKey);rows.push([titleFor(key),values[key]==null||values[yKey]==null?'Auto':`${values[key]}, ${values[yKey]}`])}else if(!/_(x|y)$/.test(key)){used.add(key);rows.push([titleFor(key),values[key]==null?'Auto':String(values[key])])}});
       saved.innerHTML=rows.map(([name,value])=>`<div class="coord-row"><span class="coord-name" title="${name}">${name}</span><span class="coord-value">${value}</span></div>`).join('')||'<div class="coord-row"><span class="coord-name">No coordinates saved</span></div>';document.getElementById('count').textContent=`${rows.length} values`;
     }
-    async function start(){if(timer)return;try{renderSaved(await pywebview.api.get_macro_coords())}catch(e){}tick();timer=setInterval(tick,120)}
+    async function start(){if(timer)return;try{renderSaved(await pywebview.api.get_macro_coords());const hotkeys=await pywebview.api.get_hotkeys();document.getElementById('copy-key').textContent=(hotkeys.copy_mouse_position||'Unbound').toUpperCase()}catch(e){}tick();timer=setInterval(tick,120)}
     async function tick(){const coords=document.getElementById('coords'),hint=document.getElementById('hint');try{const r=await pywebview.api.get_cursor_game_pos();if(!r||!r.ok){coords.textContent='—, —';hint.textContent=r&&r.reason==='no_roblox'?'Roblox not attached':'Waiting for Roblox…';return}if(!r.inside){coords.textContent='—, —';hint.textContent='Hover over the docked Roblox window';return}coords.textContent=`${r.x}, ${r.y}`;hint.textContent=r.scaled?`Live · scaled from ${r.win_w}×${r.win_h}`:'Live · 1152×756 coordinate space'}catch(e){hint.textContent='Waiting for the app bridge…'}}
     window.showHotkeyCopied=(x,y)=>{const hint=document.getElementById('hint');hint.textContent=`Copied ${x}, ${y}`;setTimeout(tick,1000)};
     window.addEventListener('pywebviewready',start);if(window.pywebview)start();

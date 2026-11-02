@@ -49,7 +49,7 @@ def test_reach_tower_traitless_clicks_tower_then_traitless(monkeypatch):
         probe, 123, threading.Event(), {"mode": "tower", "tower_mode": "traitless"}
     ) is True
 
-    assert [name for name, _timeout in probe.clicked] == ["nav_tower", "Traitless_Tower", "Floor"]
+    assert [name for name, _timeout in probe.clicked] == ["nav_tower", "traitless_tower", "floor"]
     assert probe.ensure_lobby_calls == 1
     assert probe.click_play_calls == 1
     assert any("Traitless Tower selected" in message for message in probe.logs)
@@ -64,7 +64,7 @@ def test_reach_tower_normal_clicks_tower_only(monkeypatch):
         probe, 123, threading.Event(), {"mode": "tower", "tower_mode": "normal"}
     ) is True
 
-    assert [name for name, _timeout in probe.clicked] == ["nav_tower", "normal_tower", "Floor"]
+    assert [name for name, _timeout in probe.clicked] == ["nav_tower", "normal_tower", "floor"]
     assert any("Normal Tower" in message for message in probe.logs)
 
 
@@ -84,7 +84,6 @@ class MatchResultProbe:
         self.wait_gone = []
         self._mouse = MouseProbe()
         self._coords = {"unit_info_reset_x": 11, "unit_info_reset_y": 22}
-        self._act4_wants_in = False
 
     def _log(self, message):
         self.logs.append(message)
@@ -118,12 +117,12 @@ class MatchResultProbe:
         self.wait_gone.append((names, timeout))
         return True
 
-    def _click_return_to_lobby_if_found(self, *_args):
+    def _repeat_same_stage_result(self, _hwnd, _stop, _label):
+        self.clicked_verify.append(("result_repeat_stage", runner.NAV_CLICK_TIMEOUT))
         return True
 
-    def _relic_dropped(self, _hwnd):
-        return False
-
+    def _click_return_to_lobby_if_found(self, *_args):
+        return True
 
 class ImmediateThread:
     def __init__(self, target, args=(), daemon=None, **_kwargs):
@@ -158,6 +157,6 @@ def test_handle_match_result_uses_tower_floor_buttons_and_story_repeat_stage(mon
         "win", "1m 2s", {}, repeat=True
     ) is True
 
-    assert tower_win_probe.clicked_verify[0][0] == "Next_Floor"
-    assert tower_defeat_probe.clicked_verify[0][0] == "Repeat_Floor"
-    assert story_probe.clicked_verify[0][0] == "repeat_stage"
+    assert tower_win_probe.clicked_verify[0][0] == "next_floor"
+    assert tower_defeat_probe.clicked_verify[0][0] == "repeat_floor"
+    assert story_probe.clicked_verify[0][0] == "result_repeat_stage"

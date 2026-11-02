@@ -1,3 +1,39 @@
+# v0.1.0 - Halloween + QoL update
+
+Published as a normal release, with the Windows executable and required editable Assets included.
+
+- Add the Halloween Soul Furnace Infinite macro with per-task Soul Forge purchases triggered by wave or Heat Bars. New tasks default to Final Boss at Heat Bars 3.
+- Retry purchases up to five times with a three-second gap, stop after confirmation, and verify that the Forge closes. Purchased inventory items are not automatically deployed or applied to units.
+- Include the recommended team/equipment and Auto Play setup for 400+ Candy Corn in under 3 minutes; results depend on the supplied setup and game conditions.
+- Improve Forge scrolling and heat detection, safe Repeat Stage selection, and lobby intervals across task modes and single-task queue passes.
+- Include the responsive Balanced Desk layout, normal Windows maximization, independent borderless Roblox positioning, refreshed Daily Challenge detection, and remote Gold/Expedition shops.
+- Add Hollow Desert, Flaming Monastery, and Crimson Shore recognition and placement previews. Mark the pre-camera references and retain camera-ready capture collection.
+- Preserve existing user settings and keep private test data out of public downloads.
+
+## Forge scrolling and queue replay
+
+- Avoid full-screen result searches on each Forge scroll while its header is visible; send a hover nudge before scrolling and retain stable-card purchase verification.
+- Carry the run count across passes of an unchanged single-task queue, so a one-run task honors its lobby interval. Keep task changes, purchase failures, and maintenance at lobby boundaries.
+- Recognize the Soul Furnace Repeat Stage text alongside the existing safe replay labels.
+
+## Soul Furnace and repeat farming
+
+- Speed up Soul Furnace heat polling to 200ms and shop scrolling/confirmation polling to 100ms. Reuse captured frames across shop/result searches, keep purchase and scroll-position verification, and preserve the three-second retry gap.
+- Add the creator’s team/equipment and Auto Play preset screenshots to the Soul Furnace Task Builder, recommended for 400+ Candy Corn in under 3 minutes.
+
+- Default new Soul Forge purchase rows to Final Boss at Heat Bars 3; retry up to five times, three seconds apart, stopping on confirmation. Verify the menu closes and retry dropped close clicks before continuing battle actions. Existing saved purchase thresholds remain unchanged.
+
+- Refresh Daily Challenge tab and stage-label references from the current UI, covering selected and unselected tab states without matching reset timers or changing map names. Keep the existing coordinate backup.
+
+- Expose Runs before returning to lobby for every task mode, including Portals and matchmaking, while preserving the configured total run count.
+- Detect Repeat Stage by its text, including when a green Next Stage button appears beside it. If replay is unavailable, return to lobby and re-enter the same task.
+
+- Add Soul Furnace Infinite to the Task Builder with editable Soul Forge purchase rows triggered by wave or Heat Bars; default to Final Boss at Heat Bars 3.
+- Confirm boss purchases with the observed forging/timer UI. Limit failed purchases to five attempts, then finish the match and skip the task's remaining runs.
+- Leave through the top-bar lobby button after wave 30 finishes when the match has not already ended.
+- Add a per-task Runs before returning to lobby interval; wins and losses both count.
+- Repair current-only wave reads on the Tesseract path and add conservative captured-glyph recognition for the small wave badge. Validate Heat Bars 0–6 using supplied HUD captures.
+
 # v0.0.1 beta
 
 First combined beta based on the creator's 0.31.6 update and the custom macro branch.
@@ -2294,7 +2330,7 @@ All notable changes to Anime Expeditions (Lord's Macro) are documented here.
 ### New
 - **Summer Siege / Tidal Siege portal references**: added detect-name folders under `Assets/ui/` for the Summer Siege portal flow (event bar, event-gamemode button, Tidal Siege button, lobby Items entry, Portals sub-tab, portal inventory, portal-activate screen, portal-select screen and its Select button). All PNGs are real in-game screenshots taken from a 0.20.x client; see `docs/SUMMER_SIEGE.md` for the full name map and the state each anchor represents.
 - **Bundled example template**: `Templates/examples/Summer Siege - portal auto-select.json` demonstrates the full navigation with Detect blocks over the new reference names, so users can copy it in from Load Example, tweak the click points to their layout, and run.
-- **Map backdrops**: `Assets/map/Portal/Coral Kingdom - Tidal Siege.png` and `Assets/map/Portal/Sky Ruins Portal.png` for the Path Editor.
+- **Map backdrops**: `Assets/map_previews/Portal/Coral Kingdom - Tidal Siege.png` and `Assets/map_previews/Portal/Sky Ruins Portal.png` for the Path Editor.
 
 ### Fixed
 - **Default window size regression**: the fork's 0.20.6 build launched at the full GUI size on machines whose scaled resolution could only fit the compact one, placing the window partly off-screen. Reverted to the compact default (the screen-width check upgrades to full when it actually fits, same behavior as 0.19.1).

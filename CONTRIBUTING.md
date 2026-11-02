@@ -66,11 +66,11 @@ The application loads image assets from `Assets/` at runtime instead of bundling
 ### Directory Layout
 
 - **`Assets/ui/`**: Target templates searched by `core.vision.find_image`.
-- **`Assets/maps/`**: Map templates used by `core.stage_select`.
+- **`Assets/map_labels/`**: Map label templates used by `core.stage_select`.
 
 ### Image Variant Rules
 
-- **Folder Per Target**: Store assets in subfolders named after the target element (e.g., `Assets/ui/start_button/` or `Assets/maps/map_1/`).
+- **Folder Per Target**: Store assets in subfolders named after the target element (e.g., `Assets/ui/start_button/` or `Assets/map_labels/map_1/`).
 - **PNG Variants**: The image matcher treats all `.png` files inside a target folder as valid variants for matching different resolutions or color schemes.
 
 ---

@@ -42,6 +42,7 @@ from .runner_crafting import CraftingOps
 from .runner_expedition import ExpeditionOps
 from .runner_fuel import FuelOps
 from .runner_shop import ShopOps
+from .runner_soul_furnace import SoulFurnaceOps, lobby_batch_due, SOUL_POLL_INTERVAL
 
 
 MAX_EXTRACT_AFTER = 9999
@@ -234,7 +235,7 @@ def _find_team_load_button(frame, expected_y):
     return cx, cy
 
 
-class MacroRunner(ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, BlockOps):
+class MacroRunner(SoulFurnaceOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, BlockOps):
     """One run's worth of state -- module-level singleton via main.Api, same
     pattern as core.paths._recorder, since only one run can realistically be
     active at a time (one physical game window, one macro)."""
@@ -260,12 +261,8 @@ class MacroRunner(ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, Bl
         # operation. A matching task can keep using it when the queue moves
         # to the next stage instead of reopening Team Loadout every time.
         self._last_applied_team_loadout = None
-        # Set by _handle_match_result when an event farm task's Victory dropped
-        # a Crow Relic and the task opted into auto-clearing Act 4; read (and
-        # cleared) by _run_task, which runs the divert. See _run_act4_diversion.
-        self._act4_wants_in = False
-        # Set by the Challenge / Crafting / Act 4 diversion resumes in
-        # _run_task, all three of which left the stage via Return to Lobby and
+        # Set by Challenge / Crafting resumes in _run_task. Both leave the
+        # stage via Return to Lobby and
         # so KNOW the lobby is where the next entry starts. Read and cleared by
         # _reach_portal_activated, which otherwise has to guess which route to
         # take from a single instantaneous look at a screen that may still be
@@ -339,6 +336,8 @@ class MacroRunner(ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, Bl
         # Challenge will resume after it finishes.
         self._active_task_progress = None
         self._current_task = None
+        self._queue_continuation = None
+        self._queue_tasks_getter = None
         # (result: "win"|"loss", map_name, duration_str) -> persists to run
         # history / win-loss counters (see main.Api._record_match_result).
         self._record_result = record_result or (lambda *a, **kw: None)
@@ -759,14 +758,14 @@ class MacroRunner(ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, Bl
         card is there. Returns whether one was actually found (so callers
         can loop until it's actually gone, not just fire once)."""
         try:
-            match = vision.find_image(hwnd, "select upgrade card")
+            match = vision.find_image(hwnd, "select_upgrade_card")
         except vision.TemplateNotFound:
             return False
         if match is None:
             return False
-        debug_path = self._debug_save(hwnd, "select upgrade card", match)
+        debug_path = self._debug_save(hwnd, "select_upgrade_card", match)
         suffix = f" Debug: {debug_path}" if debug_path else ""
-        self._log(f'[Macro] Found "select upgrade card" (score {match["score"]:.2f}) -- clicking it.{suffix}')
+        self._log(f'[Macro] Found "select_upgrade_card" (score {match["score"]:.2f}) -- clicking it.{suffix}')
         # Cards are handed out for kills, so one cannot appear before the
         # fighting has started -- this is what Wait for Wave falls back to on
         # a gamemode with no wave counter.
@@ -918,6 +917,8 @@ class MacroRunner(ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, Bl
         webhook = webhook or {}
         self._active_task_progress = None
         self._current_task = None
+        self._queue_continuation = None
+        self._queue_tasks_getter = get_tasks
 
         hwnd = hwnd_getter()
         if not hwnd or not wm.is_window(hwnd):
@@ -1057,6 +1058,10 @@ class MacroRunner(ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, Bl
                     self._set_status(action="Idle")
                     return
 
+                if self._queue_continuation is not None:
+                    # Maintenance was checked before choosing in-place replay.
+                    continue
+
                 # Auto Challenge after each finished task (we're back at the
                 # lobby here). This is what catches the cases the between-
                 # repeats hook inside _run_task can't: a single-repeat task,
@@ -1155,6 +1160,7 @@ class MacroRunner(ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, Bl
             "next_repeat": 1,
             "repeat_total": repeat_total,
         }
+        self._soul_task_purchase_failed = False
         task_started_at = time.monotonic()
         self._send_progress_webhook(
             webhook,
@@ -1206,7 +1212,28 @@ class MacroRunner(ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, Bl
             # is standing in the stage right now, so the run picks up at Pre
             # Start. Any retry/recovery after that goes through the real
             # setup, since a recovery lands back in the lobby.
-            skip_setup = getattr(self, "_skip_first_task_setup", False)
+            continuation = getattr(self, "_queue_continuation", None)
+            self._queue_continuation = None
+            if continuation and (continuation["task"] != task or task_count != 1):
+                if not self._recover_to_lobby(hwnd, stop_event):
+                    return not stop_event.is_set()
+                continuation = None
+            if continuation:
+                if mode == "portals":
+                    if not self._run_task_setup(hwnd, stop_event, task, mode, map_name, coords,
+                                                scroll_power, scroll_nudges, webhook):
+                        if stop_event.is_set():
+                            return False
+                        if not self._recover_to_lobby(hwnd, stop_event):
+                            return not stop_event.is_set()
+                        continue
+                elif not self._wait_teleport_in(hwnd, stop_event, webhook, task):
+                    if stop_event.is_set():
+                        return False
+                    if not self._recover_to_lobby(hwnd, stop_event):
+                        return not stop_event.is_set()
+                    continue
+            skip_setup = bool(continuation) or getattr(self, "_skip_first_task_setup", False)
             self._skip_first_task_setup = False
             if skip_setup:
                 self._log(f'[Macro] Already in-game -- treating the current stage as "{map_name}" '
@@ -1235,10 +1262,13 @@ class MacroRunner(ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, Bl
             # on every repeat past the first even when _run_task_setup had
             # just fully re-run, confirmed from a real report: Walk Path
             # silently skipped resuming a task after a Challenge interleave).
-            fresh_entry = True
+            fresh_entry = not continuation or mode == "portals"
+            visit_runs = continuation["visit_runs"] if continuation else 0
             for repeat_index in range(1, repeat_total + 1):
                 self._active_task_progress["next_repeat"] = repeat_index
                 self._set_status(current_repeat=f"{repeat_index} / {repeat_total}")
+                if fresh_entry and (mode != "portals" or getattr(self, "_portal_entered_from", "lobby") != "chooser"):
+                    visit_runs = 0
                 battle_started = time.time()
                 result = self._play_one_match(hwnd, stop_event, task, default_walk_paths,
                                                 first_repeat=fresh_entry, webhook=webhook)
@@ -1273,7 +1303,14 @@ class MacroRunner(ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, Bl
                     self._consecutive_loss_map = None
                 restart_needed = self._consecutive_losses >= MAX_CONSECUTIVE_LOSSES_SAME_MAP
 
-                is_last_repeat = repeat_index == repeat_total
+                if result in ("win", "loss"):
+                    visit_runs += 1
+                batch_due = lobby_batch_due(task, visit_runs)
+                at_task_end = repeat_index == repeat_total
+                queue_getter = getattr(self, "_queue_tasks_getter", None)
+                carry_queue = bool(at_task_end and task_count == 1 and queue_getter
+                                   and queue_getter() == [task])
+                is_last_repeat = (at_task_end and not carry_queue) or self._soul_task_purchase_failed
                 # Challenge used to only ever get checked once, right at the
                 # very start of a Start press, before the Task Queue even
                 # began -- a task with a huge repeat count (effectively
@@ -1290,8 +1327,8 @@ class MacroRunner(ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, Bl
                 # lobby, which is the one thing the chooser route exists to
                 # avoid. So while such a task still has portals left, nothing
                 # is allowed to interrupt it -- Challenge, Crafting, Fuel, Auto
-                # Shop and the memory refresh all wait for the batch to finish
-                # and then run at the task boundary as usual. A continuous
+                # Shop and the memory refresh wait for the batch to finish or
+                # an explicitly configured lobby-return interval. A continuous
                 # Portals task (count 0) keeps the old behaviour: it never
                 # finishes on its own, so diversions must be able to break in
                 # or they would never run at all.
@@ -1299,6 +1336,7 @@ class MacroRunner(ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, Bl
                     mode == "portals"
                     and _parse_extract_after(task.get("extract_after"), default=0) > 0
                     and not is_last_repeat
+                    and not batch_due
                 )
                 if portal_batch_in_progress and not diversion_hold_logged:
                     diversion_hold_logged = True
@@ -1345,18 +1383,25 @@ class MacroRunner(ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, Bl
                 # The bounded-Infinite path and the Leave-at-Minute block
                 # (left_live_match) already left the live match, so there is no
                 # Victory/Defeat screen to process here.
+                self._result_repeated_in_place = False
+                self._result_requires_lobby_setup = False
                 if not left_live_match and not self._handle_match_result(
                         hwnd, stop_event, task, result, duration, webhook,
                         repeat=(not is_last_repeat) and not challenge_wants_in
                         and not crafting_wants_in and not fuel_wants_in
                         and not auto_shop_wants_in
-                        and not restart_needed and not memory_refresh_wants_in):
+                        and not restart_needed and not memory_refresh_wants_in
+                        and not batch_due):
                     if stop_event.is_set():
                         return False
                     task_failed = True
                     break
                 if self._checkpoint(stop_event):
                     return False
+
+                if self._soul_task_purchase_failed:
+                    self._log("[Soul Forge] Match finished; skipping the rest of this task and continuing the queue.")
+                    return True
 
                 if restart_needed:
                     self._log(f'[Macro] Lost {self._consecutive_losses}x in a row on "{map_name}" -- '
@@ -1375,7 +1420,7 @@ class MacroRunner(ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, Bl
                         break
                     if self._current_hwnd and wm.is_window(self._current_hwnd):
                         hwnd = self._current_hwnd
-                    if not is_last_repeat:
+                    if not is_last_repeat and not at_task_end:
                         # Leave Stage above already left the stage entirely
                         # (repeat=False), and the restart just left the
                         # lobby fresh too -- re-enter the task from scratch
@@ -1390,33 +1435,17 @@ class MacroRunner(ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, Bl
                         fresh_entry = True
                     continue
 
-                if self._act4_wants_in:
-                    # A Crow Relic dropped this repeat (see _handle_match_result,
-                    # which already forced a Leave Stage so we're back on the
-                    # lobby). Go clear Act 4 with the task's OWN Act 4 Macro
-                    # Operation, then re-enter the farm task from scratch --
-                    # same interleave shape as Challenge just below.
-                    self._act4_wants_in = False
-                    self._run_act4_diversion(hwnd, stop_event, task, coords, scroll_power,
-                                              scroll_nudges, default_walk_paths, webhook)
-                    if self._checkpoint(stop_event):
-                        return False
-                    if self._current_hwnd and wm.is_window(self._current_hwnd):
-                        hwnd = self._current_hwnd
-                    self._log(f'[Macro] Act 4 divert finished -- resuming "{map_name}".')
-                    # Every one of these left via Return to Lobby -- tell
-                    # _reach_portal_activated so a slow-drawing lobby is not
-                    # mistaken for a post-run portal screen.
-                    self._portal_expect_lobby = True
-                    if not is_last_repeat:
-                        if not self._run_task_setup(hwnd, stop_event, task, mode, map_name, coords,
-                                                      scroll_power, scroll_nudges, webhook):
-                            if stop_event.is_set():
-                                return False
-                            task_failed = True
-                            break
-                        fresh_entry = True
                     continue
+
+                if carry_queue and at_task_end and not memory_refresh_wants_in:
+                    if (not challenge_wants_in and not crafting_wants_in
+                            and not fuel_wants_in and not auto_shop_wants_in
+                            and not left_live_match and not batch_due
+                            and not self._result_requires_lobby_setup
+                            and (self._result_repeated_in_place or mode == "portals")):
+                        self._queue_continuation = {"task": dict(task), "visit_runs": visit_runs}
+                        self._log(f"[Macro] Same task on the next queue pass -- keeping the stage ({visit_runs} run(s) this visit).")
+                    break
 
                 if challenge_wants_in:
                     self._active_task_progress["next_repeat"] = repeat_index + 1
@@ -1557,7 +1586,7 @@ class MacroRunner(ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, Bl
                     self._complete_memory_refresh()
                     if self._current_hwnd and wm.is_window(self._current_hwnd):
                         hwnd = self._current_hwnd
-                    if not is_last_repeat:
+                    if not is_last_repeat and not at_task_end:
                         if not self._run_task_setup(
                                 hwnd, stop_event, task, mode, map_name, coords,
                                 scroll_power, scroll_nudges, webhook):
@@ -1569,7 +1598,9 @@ class MacroRunner(ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, Bl
                     continue
 
                 if not is_last_repeat:
-                    if left_live_match or task.get("play_mode") == "matchmaking" or mode == "portals":
+                    if (left_live_match or batch_due or self._result_requires_lobby_setup
+                            or (task.get("play_mode") == "matchmaking" and not self._result_repeated_in_place)
+                            or mode == "portals"):
                         # Leave Stage (see _handle_match_result -- matchmaking
                         # always leaves, never Repeat Stage), or the Infinite
                         # wave-limit exit, puts us back in the lobby rather
@@ -1699,37 +1730,12 @@ class MacroRunner(ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, Bl
                           coords: dict, scroll_power: int, scroll_nudges: int, webhook: dict = None) -> bool:
         """Lobby -> Play -> Story/Raid -> map -> stage/act -> difficulty ->
         confirm -> matchmaking/solo -> teleport-in. Runs once per TASK, not
-        once per repeat -- see the repeat loop in _run. Event mode takes its
-        own lobby entry (nav_event -> event_gamemode -> Act) with no map or
-        difficulty, then rejoins the shared confirm/Solo/Matchmaking tail.
-        Portals mode (0.22) is the one branch that does NOT rejoin that tail:
+        once per repeat -- see the repeat loop in _run. Portals mode (0.22)
+        is the one branch that does NOT rejoin that tail:
         it has no Select Stage and no Start button -- clicking Activate on the
         portal is the teleport -- so it returns from its own teleport wait."""
-        if mode == "event":
-            # Event is reached straight from the lobby (nav_event), not
-            # through Play/gamemode/map, and has no difficulty picker -- so
-            # it reaches the chosen Act and then falls straight through to
-            # the shared confirm + Solo/Matchmaking tail below. Same
-            # retried-from-the-lobby loop as the map path, for the same
-            # reason (a failed attempt leaves nothing safe to assume).
-            reached_event = False
-            for attempt in range(1, MAP_SELECT_RETRY_ATTEMPTS + 1):
-                if self._checkpoint(stop_event):
-                    return False
-                if attempt > 1:
-                    self._log(f"[Macro] Retrying Event entry from the lobby "
-                               f"(attempt {attempt}/{MAP_SELECT_RETRY_ATTEMPTS})...")
-                if self._reach_event_act_selected(hwnd, stop_event, task.get("stage") or "1",
-                                                   scroll_power, scroll_nudges):
-                    reached_event = True
-                    break
-                if stop_event.is_set():
-                    return False
-            if not reached_event:
-                self._log(f'[Macro] Couldn\'t reach the Event Act after {MAP_SELECT_RETRY_ATTEMPTS} '
-                           f'attempts -- stopping.')
-                return False
-            if self._checkpoint(stop_event):
+        if mode == "soul_furnace":
+            if not self._reach_soul_furnace(hwnd, stop_event):
                 return False
         elif mode == "tournament":
             # Tournament goes through Play like Story/Raid (nav_tournament sits
@@ -1895,6 +1901,8 @@ class MacroRunner(ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, Bl
         if task.get("play_mode") != "matchmaking":
             if mode == "tournament":
                 confirm_image = "nav_entertournament"
+            elif mode == "soul_furnace":
+                confirm_image = "soul_select_stage"
             elif mode == "expedition":
                 confirm_image = "exp_select_stage"
             else:
@@ -2140,6 +2148,9 @@ class MacroRunner(ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, Bl
 
     def _resolve_in_match_map_setup(self, hwnd, task: dict, default_walk_paths: dict):
         """Use Image Manager labels to choose the saved map setup safely."""
+        if task.get("mode") == "soul_furnace":
+            # This event has a fixed arena; keep the user's selected Macro Operation.
+            return task, default_walk_paths
         if not task.get("_identified_map"):
             image_to_map = {entry.get("image"): name for name, entry in self._map_setups.items()
                             if entry.get("image") and entry.get("image_ready", True)
@@ -2162,6 +2173,9 @@ class MacroRunner(ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, Bl
                 self._log(f'[Macro] Legacy map "{task.get("map")}" has no in-match label image yet -- '
                           'using its selected-map setup until a label is added in Image Manager.')
             else:
+                if not task.pop("_map_miss_reported", False):
+                    from .map_capture import save_map_miss
+                    save_map_miss(hwnd, task=task, candidates=image_to_map, log=self._log)
                 task["_map_unknown"] = True
                 task["macro"] = ""
                 task["auto_play"] = "autoplay"
@@ -2286,7 +2300,9 @@ class MacroRunner(ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, Bl
         self._wave_region = EXPEDITION_WAVE_REGION if self._is_expedition_match else WAVE_REGION
         self._last_reward_card_at = 0.0
         self._last_board_disruption_at = 0.0
-        self._battle_replayed = False
+        # A stuck initial Start Game popup belongs to the initial placement,
+        # not a later sub-round. Re-arm only once this popup is gone.
+        self._battle_replayed = start_match is not None
         # Loop A / Loop B: their own index+state, ticked and restarted every
         # poll alongside Battle (see _tick_loop_phases).
         loop_blocks = self._load_loop_blocks(task)
@@ -2430,7 +2446,10 @@ class MacroRunner(ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, Bl
         battle_blocks = battle_blocks or []
         infinite_wave_limit = self._infinite_wave_limit(task)
         infinite_wave_state = {}
-        if infinite_wave_limit is not None:
+        soul_state = {}
+        if mode == "soul_furnace":
+            deadline = None  # bounded by completion of wave 30, not a wall-clock guess
+        elif infinite_wave_limit is not None:
             # A configured Infinite run can legitimately take longer than
             # the finite-stage 30-minute safety timeout.
             deadline = None
@@ -2458,7 +2477,8 @@ class MacroRunner(ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, Bl
         # Fishing is a Portal-only, once-per-round action. Check first because
         # the rod can remain equipped across consecutive portal runs; toggling
         # the bottom-left button in that state would put it away.
-        if task and task.get("mode") == "portals":
+        if (task and task.get("mode") == "portals"
+                and task.get("portal_autofishing", True)):
             portal_fishing_active = self._start_portal_fishing(hwnd, stop_event)
             if portal_fishing_active:
                 portal_fishing_last_click = time.monotonic()
@@ -2482,6 +2502,14 @@ class MacroRunner(ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, Bl
             # spend several seconds waiting for its info panel; putting the
             # wave check after that work made the narrow exit-wave window
             # much easier to miss.
+            if mode == "soul_furnace":
+                soul_result = self._soul_tick(hwnd, stop_event, task or {}, soul_state)
+                if soul_result == "shop_open":
+                    self._interruptible_sleep(0.3, stop_event)
+                    continue
+                if soul_result is not None:
+                    return soul_result
+
             if infinite_wave_limit is not None:
                 limit_result = self._check_infinite_wave_limit(
                     hwnd, stop_event, infinite_wave_limit, infinite_wave_state)
@@ -2641,6 +2669,11 @@ class MacroRunner(ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, Bl
             if self._frame_is_frozen(hwnd, "watching for Victory/Defeat"):
                 return None
 
+            if mode == "soul_furnace":
+                # _soul_tick already checked this poll's captured frame for
+                # results. Avoid two additional captures of the same HUD.
+                self._interruptible_sleep(SOUL_POLL_INTERVAL, stop_event)
+                continue
             try:
                 victory_match = vision.find_image(hwnd, "victory")
             except vision.TemplateNotFound as exc:
@@ -2757,23 +2790,10 @@ class MacroRunner(ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, Bl
         webhook_wants_shot = bool(webhook and webhook.get("enabled") and webhook.get("url"))
         result_screenshot = self._capture_result_screenshot(hwnd) if webhook_wants_shot else None
 
-        # Relic-drop auto-divert (event farm tasks that opted in, wins only --
-        # Crow Relics don't drop on a loss). If one's sitting on the reward
-        # row, flag Act 4 to be cleared once we've cleanly Left Stage here, and
-        # force a Leave (not Repeat) below so the divert's own navigation
-        # starts from the lobby. The Act 4 run itself happens back in _run_task
-        # (see the _act4_wants_in branch there).
-        self._act4_wants_in = False
-        if (result == "win" and task.get("mode") == "event" and task.get("act4_on_drop")
-                and self._relic_dropped(hwnd)):
-            self._act4_wants_in = True
-            repeat = False
-            self._log("[Macro] Crow Relic dropped -- leaving this stage to go clear Act 4.")
-
         map_name = task.get("map") or "-"
         threading.Thread(
             target=self._finish_match_result_background,
-            args=(result, map_name, duration, task, webhook, result_screenshot),
+            args=(result, map_name, duration, dict(task), webhook, result_screenshot),
             daemon=True,
         ).start()
         self._log(f"[Macro] {label} ({duration}) -- reporting in the background.")
@@ -2794,68 +2814,82 @@ class MacroRunner(ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, Bl
         if result == "win" and not self._clear_result_obtainment_modal(hwnd, stop_event):
             return False
 
-        # Matchmaking never uses Repeat Stage, even with more repeats left --
-        # a matchmade lobby is a one-shot party for that specific match, not
-        # something "repeat the same stage" can just re-queue into the way
-        # it can for Story/Solo, so every matchmaking repeat has to leave
-        # and go through Enter Matchmaking again from the lobby (see
-        # _run_task's repeat loop, which re-runs _run_task_setup instead of
-        # _wait_teleport_in whenever this is why it's about to see Leave
-        # Stage clicked with more repeats still left).
-        # Portals has no Repeat Stage and no Leave Stage: the screen after a
-        # run is the portal chooser, and clicking a portal on it starts the
-        # next run directly. Its own handler below covers both outcomes.
+        # Portal results continue through their own chooser, rather than the
+        # generic Repeat Stage button. A lobby batch boundary passes repeat=False.
+        self._result_repeated_in_place = False
+        self._result_requires_lobby_setup = False
         if task.get("mode") == "portals":
             return self._handle_portal_result(hwnd, stop_event, task, repeat, webhook)
 
-        is_matchmaking = task.get("play_mode") == "matchmaking"
-        if repeat and not is_matchmaking:
-            # More repeats left on this task -- Repeat Stage re-queues the
-            # same stage directly, skipping the lobby/gamemode/map/stage
-            # picks entirely (see _run_task_setup, which only runs once per
-            # task, not once per repeat).
+        if repeat:
             if task.get("mode") == "tower":
-                repeat_image = "Next_Floor" if result == "win" else "Repeat_Floor"
-                repeat_label = repeat_image
-            else:
-                repeat_image = "repeat_stage"
-                repeat_label = "Repeat Stage"
-            self._set_status(action=f"{label} -- clicking {repeat_label}...")
-            if not self._click_and_verify_gone(hwnd, stop_event, repeat_image, NAV_CLICK_TIMEOUT):
-                self._log(f'[Macro] "{repeat_label}" not found -- can\'t continue this task\'s repeats, stopping.')
+                # Tower's floor progression is intentional and distinct from
+                # advancing a Story/Raid act with the green Next Stage button.
+                repeat_image = "next_floor" if result == "win" else "repeat_floor"
+                self._set_status(action=f"{label} -- clicking {repeat_image}...")
+                if not self._click_and_verify_gone(hwnd, stop_event, repeat_image, NAV_CLICK_TIMEOUT):
+                    return False
+                self._wait_for_image_gone(hwnd, (label.lower(),), REPEAT_STAGE_MODAL_CLEAR_TIMEOUT, stop_event)
+                self._result_repeated_in_place = True
+                return True
+            if self._repeat_same_stage_result(hwnd, stop_event, label):
+                self._result_repeated_in_place = True
+                return True
+            if self._checkpoint(stop_event):
                 return False
-            # _click_and_verify_gone only confirms the repeat_stage BUTTON
-            # image is gone, not that the whole Victory/Defeat results panel
-            # actually closed -- confirmed from a real capture: the button
-            # itself can visually change/disappear (so the check above
-            # reports success) while the full result modal is still up on
-            # screen behind it, and Pre Start went on to place units right
-            # through/behind it. The banner ribbon is the more reliable
-            # "actually closed" signal, so wait for THAT to clear too before
-            # treating the repeat as ready to continue into. Best-effort --
-            # a still-showing banner after the timeout just gets logged, not
-            # treated as a hard failure, since the repeat may have gone
-            # through fine underneath anyway.
-            self._wait_for_image_gone(hwnd, (label.lower(),), REPEAT_STAGE_MODAL_CLEAR_TIMEOUT, stop_event)
-            return True
+            self._log("[Macro] Repeat Stage could not be confirmed -- returning to lobby to re-enter the same task. Next Stage will not be clicked.")
 
-        # Last repeat of this task (or the whole queue) -- back out to the
-        # lobby so the next task's setup (or a clean stop) starts from a
+        self._result_requires_lobby_setup = True
+        # A final run, configured lobby boundary, or unavailable replay returns
+        # to the lobby so the next entry (or a clean stop) starts from a
         # known state instead of sitting on the result screen. Verified/
         # retried, not a one-shot click -- a dropped click here used to
         # just leave the run sitting on the result screen forever with
         # nothing else ever noticing or retrying.
         self._set_status(action=f"{label} -- clicking Leave Stage...")
         if not self._click_and_verify_gone(
-                hwnd, stop_event, "leave_stage", NAV_CLICK_TIMEOUT, success_name="return"):
+                hwnd, stop_event, "soul_leave_stage" if task.get("mode") == "soul_furnace" else "leave_stage",
+                NAV_CLICK_TIMEOUT, success_name="return"):
             self._log('[Macro] "Leave Stage" not found -- stopping.')
             return False
         self._click_return_to_lobby_if_found(hwnd, stop_event)
         return True
 
+    def _repeat_same_stage_result(self, hwnd, stop_event, label):
+        """Click the actual Repeat Stage label, never a positional result slot.
+
+        The supplied Raid Act 2 frame has Next Stage in the former left slot.
+        Only text references are allowed here: broad button-frame references
+        can score well on a different action with similar borders/gradients.
+        """
+        self._set_status(action=f"{label} -- clicking Repeat Stage...")
+        for attempt in range(1, 4):
+            if self._checkpoint(stop_event):
+                return False
+            try:
+                match = vision.wait_for_image(hwnd, "result_repeat_stage", timeout=NAV_CLICK_TIMEOUT,
+                                               stop_event=stop_event, threshold=0.90)
+            except vision.TemplateNotFound:
+                return False
+            if match is None:
+                return False
+            if self._checkpoint(stop_event):
+                return False
+            wm.activate_window(hwnd)
+            vision.click_match(self._mouse, hwnd, match)
+            self._interruptible_sleep(1.0, stop_event)
+            if self._checkpoint(stop_event):
+                return False
+            if self._wait_for_image_gone(
+                    hwnd, ("result_repeat_stage", label.lower()),
+                    REPEAT_STAGE_MODAL_CLEAR_TIMEOUT, stop_event):
+                return not self._checkpoint(stop_event)
+            self._log(f"[Macro] Repeat result screen still present (attempt {attempt}/3).")
+        return False
+
     def _finish_match_result_background(self, result: str, map_name: str, duration: str, task: dict,
                                           webhook: dict, result_screenshot: str = None) -> None:
-        self._record_result(result, map_name, duration)
+        self._record_result(result, map_name, duration, task)
         try:
             self._send_result_webhook(webhook, result, task, duration, result_screenshot)
         finally:
@@ -3116,6 +3150,17 @@ class MacroRunner(ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, Bl
                           f"{camera.describe_profile(profile)}).")
             except Exception as exc:
                 self._log(f"[Macro] Camera setup failed: {exc}")
+            else:
+                from .map_capture import placement_capture_reason, save_placement_reference
+                reason = placement_capture_reason(task)
+                if reason:
+                    # Let the final camera input render before preserving coordinates.
+                    self._interruptible_sleep(0.3, stop_event)
+                    if self._checkpoint(stop_event):
+                        return False
+                    save_placement_reference(
+                        hwnd, task=task, profile=profile, source=source,
+                        reason=reason, log=self._log)
         else:
             # Skipping the camera work also skips the only thing standing
             # between teleporting in and placing units, so the settle it
@@ -4794,92 +4839,6 @@ class MacroRunner(ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, Bl
         self._spam_back_until_gone(hwnd, stop_event)
         return False
 
-    def _reach_event_act_selected(self, hwnd, stop_event: threading.Event, act: str,
-                                    scroll_power: int = None, scroll_nudges: int = None) -> bool:
-        """Lobby -> Event -> Villian Invasion -> Event gamemode -> Act (villain card), as one
-        restartable unit -- Event's equivalent of _reach_map_selected. Event
-        has its OWN lobby entry (the nav_event button), not the Play ->
-        gamemode -> map flow the other modes share, so there's no gamemode
-        menu or map carousel here: click nav_event, click Villian Invasion,
-        click the event_gamemode card, then the chosen Act's villain card. On
-        any failure it backs out to the lobby (_spam_back_until_gone) so the
-        next attempt starts clean, same as the map path does.
-
-        The first couple of Act cards are on screen already; later ones
-        (EVENT_ACT_SCROLL_FROM_INDEX on) sit below the fold and only come into
-        view by scrolling, so those get the same wheel-scroll search the Story
-        map carousel uses (see _scroll_find_and_click) instead of a plain
-        wait-then-click.
-        """
-        act = str(act)
-        act_images = EVENT_ACT_IMAGES.get(act)
-        # Both structures are checked, not just the images: EVENT_ACT_ORDER is
-        # indexed further down to decide whether the card needs scrolling to,
-        # so an act present in one but not the other would raise ValueError
-        # mid-navigation rather than failing cleanly here. They're hand-synced
-        # and Act 4 is queued to be added, so it's worth not depending on that.
-        if act_images is None or act not in EVENT_ACT_ORDER:
-            self._log(f'[Macro] Unknown Event Act "{act}" -- expected one of {EVENT_ACT_ORDER}.')
-            return False
-        if isinstance(act_images, str):
-            act_images = (act_images,)
-
-        if not self._ensure_lobby(hwnd, stop_event):
-            return False
-        if self._checkpoint(stop_event):
-            return False
-
-        # nav_event: the lobby's Event button (its own nav entry, not under
-        # Play). Each image click below is a wait-then-click with a
-        # focus-safe verify via _click_found_image, and each screen animates
-        # in, so a short settle follows before searching the next one.
-        self._set_status(action="Clicking Event...")
-        if self._click_found_image(hwnd, "nav_event", EVENT_SCREEN_TIMEOUT, stop_event) is None:
-            self._spam_back_until_gone(hwnd, stop_event)
-            return False
-        if self._checkpoint(stop_event):
-            return False
-        time.sleep(SETTLE_DELAY)
-
-        # (1) Click Villain Invasion from the event menu
-        self._set_status(action="Clicking Villain Invasion...")
-        match = self._click_found_image(hwnd, "Villain_Invasion", EVENT_SCREEN_TIMEOUT, stop_event)
-        if match is None:
-            self._spam_back_until_gone(hwnd, stop_event)
-            return False
-        if self._checkpoint(stop_event):
-            return False
-        time.sleep(SETTLE_DELAY)
-
-        # (2) Then the event_gamemode image (the button with the "Event
-        # Gamemode" text) -- the click that actually opens the villain list,
-        # found and clicked by image search. Its absence after the card click
-        # is the sign the card click failed (spam back + retry from lobby).
-        if self._click_found_image(hwnd, "event_gamemode", EVENT_SCREEN_TIMEOUT, stop_event) is None:
-            self._spam_back_until_gone(hwnd, stop_event)
-            return False
-        if self._checkpoint(stop_event):
-            return False
-        time.sleep(SETTLE_DELAY)
-
-        self._set_status(action=f"Clicking Act {act}...")
-        needs_scroll = EVENT_ACT_ORDER.index(act) >= EVENT_ACT_SCROLL_FROM_INDEX
-        if needs_scroll:
-            # Act 3+ is below the fold -- scroll the villain list into view
-            # (Story-carousel style) before clicking it.
-            if not self._scroll_find_and_click(hwnd, act_images, stop_event, scroll_power, scroll_nudges,
-                                                 label=f"Act {act}"):
-                self._spam_back_until_gone(hwnd, stop_event)
-                return False
-        elif self._click_found_image(hwnd, act_images[0], EVENT_SCREEN_TIMEOUT, stop_event) is None:
-            self._spam_back_until_gone(hwnd, stop_event)
-            return False
-        # Let the stage/Enter-Matchmaking screen finish animating in before
-        # the shared tail searches for its confirm button (same reason
-        # _select_stage settles after its own click).
-        time.sleep(SETTLE_DELAY)
-        return not self._checkpoint(stop_event)
-
     def _click_coord_point(self, hwnd, prefix: str, label: str) -> None:
         """Click one Macro Coordinates point by name, in window space.
 
@@ -5997,7 +5956,7 @@ class MacroRunner(ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, Bl
         chooser route first, lobby route as its fallback.
         """
         if not repeat:
-            self._set_status(action="Last portal -- exiting to the lobby...")
+            self._set_status(action="Portal lobby boundary -- exiting to the lobby...")
             # Exit to Lobby brings up the SAME "Return to Lobby" confirmation
             # that Leave Stage does everywhere else -- Challenge has always
             # clicked it (_click_return_to_lobby_if_found), Portals never did,
@@ -6031,7 +5990,15 @@ class MacroRunner(ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, Bl
             if not exited:
                 self._log("[Macro] Couldn't click Exit to Lobby -- backing out instead.")
                 self._spam_back_until_gone(hwnd, stop_event)
-                return self._ensure_lobby(hwnd, stop_event)
+                recovered = self._ensure_lobby(hwnd, stop_event)
+                if recovered:
+                    self._portal_expect_chooser = False
+                    self._portal_expect_lobby = True
+                    self._result_requires_lobby_setup = True
+                return recovered
+            self._portal_expect_chooser = False
+            self._portal_expect_lobby = True
+            self._result_requires_lobby_setup = True
             time.sleep(SETTLE_DELAY)
             return not self._checkpoint(stop_event)
 
@@ -6146,11 +6113,11 @@ class MacroRunner(ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, Bl
 
         if task.get("tower_mode") == "traitless":
             self._set_status(action="Selecting Traitless...")
-            if self._click_found_image(hwnd, "Traitless_Tower", TOWER_SCREEN_TIMEOUT, stop_event) is None:
+            if self._click_found_image(hwnd, "traitless_tower", TOWER_SCREEN_TIMEOUT, stop_event) is None:
                 self._spam_back_until_gone(hwnd, stop_event)
                 return False
             self._log("[Macro] Traitless Tower selected.")
-            if self._click_found_image(hwnd, "Floor", TOWER_SCREEN_TIMEOUT, stop_event, TOWER_CARD_REGION) is None:
+            if self._click_found_image(hwnd, "floor", TOWER_SCREEN_TIMEOUT, stop_event, TOWER_CARD_REGION) is None:
                 self._spam_back_until_gone(hwnd, stop_event)
                 return False
             self._log("[Macro] Found Floor card -- waiting for select stage...")
@@ -6162,7 +6129,7 @@ class MacroRunner(ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, Bl
                 return False
             time.sleep(SETTLE_DELAY)
             self._log("[Macro] Normal Tower selected.")
-            if self._click_found_image(hwnd, "Floor", TOWER_SCREEN_TIMEOUT, stop_event, region=TOWER_CARD_REGION) is None:
+            if self._click_found_image(hwnd, "floor", TOWER_SCREEN_TIMEOUT, stop_event, region=TOWER_CARD_REGION) is None:
                 self._spam_back_until_gone(hwnd, stop_event)
                 return False
             self._log("[Macro] Found Floor card -- waiting for select stage...")
@@ -6230,108 +6197,6 @@ class MacroRunner(ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, Bl
                    f'stopping. If its card was visibly scrolling by, its crop isn\'t matching your setup '
                    f'-- add your own via Settings > General > Image Manager.')
         return False
-
-    def _relic_dropped(self, hwnd) -> bool:
-        """Whether a Crow Relic is on the Victory reward row (DROP_RELIC_IMAGE)
-        -- the trigger for an event farm task's Act 4 auto-divert. Best-effort:
-        a missing crop just reads as 'no relic', same as any other optional
-        image search in this file."""
-        try:
-            return vision.find_image(hwnd, DROP_RELIC_IMAGE) is not None
-        except vision.TemplateNotFound:
-            return False
-
-    def _act4_locked(self, hwnd) -> bool:
-        """Whether Act 4's locked card (VILLIAN4_CLOSE_IMAGE, the 'requires 1
-        Crow Relic / 0/1x Owned' popup) is on screen -- i.e. there's no relic
-        to spend, so an entry attempt can't succeed. Best-effort, same as
-        above."""
-        try:
-            return vision.find_image(hwnd, VILLIAN4_CLOSE_IMAGE) is not None
-        except vision.TemplateNotFound:
-            return False
-
-    def _run_act4_diversion(self, hwnd, stop_event: threading.Event, farm_task: dict, coords: dict,
-                              scroll_power: int, scroll_nudges: int, default_walk_paths: dict,
-                              webhook: dict) -> None:
-        """Clear Villian Invasion Act 4 ("Crow - Dawn") after a farm task's
-        Victory dropped a Crow Relic. Uses the farm task's OWN Act 4 Macro
-        Operation (act4_macro) -- Act 4 plays nothing like Acts 1-3, so it
-        can't reuse the farm macro. Runs Act 4 once, or (act4_mode ==
-        "until_locked") repeatedly until the card shows locked/out of relics
-        (VILLIAN4_CLOSE_IMAGE). The farm stage was already Left in
-        _handle_match_result, so this starts from the lobby; _run_task
-        re-enters the farm task afterward. Best-effort throughout -- any
-        navigation failure just logs and returns to let the farm resume."""
-        until_locked = (farm_task.get("act4_mode") == "until_locked")
-        act4_macro = farm_task.get("act4_macro") or ""
-        # Act 4 can run in its own play mode (Solo/Matchmaking); falls back to
-        # the farm task's play mode when it was never set (older tasks, or the
-        # user leaving it on the inherited default). See the Act 4 Play Mode
-        # control in ui/app.js renderTaskBuilder.
-        play_mode = farm_task.get("act4_play_mode") or farm_task.get("play_mode") or "solo"
-        runs = 0
-        while True:
-            if self._checkpoint(stop_event):
-                return
-            if self._current_hwnd and wm.is_window(self._current_hwnd):
-                hwnd = self._current_hwnd
-
-            # Synthetic one-repeat Act 4 task, driven through the exact same
-            # setup/play/result pipeline a real event task uses (same trick as
-            # Challenge's _run_one_challenge_stage). act4_on_drop is NOT set on
-            # it, so its own _handle_match_result never re-triggers a divert.
-            act4_task = {
-                "mode": "event", "map": "Event", "stage": EVENT_ACT4_STAGE, "difficulty": "-",
-                "macro": act4_macro, "play_mode": play_mode, "repeat": 1, "team": "",
-                "equipment": farm_task.get("equipment") or "include", "is_act4_divert": True,
-            }
-            self._set_status(current_task="Act 4 (Crow - Dawn)", current_repeat="1 / 1", map="Event",
-                              stage="Act 4", action="Clearing Act 4...", mode="event", difficulty="-",
-                              play_mode=play_mode, macro=act4_macro or "-")
-            self._log(f"[Macro] {'Clearing Act 4 again' if runs else 'Clearing Act 4 (Crow - Dawn)'} "
-                       f"with Macro Operation \"{act4_macro or '-'}\".")
-
-            if not self._run_task_setup(hwnd, stop_event, act4_task, "event", "Event", coords,
-                                          scroll_power, scroll_nudges, webhook):
-                if stop_event.is_set():
-                    return
-                if self._current_hwnd and wm.is_window(self._current_hwnd):
-                    hwnd = self._current_hwnd
-                # Couldn't enter. The expected reason after the relics run out
-                # is the locked card -- distinguish it so "until locked" reads
-                # as a clean finish, not an error.
-                if self._act4_locked(hwnd):
-                    self._log("[Macro] Act 4 is locked (no Crow Relic to spend) -- "
-                               f"{'done clearing it' if runs else 'nothing to clear'}.")
-                else:
-                    self._log("[Macro] Couldn't enter Act 4 -- giving up on the divert.")
-                self._spam_back_until_gone(hwnd, stop_event)
-                return
-
-            if self._current_hwnd and wm.is_window(self._current_hwnd):
-                hwnd = self._current_hwnd
-            battle_started = time.time()
-            result = self._play_one_match(hwnd, stop_event, act4_task, default_walk_paths,
-                                            first_repeat=True, webhook=webhook)
-            if result is None:
-                if not stop_event.is_set():
-                    self._recover_to_lobby(hwnd, stop_event)
-                return
-            duration = self._format_duration(time.time() - battle_started)
-            # Always Leave Stage (repeat=False) -- one clear per entry; the
-            # loop decides whether to go again.
-            if not self._handle_match_result(hwnd, stop_event, act4_task, result, duration, webhook,
-                                               repeat=False):
-                return
-            if self._checkpoint(stop_event):
-                return
-            runs += 1
-            self._log(f"[Macro] Act 4 cleared ({result}, {duration}).")
-            if not until_locked:
-                return
-            # until_locked: loop and try again; the next setup lands on the
-            # locked card once relics run out and stops us there.
 
     def _spam_back_until_gone(self, hwnd, stop_event: threading.Event) -> None:
         # A failed map search can leave the run sitting on any of several

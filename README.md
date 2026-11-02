@@ -7,7 +7,7 @@
 <p align="center">
   <strong>Free, open-source auto-farm macro for the Roblox game Anime Expeditions</strong><br>
   Vision-based (screen capture + image matching) — no injection, no memory reading.<br>
-  Docks Roblox directly inside its own window and automates the full Story/Raid/Expedition grind loop.
+  Positions Roblox in a dedicated game slot and automates Story, Raid, Expedition, and Halloween Soul Furnace runs.
 </p>
 
 <p align="center">
@@ -53,7 +53,8 @@
 
 ## Features
 
-- **Docked automation** — Roblox is embedded as a native child window inside the macro's own UI, not remote-controlled from outside, so clicks and key presses land exactly where they should.
+- **Docked automation** - On Windows, Roblox runs as an independent borderless window that follows the macro's game slot while retaining its fixed client size.
+- **Halloween Soul Furnace / Soul Forge macro (v0.1.0)** - enter through Events > Halloween Event > Event Gamemode, configure purchases by wave or Heat Bars, and repeat runs with a configurable lobby interval. New tasks default to Final Boss at Heat Bars 3. The Task Builder includes the recommended team/equipment and Auto Play setup for 400+ Candy Corn in under 3 minutes; results depend on setup and game conditions. Bought items enter inventory and are not automatically applied or deployed.
 - **Task queue** — build a queue of Story, Raid, or Expedition tasks (map, stage/act/difficulty, Solo or Matchmaking, repeat count) and let the macro work through all of them in order.
 - **Repeat farming with automatic recovery** — farm the same stage N times via Repeat Stage without re-doing the lobby/map/stage picks each run. A stuck battle or a missed click backs out to the lobby and retries automatically instead of derailing an unattended session.
 - **Pre Start block builder (Macro Manager)** — a drag-and-drop editor for what happens before a match starts: place starter units (with click-verify and auto-nudge if a spot is rejected), flip in-game settings via hotkey, and mark any block "Once" so it only fires on a task's first entry into a stage, not every repeat.
@@ -90,7 +91,7 @@ No `git clone`, no Python needed.
 
 The `Assets/` folder is every image the macro searches for on screen, kept **outside** the exe on purpose: one folder per button/text, and you can open, replace, or add extra crops freely (Settings > General > **Image Manager** captures and crops them for you, straight from your Roblox screen). Updates never overwrite images you've changed or added.
 
-(The old bootstrapper exe is no longer uploaded to releases — the zip is the one download. If you already have a bootstrapper from before, it keeps working: it fetches this same zip. Need a fresh one to share around? Build it locally with `build_bootstrap.py`.)
+(The old bootstrapper exe is no longer uploaded to releases — the zip is the one download. If you already have a bootstrapper from before, it keeps working: it fetches this same zip. Need a fresh one to share around? Build it locally with `scripts/build/build_bootstrap.py`.)
 
 > Windows SmartScreen may warn about an unrecognized app the first time (normal for small open-source tools) — click **More info → Run anyway**, or build it yourself from source below.
 
@@ -123,7 +124,7 @@ macOS remembers the Accessibility, Input Monitoring, and Screen Recording grants
 Release builds are now signed with a **stable, self-signed code-signing certificate** created once and reused for every build, so every update is "the same app" to macOS and the grants you approved once keep working.
 
 - **Testers:** nothing to do beyond the normal one-time grants in step 1.
-- **Owner / release builds:** the stable identity lives in a certificate stored as two GitHub Actions repo secrets. Generate it once with `tools/make_macos_codesign_cert.sh` (any machine with OpenSSL), then add the two secrets it prints:
+- **Owner / release builds:** the stable identity lives in a certificate stored as two GitHub Actions repo secrets. Generate it once with `scripts/macos/make_codesign_cert.sh` (any machine with OpenSSL), then add the two secrets it prints:
   - `MACOS_CODESIGN_P12` — the single-line base64 of the `.p12`
   - `MACOS_CODESIGN_PASSWORD` — the `.p12` password
 
@@ -171,29 +172,63 @@ Assets/ui/       # reference screenshots the macro's image search looks for --
                  # one folder per searched name, every image inside it is tried
                  # as a variant. User-editable (ships loose beside the exe, never
                  # bundled) -- see Assets/ui/README.txt for the full catalog
-Assets/map/      # full map images for the Set Position picker
-Assets/maps/     # map name-label crops for map-select image search (same
+Assets/map_previews/ # full map images for the Set Position picker
+Assets/map_labels/   # map name-label crops for map-select image search (same
                  # folder-per-name layout as Assets/ui)
 Paths/defaults/  # known-good default walk paths, shipped with the repo
-bootstrap.py     # tiny installer exe -- downloads/extracts the release zip and launches
-                 # the app; built locally via build_bootstrap.py, not uploaded to releases
-build_pyinstaller.py # builds the real app exe
-build_bootstrap.py # builds bootstrap.py into its own small exe
-BUILD_EXE.bat       # one-click Windows build for the real app exe
-TEST_BUILD.bat      # resets an isolated playtest env, builds, launches, and preserves Assets/paths
-RUN_TESTS.bat       # prepares .venv and runs the automated pytest suite
-CLEAR_DATA.bat      # resets local settings, recordings, paths, and templates
+bootstrap.py       # tiny installer source; downloads/extracts the release zip and launches
+scripts/build/     # executable builders and the GitHub-compatible release packager
+scripts/windows/   # full Windows build, test, and cleanup scripts
+BUILD_EXE.bat      # compatibility launcher; builds the exe and publishable Windows zip
+TEST_BUILD.bat     # compatibility launcher; isolated playtest + test-output diagnostics
+RUN_TESTS.bat      # compatibility launcher for the automated test suite
+CLEAR_DATA.bat     # compatibility launcher for resetting local user data
 ```
+
+Playtests started with `TEST_BUILD.bat` keep their isolated data under the
+current Windows user's LocalAppData. When the test app closes, all session data
+(except the executable) is archived in this project's
+`test-output/<timestamp>-<account>-<unique-id>-closed/`, including screenshots,
+logs, settings, templates, recordings, paths, camera profiles, placement screens,
+and assets. Each account must have write access to the project's `test-output`
+folder. Keep the launcher console open until it reports that the export finished.
+The launcher asks **Resume saved setup (default)** or **Start fresh** before
+launching. It copies the current `dist/Lords Macro - Anime Expeditions.exe` into
+this account's test folder; it does not rebuild or install dependencies. Build
+updates once with `BUILD_EXE.bat`, then use `TEST_BUILD.bat` on each account.
+Press Enter to keep this Windows account's complete setup across
+updates: tasks, settings, presets, routines, recordings, walking paths, placements,
+and private asset edits. The macro starts stopped; task repeats start from their
+configured counts when you press Start. Each Windows account has its own setup.
+Start fresh archives the old setup first, then restores shipped defaults.
+Each closed-session archive also contains `changes.txt`, listing added, changed,
+and deleted data files. Full snapshots retain the actual values for later review.
+These reports contain personal data; `test-output/` is ignored by Git and excluded
+from release packaging. Test assets and paths are no longer automatically copied
+into source: promote useful changes explicitly after reviewing the archive.
+If the launcher was interrupted, the next run archives the previous data before
+resetting anything. An export error stops the reset and leaves the original data
+available for recovery. A partial export is marked `.incomplete`.
+To retrieve an existing session without rebuilding or launching the app, run
+`TEST_BUILD.bat --export-only` under the Windows account that ran that test.
 
 ## Contributing
 
+The dashboard uses the existing theme and panel styles in a Balanced Desk
+layout: navigation above, a fixed 1152×756 Roblox viewport centered horizontally,
+tasks and run controls on the left, status and history on the right, and logs
+below. When the window is narrower than 1792 pixels, use the top-bar drawer
+buttons to access those panels below the game. Drawers leave Roblox visible;
+press Escape or the same button to close them. Other tabs use the full workspace.
+Saved placements and click coordinates remain relative to the game viewport.
+
 Issues and PRs are welcome. Every push/PR runs CI on Windows: the `tests/` unit suite under pytest, a compile check over every Python file, and a syntax check of `ui/app.js`. Run the suite locally with `pip install -r requirements-dev.txt` then `python -m pytest tests/`. It only covers the pure-logic modules (settings, pacing, webhook, and friends), so please also describe how you tested a change manually in your PR.
 
-To cut a release: bump `VERSION`, commit, then tag with an **annotated** tag whose message is a short, human-readable changelog: `git tag -a vX.Y.Z -m "..." && git push origin vX.Y.Z`. That message becomes both the GitHub Release body and what gets posted to Discord (see below) — a lightweight tag (no `-a`/`-m`) falls back to just the tagged commit's own message, which is usually not what you want announced. Pushing the tag triggers the release workflow, which builds the app exe with PyInstaller (see `build_pyinstaller.py`), packages it together with the user-editable `Assets/` folder into `Lords-Macro-Anime-Expeditions-Windows.zip` (a macOS job builds the `-macOS` twin) — the per-platform zips are the only uploaded assets, which new installs, the auto-updater, and any bootstrapper copies all read from — and publishes a GitHub Release.
+To cut a release: bump `VERSION`, commit, then tag with an **annotated** tag whose message is a short, human-readable changelog: `git tag -a vX.Y.Z -m "..." && git push origin vX.Y.Z`. That message becomes both the GitHub Release body and what gets posted to Discord (see below) — a lightweight tag (no `-a`/`-m`) falls back to just the tagged commit's own message, which is usually not what you want announced. Pushing the tag triggers the release workflow, which builds the app exe with PyInstaller (see `scripts/build/build_pyinstaller.py`), packages it together with the user-editable `Assets/` folder into `Lords-Macro-Anime-Expeditions-Windows.zip` (a macOS job builds the `-macOS` twin) — the per-platform zips are the only uploaded assets, which new installs, the auto-updater, and any bootstrapper copies all read from — and publishes a GitHub Release.
 
 Every push to `main` posts a one-line summary to a Discord "git log" channel; every tagged release posts its changelog to a separate Discord "update log" channel. Both are wired via `DISCORD_GIT_LOGS_WEBHOOK`/`DISCORD_UPDATE_LOGS_WEBHOOK` repo secrets (Settings > Secrets and variables > Actions) — unset in a fork, so both steps just no-op instead of failing.
 
-To build either exe locally instead of waiting on CI: `pip install pyinstaller`, then `python build_pyinstaller.py` / `python build_bootstrap.py`. Output lands in `dist/`.
+To produce the Windows executable and the same publishable zip used by GitHub, run `BUILD_EXE.bat`. To build either executable directly: `python scripts/build/build_pyinstaller.py` / `python scripts/build/build_bootstrap.py`. Output lands in `dist/`.
 
 ## Disclaimer
 

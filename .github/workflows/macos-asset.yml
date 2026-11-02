@@ -63,7 +63,7 @@ jobs:
           security default-keychain -s build.keychain
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           # The secret holds the single-line base64 of the .p12 (see
-          # tools/make_macos_codesign_cert.sh). openssl base64 -A/-d is used
+          # scripts/macos/make_codesign_cert.sh). openssl base64 -A/-d is used
           # instead of BSD base64(1)'s -D/-b so this stays portable.
           printf '%s' "$MACOS_CODESIGN_P12" | openssl base64 -d -A -out cert.p12
           # -T whitelists only codesign/security as apps allowed to use the
@@ -74,12 +74,12 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
           rm -f cert.p12
           # The identity is the cert common name (same CN baked into
-          # tools/make_macos_codesign_cert.sh); build_pyinstaller.py reads
+          # scripts/macos/make_codesign_cert.sh); build_pyinstaller.py reads
           # this env var and signs with it instead of ad-hoc.
           echo "MACOS_CODESIGN_IDENTITY=Lords Macro Code Signing" >> "$GITHUB_ENV"
 
       - name: Build app (PyInstaller)
-        run: python build_pyinstaller.py
+        run: python scripts/build/build_pyinstaller.py
 
       - name: Verify Intel application binary
         run: file "dist/Lords Macro - Anime Expeditions.app/Contents/MacOS/Lords Macro - Anime Expeditions" | grep -q x86_64

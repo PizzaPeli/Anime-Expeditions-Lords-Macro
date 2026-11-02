@@ -1,9 +1,8 @@
 // WebView2 (this app's Chromium-based renderer) treats F11 as its own native
 // fullscreen toggle by default, even though nothing here ever requests
 // fullscreen -- it's a built-in browser accelerator, not page behavior. This
-// window is frameless/fixed-size (see main.py's create_window) with Roblox
-// docked into it as a native child window at a hardcoded pixel offset (see
-// core.dock); WebView2 fullscreening itself resizes the webview control but
+// window is frameless, with a fixed-size native Roblox child (see core.dock).
+// WebView2 fullscreening itself resizes the webview control but
 // NOT Roblox's docked position/size, which is exactly the broken half-cut
 // layout this produces instead of an actual fullscreen view. Cancel it right
 // at the keydown so it never engages.
@@ -146,7 +145,8 @@ let compactMode = false;
 function showDocked() {
   document.body.classList.add('nav-rail-active');
   document.getElementById('waiting-screen').style.display = 'none';
-  document.getElementById('main-layout').style.display = 'flex';
+  document.getElementById('main-layout').style.display = IS_MAC ? 'flex' : 'grid';
+  updateDashboardLayout();
   document.getElementById('titlebar').style.display = 'flex';
 
   // First-ever dock this session: jump to the Dashboard so the user actually
@@ -202,6 +202,7 @@ let captureDanceActive = false;
 //     restoreGameIfDashboard() so the game comes back if they were
 //     closed while sitting on the Dashboard.
 function isBlockingOverlayOpen() {
+  if (document.getElementById('soul-recommendation-dialog')?.open) return true;
   const isOpen = id => {
     const el = document.getElementById(id);
     return el && el.style.display !== 'none' && el.style.display !== '';
@@ -414,7 +415,8 @@ function skipWaiting() {
   document.body.classList.add('nav-rail-active');
   try { window.pywebview && pywebview.api.skip_waiting(); } catch (e) {}
   document.getElementById('waiting-screen').style.display = 'none';
-  document.getElementById('main-layout').style.display = 'flex';
+  document.getElementById('main-layout').style.display = IS_MAC ? 'flex' : 'grid';
+  updateDashboardLayout();
   document.getElementById('titlebar').style.display = 'flex';
   runPendingFirstRun();
 }
@@ -431,6 +433,7 @@ function launchRoblox() {
 // a native child window, not DOM content, so CSS alone can't hide it) so the
 // other screens get the full window instead of Roblox showing through.
 let currentScreen = 'dashboard';
+document.body.dataset.screen = currentScreen;
 let lastNonDashboardScreen = 'creation';
 const SCREENS = ['dashboard', 'task', 'creation', 'resource', 'settings'];
 
@@ -469,17 +472,66 @@ function applyDpiFit() {
   if (IS_MAC) { document.documentElement.style.zoom = ''; return; }
   const dpr = window.devicePixelRatio || 1;
   document.documentElement.style.zoom = dpr > 1.001 ? String(1 / dpr) : '';
+  updateDashboardLayout();
 }
 applyDpiFit();
 // devicePixelRatio changes (dragging the window to a monitor at a different
 // scale) surface as a resize here -- re-fit so it doesn't clip again.
 window.addEventListener('resize', applyDpiFit);
 
+function closeDashboardDrawer() {
+  delete document.body.dataset.dashboardDrawer;
+  for (const side of ['left', 'right']) {
+    const button = document.getElementById(`drawer-${side}-button`);
+    if (button) button.setAttribute('aria-expanded', 'false');
+  }
+}
+
+function updateDashboardLayout() {
+  const layout = document.getElementById('main-layout');
+  if (!layout || !layout.clientWidth || IS_MAC) return;
+  const width = layout.clientWidth;
+  layout.style.setProperty('--game-left', `${Math.max(0, Math.floor((width - 1152) / 2))}px`);
+  const collapsed = width < 1792;
+  document.body.classList.toggle('dashboard-collapsed', collapsed);
+  if (!collapsed) closeDashboardDrawer();
+}
+
+function toggleDashboardDrawer(side) {
+  if (!['left', 'right'].includes(side)) return;
+  const open = document.body.dataset.dashboardDrawer === side;
+  closeDashboardDrawer();
+  if (!open) {
+    document.body.dataset.dashboardDrawer = side;
+    document.getElementById(`drawer-${side}-button`).setAttribute('aria-expanded', 'true');
+  }
+}
+
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape') closeDashboardDrawer();
+});
+
+function renderDashboardQueue(tasks) {
+  const list = document.getElementById('dashboard-task-list');
+  if (!list) return;
+  const key = JSON.stringify(tasks || []);
+  if (list.dataset.queue === key) return;
+  list.dataset.queue = key;
+  list.innerHTML = (tasks || []).length ? tasks.map((task, index) => {
+    const summary = TASK_DATA[task.mode] ? taskSummary(task) : { title: task.mode || 'Task', meta: '' };
+    return `<button type="button" class="dashboard-queue-row" onclick="switchScreen('task')">
+      <span class="tq-title">${index + 1}. ${escapeHtml(summary.title)}</span>
+      <span class="tq-meta">${escapeHtml(summary.meta)}</span></button>`;
+  }).join('') : '<div class="rh-empty">No tasks queued. Add tasks in the Tasks tab.</div>';
+}
+
 // Previous poll's macro-running state, so refreshStatus can act on the
 // running -> stopped EDGE rather than every tick (see refreshStatus).
 let wasMacroRunning = false;
 
 function switchScreen(name) {
+  closeDashboardDrawer();
+  document.body.dataset.screen = name;
   // Navigating anywhere off the Dashboard drops out of the compact strip --
   // the strip is a Dashboard overlay, so leaving the Dashboard should restore
   // the full UI (and the full window size) rather than leave the strip
@@ -512,6 +564,7 @@ function switchScreen(name) {
 
   try {
     if (window.pywebview) {
+      pywebview.api.set_layout_minimum(name === 'dashboard', compactMode);
       // Roblox is a native child window that renders on top of any DOM
       // overlay regardless of CSS z-index (same reason showUpdateAvailable/
       // showScaleWarning call hide_game() themselves) -- if one of those is
@@ -571,6 +624,7 @@ function toggleGameScreenHotkey() {
 // earlier switchScreen can read it.)
 // ---------------------------------------------------------------------------
 function toggleCompactStrip() {
+  closeDashboardDrawer();
   if (!compactMode) {
     // The strip only makes sense over the game, which lives on the Dashboard
     // -- make sure we're there (also un-hides the game if we were elsewhere).
@@ -597,6 +651,7 @@ async function refreshStatus() {
   if (!window.pywebview) return;
   try {
     const status = await pywebview.api.get_status();
+    renderDashboardQueue(status.tasks);
     if (status.docked) {
       showDocked();
     } else {
@@ -759,7 +814,7 @@ function renderRunHistory(runs) {
     chip.textContent = run.result === 'win' ? 'W' : 'L';
     const map = document.createElement('span');
     map.className = 'rh-map';
-    map.textContent = run.map || '-';
+    map.textContent = [run.challenge || (run.mode === 'expedition' ? 'Expedition' : ''), run.map || '-'].filter(Boolean).join(' · ');
     const meta = document.createElement('span');
     meta.className = 'rh-meta';
     meta.textContent = [run.duration, run.ago].filter(Boolean).join(' · ');
@@ -879,7 +934,7 @@ let rebindingAction = null;
 // Esc during capture instead.
 const HOTKEY_DEFAULTS = {
   toggle_game: 'f4', skip_waiting: '', macro_start: 'f1', macro_stop: 'f2', macro_pause: 'f5', screen_snapshot: 'f3',
-  image_manager: 'f6', toggle_compact: 'f7', game_auto_upgrade: '',
+  image_manager: 'f6', toggle_compact: 'f7', copy_mouse_position: 'f8', game_auto_upgrade: '',
 };
 
 // Reflects one hotkey's state into its button text and shows/hides its
@@ -963,6 +1018,7 @@ async function resetHotkeys() {
     updateKeybindDisplay('screen_snapshot', hk.screen_snapshot || '');
     updateKeybindDisplay('image_manager', hk.image_manager || '');
     updateKeybindDisplay('toggle_compact', hk.toggle_compact || '');
+    updateKeybindDisplay('copy_mouse_position', hk.copy_mouse_position || '');
     updateKeybindDisplay('game_auto_upgrade', hk.game_auto_upgrade || '');
   } catch (e) {}
 }
@@ -1134,13 +1190,6 @@ async function loadSettingsUI() {
       flickerEl.classList.toggle('on', s.flicker_free_capture !== false);
       if (IS_MAC) flickerEl.closest('.setting-row').style.display = 'none';
     }
-    const cutoutEl = document.getElementById('toggle-game-cutout');
-    if (cutoutEl) {
-      cutoutEl.classList.toggle('on', !!s.game_cutout);
-      // Windows-only technique -- hide the whole row on mac rather than
-      // offering a switch that can't do anything there.
-      if (IS_MAC) cutoutEl.closest('.setting-row').style.display = 'none';
-    }
     const wgcEl = document.getElementById('toggle-wgc-capture');
     if (wgcEl) {
       wgcEl.classList.toggle('on', !!s.use_wgc_capture);
@@ -1191,6 +1240,7 @@ async function loadSettingsUI() {
     updateKeybindDisplay('screen_snapshot', hk.screen_snapshot || '');
     updateKeybindDisplay('image_manager', hk.image_manager || '');
     updateKeybindDisplay('toggle_compact', hk.toggle_compact || '');
+    updateKeybindDisplay('copy_mouse_position', hk.copy_mouse_position || '');
     updateKeybindDisplay('game_auto_upgrade', hk.game_auto_upgrade || '');
     // (There was an updateDashboardHotkeys(hk) call here. No such function has
     // ever existed in this file, so every load of Settings threw a
@@ -2232,7 +2282,13 @@ async function saveWebhookSettings(silentSave) {
 // Equipment only shows once a Team Loadout is chosen (with no team there's
 // no loadout to include equipment from); Macro Operation runs one of the
 // Macro Manager tab's saved templates during the task's matches.
+let soulRecommendation = null;
+const SOUL_FORGE_ITEMS = {"dmg_boost": "DMG Boost", "rng_boost": "RNG Boost", "spa_boost": "SPA Boost", "random_unit": "Random Unit", "pumpkin_armor": "Pumpkin Armor", "final_boss": "Final Boss", "unlock_path": "Unlock Path", "close_path": "Close Path", "concert": "Concert", "monster_mash": "Monster Mash", "evening_umbrella": "Evening Umbrella", "kings_guitar": "King’s Guitar", "life_eater": "Life Eater", "morphing_sword": "Morphing Sword", "piety_obliteration": "Piety & Obliteration", "draconic_tome": "Draconic Tome", "forsaken_tome": "Forsaken Tome", "primordial_tome": "Primordial Tome", "unbound_tome": "Unbound Tome"};
 const TASK_DATA = {
+  soul_furnace: {
+    label: 'Soul Furnace Infinite', maps: ['Soul Furnace'], stages: ['Infinite'],
+    fixedDifficulty: 'Hard', isSoulFurnace: true,
+  },
   story: {
     label: 'Story',
     maps: [], // Loaded from Settings > Map Setup before the task picker opens.
@@ -2386,13 +2442,11 @@ function defaultTask() {
     map: TASK_DATA.story.maps[0], stage: '1', difficulty: 'Normal',
     infinite_wave_limit: DEFAULT_INFINITE_WAVE_LIMIT,
     extract_after: '1',
+    runs_before_lobby: 0,
+    soul_purchases: [{ item: 'final_boss', trigger: 'heat', target: 3 }],
     repeat: 1, team: '', equipment: 'include', play_mode: 'solo', macro: '',
     card_select: 'let_game_decide',
-    // Event-only: auto-clear Villian Invasion Act 4 when a Crow Relic drops.
-    // act4_mode 'once' spends one relic then resumes; 'until_locked' spends
-    // every banked relic. act4_macro is Act 4's own Macro Operation (it plays
-    // nothing like Acts 1-3). See runner._run_act4_diversion.
-    act4_on_drop: false, act4_mode: 'once', act4_macro: '',
+    portal_autofishing: true,
   };
 }
 
@@ -2571,12 +2625,8 @@ async function importSettings() {
 // at nothing on someone else's machine). Import restores both, giving all
 // tasks fresh ids and never overwriting a template that already exists
 // locally under the same name.
-// Every macro a task can point at. act4_macro is Act 4's own Macro
-// Operation and was left out of the export entirely, so a shared queue
-// arrived referencing a macro the recipient did not have -- and the export
-// still reported success.
 function taskMacroNames(task) {
-  return [task.macro, task.act4_macro].filter(Boolean);
+  return [task.macro].filter(Boolean);
 }
 
 async function exportTasks() {
@@ -2890,7 +2940,8 @@ function setTaskProp(id, key, value) {
     // is the mode, and the runner's solo Start tail only runs when this isn't
     // 'matchmaking'. Force it so switching from a matchmaking task can't leave
     // Tournament silently waiting on an Enter Matchmaking button.
-    if (d.isTournament) t.play_mode = 'solo';
+    if (d.isTournament || d.isSoulFurnace) t.play_mode = 'solo';
+    if (d.isSoulFurnace) t.difficulty = 'Hard';
     if (d.isTower) {
       t.map = d.maps[0];
       t.stage = d.stages[0];
@@ -2920,7 +2971,7 @@ function taskOpts(list, current, fmt) {
 }
 
 // One accent per mode so the queue scans by color before you even read it.
-const TASK_MODE_COLORS = { story: 'var(--brand)', raid: 'var(--brand)', expedition: 'var(--brand)', event: 'var(--brand)', tournament: 'var(--brand)', tower: 'var(--brand)', portals: 'var(--brand)' };
+const TASK_MODE_COLORS = { soul_furnace: 'var(--brand)', story: 'var(--brand)', raid: 'var(--brand)', expedition: 'var(--brand)', tournament: 'var(--brand)', tower: 'var(--brand)', portals: 'var(--brand)' };
 
 function portalSlotsReady(t) {
   return !!String(t.portal_name || '').trim();
@@ -2955,8 +3006,6 @@ function taskSummary(t) {
     (t.mode === 'tournament' || t.mode === 'tower' || t.mode === 'portals') ? '' : (t.play_mode === 'matchmaking' ? 'Matchmaking' : 'Solo'),
     !t.macro ? 'Auto Play' : '',
     t.macro ? `▸ ${t.macro}` : '',
-    (t.mode === 'event' && t.stage !== '4' && t.act4_on_drop)
-      ? `⮡ Act 4 on drop${t.act4_mode === 'until_locked' ? ' (until locked)' : ''}` : '',
   ].filter(Boolean).join(' · ');
   return { title, meta };
 }
@@ -3034,14 +3083,19 @@ function renderTaskBuilder() {
       oninput="setTaskProp('${t.id}', 'repeat', Math.max(1, parseInt(this.value, 10) || 1))"></div>`, 'Number of times to run this task'));
   }
 
+  {
+    fields.push(field('Runs before returning to lobby', `<input class="block-input" type="number" min="0" step="1"
+      value="${Math.max(0, parseInt(t.runs_before_lobby, 10) || 0)}"
+      oninput="setTaskProp('${t.id}', 'runs_before_lobby', Math.max(0, parseInt(this.value, 10) || 0))">`,
+      'Wins and losses both count. 0 continues until this task finishes; 1 returns after every run. Uses Repeat Stage or the portal chain when available; otherwise re-enters from the lobby.'));
+  }
+
   if (t.mode === 'story' || t.mode === 'raid') {
     fields.push(field('Map', sel('map', d.maps, null, 'Select map')));
     const stageTooltip = t.mode === 'raid' ? 'Select Raid Act 1, Act 2, or Act 3' : 'Select Stage 1-5, Infinite, or Mastery';
     fields.push(field('Stage', sel('stage', d.stages, s => /^\d+$/.test(s) ? 'Stage ' + s : s, stageTooltip), stageTooltip));
   } else if (t.mode === 'expedition') {
     fields.push(field('Expedition', sel('map', d.maps, null, 'Select Expedition map')));
-  } else if (t.mode === 'event') {
-    fields.push(field('Act', sel('stage', d.stages, s => 'Act ' + s, 'Select Event Act 1-4'), 'Select Event Act 1-4'));
   } else if (t.mode === 'tournament') {
     fields.push(field('Type', sel('map', d.maps, null, 'Select the Tournament type to enter'), 'Select the Tournament type to enter'));
 
@@ -3087,6 +3141,11 @@ function renderTaskBuilder() {
       value="${escapeHtml(t.portal_name || '')}"
       onchange="setTaskProp('${t.id}', 'portal_name', this.value.trim())">`,
       'Type the name to search for. The first search result is used.'));
+    fields.push(field('Autofishing', `<select class="task-select"
+      onchange="setTaskProp('${t.id}', 'portal_autofishing', this.value === 'on')">
+      <option value="on" ${t.portal_autofishing !== false ? 'selected' : ''}>On</option>
+      <option value="off" ${t.portal_autofishing === false ? 'selected' : ''}>Off</option>
+      </select>`, 'Equip the fishing rod and repeatedly click the fishing spot during battle. Turn off for portals without fishing.'));
     const portalOfferMode = ['let_game_decide', 'preferred', 'advanced', 'none'].includes(t.card_select)
       ? 'let_game_decide' : 'fast';
     fields.push(field('Portal cards during battle', `<select class="task-select"
@@ -3098,7 +3157,7 @@ function renderTaskBuilder() {
 
   // Tournament and Tower have no Solo/Matchmaking choice -- their runner paths
   // force the solo Start tail, so the toggle would be a no-op here.
-  if (t.mode !== 'tournament' && t.mode !== 'tower' && t.mode !== 'portals') {
+  if (t.mode !== 'tournament' && t.mode !== 'tower' && t.mode !== 'portals' && t.mode !== 'soul_furnace') {
     const playSeg = `
       <div class="seg-toggle" data-tooltip="Select Solo or Matchmaking / Party mode">
         <button type="button" class="seg-btn ${t.play_mode === 'solo' ? 'active' : ''}" onclick="setTaskProp('${t.id}', 'play_mode', 'solo'); renderTaskBuilder()">Solo</button>
@@ -3116,55 +3175,15 @@ function renderTaskBuilder() {
     </select>`;
   fields.push(field('Macro Operation', macroSel, 'Select a pre-start placement macro template'));
 
-  // Event farm tasks (Acts 1-3) can auto-divert to Villian Invasion Act 4
-  // ("Crow - Dawn") when a Crow Relic drops. Not shown on an Act 4 task
-  // itself -- there's nothing to divert TO. Act 4 needs its own Macro
-  // Operation since it plays nothing like Acts 1-3.
-  if (t.mode === 'event' && t.stage !== '4') {
-    const on = !!t.act4_on_drop;
-    const onOffSeg = `
-      <div class="seg-toggle">
-        <button type="button" class="seg-btn ${on ? 'active' : ''}" onclick="setTaskProp('${t.id}', 'act4_on_drop', true); renderTaskBuilder()">On</button>
-        <button type="button" class="seg-btn ${!on ? 'active' : ''}" onclick="setTaskProp('${t.id}', 'act4_on_drop', false); renderTaskBuilder()">Off</button>
-      </div>`;
-    fields.push(field('Auto-clear Act 4 on relic drop', onOffSeg));
-    if (t.act4_on_drop) {
-      const runsSeg = `
-        <div class="seg-toggle">
-          <button type="button" class="seg-btn ${t.act4_mode !== 'until_locked' ? 'active' : ''}" onclick="setTaskProp('${t.id}', 'act4_mode', 'once'); renderTaskBuilder()">Once</button>
-          <button type="button" class="seg-btn ${t.act4_mode === 'until_locked' ? 'active' : ''}" onclick="setTaskProp('${t.id}', 'act4_mode', 'until_locked'); renderTaskBuilder()">Until locked</button>
-        </div>`;
-      fields.push(field('Act 4 Runs', runsSeg));
-      const act4MacroSel = `
-        <select class="task-select" onchange="setTaskProp('${t.id}', 'act4_macro', this.value)">
-          <option value="">No Macro</option>
-          ${taskTemplates.map(n => `<option value="${escapeHtml(n)}" ${n === t.act4_macro ? 'selected' : ''}>&#9654; ${escapeHtml(n)}</option>`).join('')}
-        </select>`;
-      fields.push(field('Act 4 Macro Operation', act4MacroSel));
-      // Act 4 gets its own play mode -- e.g. farm Solo but clear Act 4 in
-      // Matchmaking, or vice versa. Defaults to the task's own play mode until
-      // set (t.act4_play_mode absent -> runner falls back to t.play_mode).
-      const act4Play = t.act4_play_mode || t.play_mode;
-      const act4PlaySeg = `
-        <div class="seg-toggle">
-          <button type="button" class="seg-btn ${act4Play === 'solo' ? 'active' : ''}" onclick="setTaskProp('${t.id}', 'act4_play_mode', 'solo'); renderTaskBuilder()">Solo</button>
-          <button type="button" class="seg-btn ${act4Play === 'matchmaking' ? 'active' : ''}" onclick="setTaskProp('${t.id}', 'act4_play_mode', 'matchmaking'); renderTaskBuilder()">Matchmaking</button>
-        </div>`;
-      fields.push(field('Act 4 Play Mode', act4PlaySeg));
-    }
-  }
-
   const extractHint = t.mode === 'expedition'
     ? `<div class="wh-hint">"Extract After" is how many extract prompts to skip before actually taking one -- 0 extracts at the first node, higher goes deeper (and takes longer) per run.</div>` : '';
   const infiniteHint = (t.mode === 'story' && t.stage === 'Infinite')
     ? `<div class="wh-hint"><b>Stop After Wave</b> completes the wave you enter, waits for the counter to advance once, then uses Leave Stage and returns to the lobby. For example, 20 leaves when wave 21 begins.</div>` : '';
-  const act4Hint = (t.mode === 'event' && t.stage !== '4' && t.act4_on_drop)
-    ? `<div class="wh-hint">When a Crow Relic drops on a win, the run leaves this stage, clears Act 4 (Crow - Dawn) with its own Macro Operation above, then comes back. <b>Once</b> spends one relic; <b>Until locked</b> spends every banked relic. Give Act 4 its own Macro Operation ${'&#8212;'} it plays nothing like Acts 1-3.</div>` : '';
   el.innerHTML = `
     <div class="task-builder-grid">${fields.join('')}</div>
     ${extractHint}
     ${infiniteHint}
-    ${act4Hint}
+    ${t.mode === 'soul_furnace' ? renderSoulPurchases(t) : ''}
     <div class="wh-hint" style="margin-top: 8px;">The macro's Team Loadout comes from its template (Macro Manager tab).</div>
     <div class="flex items-center gap-2" style="margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border);">
       <button class="task-toolbar-btn add" onclick="cloneTaskCard('${t.id}')">&#10697; Clone Task</button>
@@ -3173,8 +3192,82 @@ function renderTaskBuilder() {
     </div>`;
 }
 
+
+function soulPurchaseRows(t) {
+  return Array.isArray(t.soul_purchases) ? t.soul_purchases : [{ item: 'final_boss', trigger: 'heat', target: 3 }];
+}
+
+function renderSoulPurchases(t) {
+  const setup = typeof soulRecommendation === 'undefined' ? null : soulRecommendation;
+  const recommended = `<section class="soul-recommendation">
+    <b>Recommended team &amp; Auto Play for 400+ Candy Corn in under 3 minutes</b>
+    <p class="wh-hint">Soul Furnace Infinite: use the team and equipment shown, with units in the same slot order as the Auto Play preset.</p>
+    ${setup && setup.team ? `<details><summary>View recommended team and equipment</summary><button class="soul-recommendation-image" onclick="viewSoulRecommendation('team')" title="Open team screenshot at full size"><img loading="lazy" src="${escapeHtml(setup.team)}" alt="Recommended Soul Furnace team with six units and their equipment"></button></details>` : ''}
+    ${setup && setup.autoplay ? `<details><summary>View recommended Auto Play preset</summary><button class="soul-recommendation-image" onclick="viewSoulRecommendation('autoplay')" title="Open Auto Play screenshot at full size"><img loading="lazy" src="${escapeHtml(setup.autoplay)}" alt="Recommended Soul Furnace Auto Play share preset"></button></details>` : ''}
+  </section>`;
+  return `${recommended}<section class="soul-purchase-editor" style="margin-top:20px; border-top:1px solid var(--border); padding-top:16px;">
+    <div class="flex items-center justify-between gap-2"><b>Soul Forge Purchases</b>
+      <button class="task-toolbar-btn add" onclick="addSoulPurchase('${t.id}')">+ Add Purchase</button></div>
+    <div class="wh-hint">Each row buys once per run when its threshold is reached or exceeded. Five failed attempts, with 3 seconds between attempts, skip the remaining purchases and task repeats after this match ends. Items are purchased into inventory; they are not automatically used. If the match continues, return to lobby after completing wave 30.</div>
+    ${soulPurchaseRows(t).map((r,i) => `<div class="soul-purchase-row">
+      <label>Item<select class="task-select" onchange="updateSoulPurchase('${t.id}',${i},'item',this.value)">${Object.entries(SOUL_FORGE_ITEMS).map(([id,label]) => `<option value="${id}" ${r.item===id?'selected':''}>${escapeHtml(label)}</option>`).join('')}</select></label>
+      <label>Trigger<select class="task-select" onchange="updateSoulPurchase('${t.id}',${i},'trigger',this.value)"><option value="wave" ${r.trigger==='wave'?'selected':''}>Wave</option><option value="heat" ${r.trigger==='heat'?'selected':''}>Heat Bars</option></select></label>
+      <label>Target<input class="block-input" type="number" min="0" step="1" value="${Math.max(0,parseInt(r.target,10)||0)}" oninput="updateSoulPurchase('${t.id}',${i},'target',this.value)"></label>
+      <button class="task-toolbar-btn" aria-label="Move purchase up" ${i===0?'disabled':''} onclick="moveSoulPurchase('${t.id}',${i},-1)">&#8593;</button>
+      <button class="task-toolbar-btn" aria-label="Move purchase down" ${i===soulPurchaseRows(t).length-1?'disabled':''} onclick="moveSoulPurchase('${t.id}',${i},1)">&#8595;</button>
+      <button class="task-toolbar-btn danger" aria-label="Remove purchase" onclick="removeSoulPurchase('${t.id}',${i})">&#10005;</button>
+    </div>`).join('')}
+    ${soulPurchaseRows(t).length ? '' : '<div class="wh-hint">No purchases configured. The match will still end normally or exit after wave 30.</div>'}
+  </section>`;
+}
+
+function viewSoulRecommendation(key) {
+  const source = soulRecommendation && soulRecommendation[key];
+  if (!source) return;
+  let dialog = document.getElementById('soul-recommendation-dialog');
+  if (!dialog) {
+    dialog = document.createElement('dialog');
+    dialog.id = 'soul-recommendation-dialog';
+    dialog.className = 'soul-recommendation-dialog';
+    dialog.innerHTML = '<button class="task-toolbar-btn" onclick="this.closest(\'dialog\').close()">Close screenshot</button><img alt="Soul Furnace recommended setup">';
+    dialog.addEventListener('close', restoreGameIfDashboard);
+    document.body.appendChild(dialog);
+  }
+  dialog.querySelector('img').src = source;
+  try { window.pywebview && pywebview.api.hide_game(); } catch (e) {}
+  dialog.showModal();
+}
+
+function updateSoulPurchase(id, index, key, value) {
+  const t = findTask(id); if (!t) return;
+  t.soul_purchases = soulPurchaseRows(t).map(r => ({...r}));
+  if (!t.soul_purchases[index]) return;
+  t.soul_purchases[index][key] = key === 'target' ? Math.max(0, parseInt(value,10)||0) : value;
+  saveTaskQueue();
+}
+function addSoulPurchase(id) {
+  const t = findTask(id); if (!t) return;
+  t.soul_purchases = [...soulPurchaseRows(t), {item:'final_boss',trigger:'heat',target:3}];
+  saveTaskQueue(); renderTaskBuilder();
+}
+function removeSoulPurchase(id,index) {
+  const t = findTask(id); if (!t) return;
+  t.soul_purchases = soulPurchaseRows(t).filter((_,i) => i!==index);
+  saveTaskQueue(); renderTaskBuilder();
+}
+function moveSoulPurchase(id,index,delta) {
+  const t = findTask(id); if (!t) return;
+  const rows = [...soulPurchaseRows(t)], next=index+delta;
+  if (next<0 || next>=rows.length) return;
+  [rows[index],rows[next]]=[rows[next],rows[index]];
+  t.soul_purchases=rows; saveTaskQueue(); renderTaskBuilder();
+}
+
 async function refreshTaskQueue() {
-  await refreshTaskTemplates();
+  await Promise.all([refreshTaskTemplates(), (async () => {
+    try { soulRecommendation = await pywebview.api.get_soul_furnace_recommendation(); }
+    catch (e) { soulRecommendation = null; }
+  })()]);
   try {
     // Merge over defaults, then migrate tasks saved by the old form-based
     // Task screen: team was null instead of '', stage was a number, and
@@ -3748,6 +3841,21 @@ setInterval(renderFuelTimers, 1000);
 // edits stable shop/item identifiers and their requested daily targets.
 // ---------------------------------------------------------------------------
 let autoShopState = null;
+let autoShopTab = 'gold_shop';
+
+function selectAutoShopTab(key) {
+  if (!['gold_shop', 'expedition_shop'].includes(key)) return;
+  autoShopTab = key;
+  renderAutoShopScreen();
+}
+
+async function setAutoShopView(view) {
+  try {
+    const result = await pywebview.api.set_auto_shop_view(view);
+    if (!result.ok) return;
+  } catch (e) { return; }
+  await refreshAutoShopScreen();
+}
 
 function autoShopStatusLabel(status) {
   return {
@@ -3773,7 +3881,21 @@ async function refreshAutoShopScreen() {
 
 function renderAutoShopScreen() {
   const state = autoShopState;
-  const goldShop = state && state.shops ? state.shops.gold_shop : null;
+  const shopKey = autoShopTab;
+  const goldShop = state && state.shops ? state.shops[shopKey] : null;
+  const view = state && state.view === 'squares' ? 'squares' : 'list';
+  for (const key of ['gold_shop', 'expedition_shop']) {
+    const button = document.getElementById('auto-shop-tab-' + key);
+    button?.classList.toggle('active', shopKey === key);
+    button?.setAttribute('aria-selected', String(shopKey === key));
+  }
+  for (const key of ['list', 'squares']) {
+    const button = document.getElementById('auto-shop-view-' + key);
+    button?.classList.toggle('active', view === key);
+    button?.setAttribute('aria-pressed', String(view === key));
+  }
+  const heading = document.getElementById('auto-shop-selected-name');
+  if (heading) heading.textContent = goldShop ? goldShop.name : 'Shop';
   const items = (goldShop && goldShop.items) || [];
   const enabledItems = items.filter(item => item.enabled);
   const completeItems = enabledItems.filter(
@@ -3789,7 +3911,7 @@ function renderAutoShopScreen() {
   }
   const details = document.getElementById('resource-auto-shop-details');
   if (details) {
-    details.textContent = `Gold Shop: ${enabledItems.length} enabled | ${completeItems.length} complete`;
+    details.textContent = `${goldShop ? goldShop.name : "Shop"}: ${enabledItems.length} enabled | ${completeItems.length} complete`;
     details.title = details.textContent;
   }
   document.getElementById('toggle-auto-shop-enabled')?.classList.toggle(
@@ -3807,6 +3929,7 @@ function renderAutoShopScreen() {
     list.innerHTML = '<div class="rh-empty">Couldn\'t load Auto Shop settings.</div>';
     return;
   }
+  list.className = 'auto-shop-items auto-shop-' + view;
   list.innerHTML = items.map(item => {
     const isMax = String(item.target).toLowerCase() === 'max';
     const numericTarget = isMax ? '' : item.target;
@@ -3815,36 +3938,37 @@ function renderAutoShopScreen() {
     const status = autoShopStatusLabel(runtime.status);
     const isCompleted = runtime.status === 'completed' || runtime.status === 'out_of_stock' || runtime.status === 'max_inventory';
     const resetToday = runtime.status && runtime.status !== 'pending'
-      ? `<button type="button" class="block-mod-btn" style="padding: 3px 10px; font-size: 11px; border-color: rgba(224, 86, 122, 0.4); color: var(--rose);"
-                 onclick="resetAutoShopItemToday('gold_shop', '${item.key}')">Reset Today</button>`
+      ? `<button type="button" class="block-mod-btn auto-shop-reset"
+                 onclick="resetAutoShopItemToday('${shopKey}', '${item.key}')">Reset Today</button>`
       : '';
     return `
-      <div class="task-card" data-key="${escapeHtml(item.key)}" style="--tqc: var(--amber); cursor: default; padding: 10px 14px; margin-bottom: 6px;">
-        <div class="tq-text" style="width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px;">
-          <div style="display: flex; align-items: center; gap: 12px; min-width: 0; flex: 1;">
-            <button class="toggle-switch ${item.enabled ? 'on' : ''}"
-                    onclick="toggleAutoShopItem('gold_shop', '${item.key}', this)"></button>
+      <div class="task-card auto-shop-item" data-key="${escapeHtml(item.key)}" style="--tqc: var(--amber); cursor: default; padding: 10px 14px; margin-bottom: 6px;">
+        <div class="tq-text auto-shop-item-body">
+          <div class="auto-shop-item-header">${resetToday}</div>
+          <div class="auto-shop-item-info" style="display: flex; align-items: center; gap: 12px; min-width: 0; flex: 1;">
+            ${item.icon ? `<img class="auto-shop-icon" src="${escapeHtml(item.icon)}" alt="">` : ''}
+            <button aria-label="Enable ${escapeHtml(item.name)}" class="toggle-switch ${item.enabled ? 'on' : ''}"
+                    onclick="toggleAutoShopItem('${shopKey}', '${item.key}', this)"></button>
             <div style="min-width: 0; flex: 1;">
               <div style="display: flex; align-items: center; gap: 8px;">
                 <span class="tq-title" style="font-weight: 600; font-size: 14px; color: var(--text);">${escapeHtml(item.name)}</span>
-                ${resetToday}
               </div>
               <div class="setting-desc" style="font-size: 12px; color: var(--text-dim); margin-top: 2px;">
-                Daily max: ${item.daily_maximum} | <span style="color: ${isCompleted ? 'var(--teal)' : 'var(--text-muted)'};">${status}</span>${attempts ? ` | ${attempts}/3 attempts` : ''}
+                ${item.daily_maximum === 9999 ? "Stock limit unknown" : `Stock limit: ${item.daily_maximum}`} | <span style="color: ${isCompleted ? 'var(--teal)' : 'var(--text-muted)'};">${status}</span>${attempts ? ` | ${attempts}/3 attempts` : ''}
               </div>
             </div>
           </div>
-          <div style="display: flex; align-items: center; gap: 8px; flex-shrink: 0;">
+          <div class="auto-shop-item-controls" style="display: flex; align-items: center; gap: 8px; flex-shrink: 0;">
             <div class="seg-toggle" style="width: auto;">
               <button type="button" value="max" class="seg-btn ${isMax ? 'active' : ''}"
-                      onclick="setAutoShopItemMax('gold_shop', '${item.key}')">Max</button>
+                      onclick="setAutoShopItemMax('${shopKey}', '${item.key}')">Max</button>
               <button type="button" class="seg-btn ${isMax ? '' : 'active'}"
-                      onclick="setAutoShopItemNumberMode('gold_shop', '${item.key}')">Number</button>
+                      onclick="setAutoShopItemNumberMode('${shopKey}', '${item.key}')">Number</button>
             </div>
-            <input type="number" class="block-input" min="1" max="${item.daily_maximum}"
+            <input type="number" aria-label="Quantity for ${escapeHtml(item.name)}" class="block-input" min="1" max="${item.daily_maximum}"
                    style="width: 58px; text-align: center; ${isMax ? 'visibility: hidden;' : ''}"
                    value="${numericTarget}" placeholder="Qty"
-                   onchange="setAutoShopItemTarget('gold_shop', '${item.key}', this.value, ${item.daily_maximum})">
+                   onchange="setAutoShopItemTarget('${shopKey}', '${item.key}', this.value, ${item.daily_maximum})">
           </div>
         </div>
       </div>`;
@@ -5778,7 +5902,7 @@ function useDetectRegion() {
 // Place Unit map picker modal
 // ---------------------------------------------------------------------------
 // Category tabs (Story/Raid/... -- whatever subfolders exist under
-// Assets/map) -> a thumbnail grid of that category's maps -> a zoomable/
+// Assets/map_previews) -> a thumbnail grid of that category's maps -> a zoomable/
 // pannable canvas to click a spot on. "Use Roblox Screen" swaps the canvas's
 // background for a one-shot mss screenshot of the live game instead of a
 // static map image (see get_roblox_snapshot in main.py) -- either way it's
@@ -5853,7 +5977,7 @@ async function openPlaceUnitModal(blockId, endpoint = null) {
   if (reqId !== puRequestId) return;
   if (puState.categories.length === 0) {
     document.getElementById('pu-category-tabs').innerHTML = '';
-    document.getElementById('pu-map-grid').innerHTML = '<div class="rh-empty">No maps found in Assets/map -- add category folders with map images, or use "Use Roblox Screen" instead.</div>';
+    document.getElementById('pu-map-grid').innerHTML = '<div class="rh-empty">No maps found in Assets/map_previews -- add category folders with map images, or use "Use Roblox Screen" instead.</div>';
     return;
   }
 
@@ -5891,6 +6015,7 @@ function closePlaceUnitModal() {
 }
 
 function renderPlaceUnitCategoryTabs() {
+  document.getElementById('pu-expedition-tools').style.display = puState.category === 'Expedition' ? '' : 'none';
   const el = document.getElementById('pu-category-tabs');
   el.innerHTML = `<div class="seg-toggle" style="width: auto;">` +
     puState.categories.map(c => `
@@ -5902,6 +6027,7 @@ function renderPlaceUnitCategoryTabs() {
 async function selectPlaceUnitCategory(category, expectedReqId) {
   const reqId = expectedReqId || ++puRequestId;
   puState.category = category;
+  document.getElementById('pu-capture-note').style.display = 'none';
   renderPlaceUnitCategoryTabs();
   document.getElementById('pu-canvas-wrap').style.display = 'none';
   document.getElementById('pu-map-grid').style.display = '';
@@ -5921,7 +6047,7 @@ function renderPlaceUnitMapGrid(expectedReqId) {
   const el = document.getElementById('pu-map-grid');
   el.innerHTML = '';
   if (puState.maps.length === 0) {
-    el.innerHTML = '<div class="rh-empty">No maps in this category yet.</div>';
+    el.innerHTML = `<div class="rh-empty">${puState.category === 'Expedition' ? 'The default Expedition screen is unavailable. Capture a replacement above after the Expedition camera setup.' : 'No maps in this category yet.'}</div>`;
     return;
   }
   for (const name of puState.maps) {
@@ -5949,6 +6075,9 @@ async function selectPlaceUnitMap(name, expectedReqId) {
     const result = await pywebview.api.get_map_image(puState.category, name);
     if (reqId !== puRequestId) return;
     if (!result.ok) { addLog(`[Macro Manager] Couldn't load map "${name}".`); return; }
+    const note = document.getElementById('pu-capture-note');
+    note.textContent = result.capture_note || '';
+    note.style.display = result.capture_note ? '' : 'none';
     loadPlaceUnitImage(result.data_uri, reqId);
     setRecentPlaceUnitMap(puState.category, name);
   } catch (e) {}
@@ -5958,7 +6087,7 @@ async function selectPlaceUnitMap(name, expectedReqId) {
 // not rendering anywhere except the Dashboard, so switch there first, let it
 // settle and paint a real frame, capture, then come straight back. The modal
 // stays open the whole time (the game just paints over it for a moment).
-async function usePlaceUnitRobloxScreen() {
+async function usePlaceUnitRobloxScreen(saveExpedition = false) {
   const reqId = ++puRequestId;
   // captureDanceActive: this hop NEEDS show_game() to fire even though our
   // modal is open (see isBlockingOverlayOpen) -- the game being visible is
@@ -5982,6 +6111,18 @@ async function usePlaceUnitRobloxScreen() {
   if (!result || !result.ok) {
     addLog(`[Macro Manager] Couldn't capture Roblox screen: ${(result && result.reason) || 'error'}`);
     return false;
+  }
+  if (saveExpedition) {
+    const name = 'Expedition';
+    try {
+      const saved = await pywebview.api.save_expedition_placement_screen(name, result.data_uri);
+      if (!saved.ok) { addLog(`[Macro Manager] Could not save Expedition screen: ${saved.reason}`); return false; }
+      if (reqId !== puRequestId) return false;
+      setRecentPlaceUnitMap('Expedition', name);
+      puState.maps = await pywebview.api.list_maps('Expedition');
+      if (reqId !== puRequestId) return false;
+      addLog(`[Macro Manager] Saved Expedition placement screen "${name}".`);
+    } catch (e) { addLog(`[Macro Manager] Could not save Expedition screen: ${e}`); return false; }
   }
   loadPlaceUnitImage(result.data_uri, reqId);
   return true;
@@ -6302,7 +6443,7 @@ const IMAGE_DESCRIPTIONS = {
   repeat_stage: "The 'Repeat Stage' button on the result screen (re-queues the same stage).",
   restart_btn: "A restart button.",
   return: "The 'Return to Lobby' confirmation after Leave Stage.",
-  "select upgrade card": "The level-up 'Select an upgrade!' reward-card popup.",
+  select_upgrade_card: "The level-up 'Select an upgrade!' reward-card popup.",
   story: "The Story card on the Play menu.",
   team: "The Team Loadout panel (opened with H).",
   teleportstuck: "Legacy normal-loading reference; no longer used as a disconnect signal.",
@@ -6311,12 +6452,6 @@ const IMAGE_DESCRIPTIONS = {
   unit_exist: "Confirms a unit was actually placed on the field.",
   upgradeable: "A unit's info panel when it CAN be upgraded.",
   victory: "The Victory result screen -- how the macro knows a run was won.",
-  villian1: "Event Act 1's villain card (Solo/Matchmaking event entry).",
-  villian2: "Event Act 2's villain card (Solo/Matchmaking event entry).",
-  villain3: "Event Act 3's villain card -- scrolled into view if it's below the fold (Solo/Matchmaking event entry).",
-  villian4: "Event Act 4's villain card (Crow - Dawn) -- scrolled into view; clicked to enter Act 4.",
-  villian4_close: "Act 4's LOCKED card ('requires 1 Crow Relic', 0/1x Owned) -- means there's no relic to spend, so the Act 4 auto-divert backs out here.",
-  drop_relic: "The Crow Relic reward on the Victory screen -- spotting it is what triggers a farm task's optional auto-divert to Act 4.",
   warning: "A warning popup that can block Start Game.",
 };
 // The map NAME is reused for two different images: a "UI" one (the map's name

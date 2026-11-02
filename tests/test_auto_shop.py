@@ -19,17 +19,10 @@ AUTO_SHOP_REFERENCE_ITEMS = {
         "frown_fruit",
         "delicious_pie",
     ),
-    "gold_shop_middle.png": (
-        "mana_flask",
-        "trait_crystal",
-        "sprite_grey",
-        "equipment_reroll",
-    ),
-    "gold_shop_bottom.png": (
-        "equipment_lock",
-        "stat_reroll",
-        "stat_lock",
-    ),
+    "gold_shop_middle.png": ("mana_flask", "meat", "survival_rations", "rice"),
+    "gold_shop_out_of_stock_full.png": ("trait_crystal", "sprite_grey"),
+    "gold_shop_equipment.png": ("equipment_reroll", "equipment_lock"),
+    "gold_shop_bottom.png": ("stat_reroll", "stat_lock"),
 }
 KNOWN_GOLD_SHOP_BUY_VARIANTS = {
     "shop_buy_150.png",
@@ -45,14 +38,16 @@ def _epoch(year, month, day, hour=0, minute=0, second=0):
     return datetime(year, month, day, hour, minute, second, tzinfo=UTC).timestamp()
 
 
-def test_auto_shop_catalog_has_every_gold_shop_item_and_asset():
+def test_update_three_catalog_has_every_gold_shop_item_and_asset():
     expected = [
-        ("cursed_boba", "Cursed Boba", 50),
-        ("red_flower", "Red Flower", 75),
+        ("cursed_boba", "Cursed Boba", 100),
+        ("red_flower", "Red Flower", 100),
         ("frown_fruit", "Frown Fruit", 100),
-        ("delicious_pie", "Delicious Pie", 125),
-        ("mana_flask", "Mana Flask", 150),
-        ("meat", "Meat", 200),
+        ("delicious_pie", "Delicious Pie", 100),
+        ("mana_flask", "Mana Flask", 100),
+        ("meat", "Meat", 100),
+        ("survival_rations", "Survival Rations", 100),
+        ("rice", "Rice", 100),
         ("trait_crystal", "Trait Crystal", 25),
         ("sprite_grey", "Sprite (Grey)", 25),
         ("equipment_reroll", "Equipment Reroll", 10),
@@ -88,8 +83,8 @@ def test_buy_color_classifier_accepts_text_interrupted_green_buttons():
         ("gold_shop_top.png", "cursed_boba"),
         ("gold_shop_top.png", "red_flower"),
         ("gold_shop_middle.png", "mana_flask"),
-        ("gold_shop_middle.png", "trait_crystal"),
-        ("gold_shop_bottom.png", "equipment_lock"),
+        ("gold_shop_middle.png", "meat"),
+        ("gold_shop_equipment.png", "equipment_lock"),
         ("gold_shop_bottom.png", "stat_reroll"),
     )
     for filename, item_key in cases:
@@ -112,7 +107,7 @@ def test_buy_color_classifier_rejects_out_of_stock_gray_buttons():
         str(AUTO_SHOP_REFERENCES / "gold_shop_out_of_stock_full.png")
     )
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    for item_key in ("cursed_boba", "red_flower"):
+    for item_key in ("trait_crystal",):
         match = vision.find_in_gray_multiscale(
             gray,
             auto_shop.item_definition(item_key)["template"],
@@ -128,7 +123,7 @@ def test_terminal_region_contains_each_real_out_of_stock_label():
         str(AUTO_SHOP_REFERENCES / "gold_shop_out_of_stock_full.png"),
         cv2.IMREAD_GRAYSCALE,
     )
-    for item_key in ("cursed_boba", "red_flower"):
+    for item_key in ("trait_crystal",):
         match = vision.find_in_gray_multiscale(
             frame,
             auto_shop.item_definition(item_key)["template"],
@@ -190,11 +185,11 @@ def test_auto_shop_settings_normalize_known_items_and_reject_unsafe_targets():
 
 
 def test_purchase_plan_counts_manual_purchases_toward_numeric_target():
-    plan = auto_shop.calculate_purchase_plan("cursed_boba", 15, current_left=40)
+    plan = auto_shop.calculate_purchase_plan("cursed_boba", 15, current_left=90)
 
     assert plan == {
-        "daily_maximum": 50,
-        "current_left": 40,
+        "daily_maximum": 100,
+        "current_left": 90,
         "already_bought": 10,
         "desired_total": 15,
         "pending_amount": 5,
@@ -203,14 +198,14 @@ def test_purchase_plan_counts_manual_purchases_toward_numeric_target():
 
 
 def test_purchase_plan_buys_only_the_difference_after_target_increase():
-    plan = auto_shop.calculate_purchase_plan("cursed_boba", 20, current_left=35)
+    plan = auto_shop.calculate_purchase_plan("cursed_boba", 20, current_left=85)
 
     assert plan["already_bought"] == 15
     assert plan["pending_amount"] == 5
 
 
 def test_purchase_plan_stops_when_reduced_target_was_already_met():
-    plan = auto_shop.calculate_purchase_plan("cursed_boba", 5, current_left=40)
+    plan = auto_shop.calculate_purchase_plan("cursed_boba", 5, current_left=90)
 
     assert plan["pending_amount"] == 0
     assert plan["status"] == auto_shop.STATUS_COMPLETED
@@ -224,9 +219,9 @@ def test_max_target_uses_every_remaining_item():
 
 
 def test_numeric_target_never_types_above_the_available_stock():
-    plan = auto_shop.calculate_purchase_plan("cursed_boba", 50, current_left=3)
+    plan = auto_shop.calculate_purchase_plan("cursed_boba", 100, current_left=3)
 
-    assert plan["already_bought"] == 47
+    assert plan["already_bought"] == 97
     assert plan["pending_amount"] == 3
 
 
@@ -237,7 +232,7 @@ def test_zero_stock_is_terminal_out_of_stock():
     assert plan["status"] == auto_shop.STATUS_OUT_OF_STOCK
 
 
-@pytest.mark.parametrize("target", [0, 51, True, "invalid", None])
+@pytest.mark.parametrize("target", [0, 101, True, "invalid", None])
 def test_invalid_targets_are_rejected(target):
     with pytest.raises(ValueError):
         auto_shop.calculate_purchase_plan("cursed_boba", target, current_left=50)

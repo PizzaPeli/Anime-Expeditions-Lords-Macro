@@ -82,7 +82,7 @@ def _wire(monkeypatch, *, marker=True, prompt=True, events=(("w", "down", 0.0),)
             # Post-dialogue check: still open until speak_rounds have run.
             state["speak_checks"] += 1
             return None if state["speak_checks"] >= speak_rounds else {"cx": 600, "cy": 400, "score": 0.98}
-        if n == "select upgrade card":
+        if n == "select_upgrade_card":
             # Phase 2 begins once Settings has been clicked; refill so the
             # teleport-click guard has something to clear too.
             phase = 2 if (runner is not None and "nav_settings" in runner.clicked_images) else 1

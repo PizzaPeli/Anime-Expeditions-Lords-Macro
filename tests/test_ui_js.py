@@ -49,7 +49,7 @@ def run_js(body, tmp_path):
     script = tmp_path / "t.js"
     script.write_text(_EXTRACT + textwrap.dedent(body), encoding="utf-8")
     env = {**os.environ, "APP_JS": APP_JS}
-    proc = subprocess.run(["node", str(script)], capture_output=True, text=True, env=env, timeout=60)
+    proc = subprocess.run(["node", str(script)], capture_output=True, text=True, encoding="utf-8", env=env, timeout=60)
     assert proc.returncode == 0, f"node failed:\n{proc.stdout}\n{proc.stderr}"
     return json.loads(proc.stdout.strip().splitlines()[-1])
 
@@ -64,6 +64,46 @@ def test_fuel_interval_input_converts_hours_to_minutes(tmp_path):
         ]));
     """, tmp_path)
     assert out == [30, 120, 60]
+
+
+def test_dashboard_geometry_and_drawer_collapse_follow_physical_width(tmp_path):
+    out = run_js("""
+        let IS_MAC = false;
+        const props = {}, classes = {};
+        const buttons = {left: {}, right: {}};
+        const layout = {clientWidth: 1921, style: {setProperty(k,v) {props[k]=v;}}};
+        const document = {body: {dataset: {dashboardDrawer: 'left'},
+          classList: {toggle(k,v) {classes[k]=v;}}},
+          getElementById(id) {return id === 'main-layout' ? layout :
+            {setAttribute(k,v) {buttons[id.includes('left') ? 'left' : 'right'][k]=v;}};}};
+        eval(extract('closeDashboardDrawer'));
+        eval(extract('updateDashboardLayout'));
+        updateDashboardLayout();
+        const wide = [props['--game-left'], classes['dashboard-collapsed'], document.body.dataset.dashboardDrawer || null];
+        layout.clientWidth = 1280;
+        updateDashboardLayout();
+        console.log(JSON.stringify([wide, [props['--game-left'], classes['dashboard-collapsed']]]));
+    """, tmp_path)
+    assert out == [["384px", False, None], ["64px", True]]
+
+
+def test_dashboard_drawer_switches_and_closes_without_touching_game(tmp_path):
+    out = run_js("""
+        const attrs = {left: {}, right: {}};
+        const document = {body: {dataset: {}}, getElementById(id) {
+          return {setAttribute(k,v) {attrs[id.includes('left') ? 'left' : 'right'][k]=v;}};
+        }};
+        eval(extract('closeDashboardDrawer'));
+        eval(extract('toggleDashboardDrawer'));
+        toggleDashboardDrawer('left');
+        const first = document.body.dataset.dashboardDrawer;
+        toggleDashboardDrawer('right');
+        const second = document.body.dataset.dashboardDrawer;
+        toggleDashboardDrawer('right');
+        console.log(JSON.stringify([first, second, document.body.dataset.dashboardDrawer || null, attrs]));
+    """, tmp_path)
+    assert out[:3] == ["left", "right", None]
+    assert out[3] == {"left": {"aria-expanded": "false"}, "right": {"aria-expanded": "false"}}
 
 
 def test_fuel_interval_input_stays_editable_in_auto_mode(tmp_path):
@@ -106,6 +146,7 @@ def test_new_tasks_have_a_bounded_infinite_wave_default(tmp_path):
         console.log(JSON.stringify(defaultTask()));
     """, tmp_path)
     assert out["infinite_wave_limit"] == 20
+    assert out["portal_autofishing"] is True
 
 
 def test_memory_refresh_hours_are_clamped_and_saved(tmp_path):
@@ -731,15 +772,6 @@ def test_app_js_calls_no_undefined_top_level_function():
 # ---------------------------------------------------------------------------
 # Task export/import: a shared queue has to arrive usable
 # ---------------------------------------------------------------------------
-# exportTasks collected only `t.macro`. act4_macro -- Act 4's own Macro
-# Operation -- was never bundled, so a queue using one exported "successfully"
-# and arrived at the other end pointing at a macro the recipient does not
-# have. Reproduced against the shipped function:
-#
-#     task references : Main Farm (macro), Act4 Relic Run (act4_macro)
-#     actually bundled: ['Main Farm']
-#     log             : "[Task] Exported 1 task(s) to q.json"
-
 _TASK_EXPORT_WORLD = """
 const logs = []; let exported = null;
 global.addLog = m => logs.push(m);
@@ -758,22 +790,21 @@ exportTasks().then(() => console.log(JSON.stringify({
   log: logs[logs.length - 1] })));
 """
 
-_ONE_TASK = "[{id:1, mode:'story', macro:'Main Farm', act4_macro:'Act4 Relic Run'}]"
+_ONE_TASK = "[{id:1, mode:'story', macro:'Main Farm'}]"
 
 
-def test_export_bundles_the_act4_macro_too(tmp_path):
-    out = run_js(_TASK_EXPORT_WORLD % (_ONE_TASK, "['Main Farm', 'Act4 Relic Run']"), tmp_path)
-    assert out["bundled"] == ["Act4 Relic Run", "Main Farm"], (
-        "the Act 4 macro was left out of the package again")
+def test_export_bundles_the_referenced_macro(tmp_path):
+    out = run_js(_TASK_EXPORT_WORLD % (_ONE_TASK, "['Main Farm']"), tmp_path)
+    assert out["bundled"] == ["Main Farm"]
 
 
 def test_export_stops_when_a_referenced_macro_no_longer_exists(tmp_path):
     """load_template returns an empty object for a name with no file and the
     failure was swallowed, so the export "succeeded" and only broke for
     whoever imported it."""
-    out = run_js(_TASK_EXPORT_WORLD % (_ONE_TASK, "['Main Farm']"), tmp_path)
+    out = run_js(_TASK_EXPORT_WORLD % (_ONE_TASK, "[]"), tmp_path)
     assert out["bundled"] is None, "a package missing one of its macros must not be written"
-    assert "Act4 Relic Run" in out["log"] and "Export stopped" in out["log"]
+    assert "Main Farm" in out["log"] and "Export stopped" in out["log"]
 
 
 _TASK_IMPORT_WORLD = """
@@ -1251,6 +1282,7 @@ def test_show_docked_reasserts_panel_width_on_mac_behaviorally(tmp_path):
         }};
         global.IS_MAC = true;
 
+        eval(extract('updateDashboardLayout'));
         eval(extract('showDocked'));
 
         showDocked();
@@ -1514,10 +1546,12 @@ def test_fuel_card_summarizes_enabled_resources(tmp_path):
 
 def test_auto_shop_card_renders_catalog_targets_and_daily_status(tmp_path):
     body = """
+    global.autoShopTab = 'gold_shop';
     global.autoShopState = {
       enabled: true,
       shops: {
         gold_shop: {
+          name: 'Gold Shop',
           enabled: true,
           items: [
             {
@@ -1561,7 +1595,7 @@ def test_auto_shop_card_renders_catalog_targets_and_daily_status(tmp_path):
       details: mockElements['resource-auto-shop-details'].textContent,
       hasCursedBoba: html.includes('Cursed Boba'),
       hasTraitCrystal: html.includes('Trait Crystal'),
-      hasMaximum: html.includes('Daily max: 50'),
+      hasMaximum: html.includes('Stock limit: 50'),
       hasMaxTarget: html.includes("setAutoShopItemMax('gold_shop', 'cursed_boba')"),
       hasNumericTarget: html.includes('value="5"'),
       hasResetToday: html.includes("resetAutoShopItemToday('gold_shop', 'trait_crystal')"),
@@ -1582,6 +1616,36 @@ def test_auto_shop_card_renders_catalog_targets_and_daily_status(tmp_path):
         "hasRetryStatus": True,
         "hasRetryReset": True,
     }
+
+
+def test_expedition_shop_tab_uses_its_own_actions_and_square_view(tmp_path):
+    out = run_js("""
+        global.autoShopTab = 'expedition_shop';
+        global.autoShopState = {enabled: true, view: 'squares', shops: {
+          expedition_shop: {name: 'Expedition Shop', enabled: true, items: [
+            {key: 'exp_gem', name: '50x Gem', icon: 'data:image/png;base64,abc',
+             target: 4, daily_maximum: 250, enabled: true, state: {status: 'completed'}}
+          ]},
+          gold_shop: {name: 'Gold Shop', enabled: false, items: []}
+        }};
+        global.escapeHtml = value => String(value);
+        const list = {innerHTML: '', className: ''};
+        const details = {};
+        global.document = {getElementById: id => id === 'auto-shop-gold-items' ? list
+          : id === 'resource-auto-shop-details' ? details : null};
+        eval(extract('autoShopStatusLabel'));
+        eval(extract('renderAutoShopScreen'));
+        eval(extract('selectAutoShopTab'));
+        renderAutoShopScreen();
+        const exp = {classes: list.className, html: list.innerHTML, summary: details.textContent};
+        selectAutoShopTab('gold_shop');
+        console.log(JSON.stringify({exp, goldHtml: list.innerHTML, tab: autoShopTab}));
+    """, tmp_path)
+    assert out['exp']['classes'] == 'auto-shop-items auto-shop-squares'
+    assert "setAutoShopItemMax('expedition_shop', 'exp_gem')" in out['exp']['html']
+    assert 'data:image/png;base64,abc' in out['exp']['html']
+    assert 'Expedition Shop: 1 enabled | 1 complete' == out['exp']['summary']
+    assert out['tab'] == 'gold_shop' and 'exp_gem' not in out['goldHtml']
 
 
 def test_auto_shop_resource_card_has_required_controls():
@@ -1605,3 +1669,146 @@ def test_detect_controls_expose_live_test_button(tmp_path):
     """, tmp_path)
     assert "testDetect('d1'" in out
     assert 'Test now' in out
+
+def test_run_history_displays_challenge_slot_and_map(tmp_path):
+    out = run_js("""
+        let lastRunHistoryJson = '';
+        const list = {innerHTML: '', rows: [], appendChild(row) {this.rows.push(row);}};
+        const count = {};
+        const document = {
+          getElementById: id => id === 'run-history-list' ? list : count,
+          createElement: () => ({style: {setProperty() {}}, children: [],
+                                append(...nodes) {this.children.push(...nodes);}})
+        };
+        eval(extract('renderRunHistory'));
+        renderRunHistory([
+          {result: 'win', challenge: 'Challenge #3', map: 'East Town'},
+          {result: 'loss', challenge: 'Daily Challenge', map: 'Rose Kingdom'},
+          {result: 'win', mode: 'expedition', map: 'School Grounds'},
+          {result: 'win', map: 'Old entry'}
+        ]);
+        console.log(JSON.stringify(list.rows.map(row => row.children[1].textContent)));
+    """, tmp_path)
+    separator = chr(183)
+    assert out == [f'Challenge #3 {separator} East Town', f'Daily Challenge {separator} Rose Kingdom',
+                   f'Expedition {separator} School Grounds', 'Old entry']
+
+
+
+def test_soul_purchase_editor_defaults_and_editing_are_saved_per_task(tmp_path):
+    result = run_js(r"""
+        const SOUL_FORGE_ITEMS = {final_boss:'Final Boss',dmg_boost:'DMG Boost'};
+        const task = {id:'test'};
+        let saves=0;
+        function findTask(id) { return id===task.id ? task : null; }
+        function saveTaskQueue() { saves++; }
+        function renderTaskBuilder() {}
+        function escapeHtml(value) { return String(value); }
+        for (const name of ['soulPurchaseRows','renderSoulPurchases','updateSoulPurchase',
+                            'addSoulPurchase','removeSoulPurchase','moveSoulPurchase']) eval(extract(name));
+        const initial=renderSoulPurchases(task);
+        addSoulPurchase('test');
+        updateSoulPurchase('test',1,'item','dmg_boost');
+        updateSoulPurchase('test',1,'trigger','wave');
+        updateSoulPurchase('test',1,'target','16');
+        moveSoulPurchase('test',1,-1);
+        const reordered=JSON.parse(JSON.stringify(task.soul_purchases));
+        removeSoulPurchase('test',1); removeSoulPurchase('test',0);
+        const empty=renderSoulPurchases(task);
+        console.log(JSON.stringify({initial,reordered,empty,rows:task.soul_purchases,saves}));
+    """, tmp_path)
+    assert 'Soul Forge Purchases' in result['initial']
+    assert 'value="heat" selected' in result['initial']
+    assert 'value="3"' in result['initial']
+    assert result['reordered'] == [
+        {'item':'dmg_boost','trigger':'wave','target':16},
+        {'item':'final_boss','trigger':'heat','target':3},
+    ]
+    assert result['rows'] == []
+    assert 'No purchases configured' in result['empty']
+    assert result['saves'] == 7
+
+
+def test_task_creator_registers_soul_furnace_and_uses_default_heat_purchase(tmp_path):
+    result = run_js(r"""
+        const start=src.indexOf('const SOUL_FORGE_ITEMS =');
+        const end=src.indexOf('let mapSetups =', start);
+        eval(src.slice(start,end) + ';globalThis.TASK_DATA_FOR_TEST=TASK_DATA;globalThis.ITEMS_FOR_TEST=SOUL_FORGE_ITEMS;');
+        const TASK_DATA=TASK_DATA_FOR_TEST;
+        TASK_DATA.story.maps=['School Grounds'];
+        const DEFAULT_INFINITE_WAVE_LIMIT=20;
+        eval(extract('newTaskId')); eval(extract('defaultTask'));
+        console.log(JSON.stringify({mode:TASK_DATA.soul_furnace,task:defaultTask(),items:ITEMS_FOR_TEST}));
+    """, tmp_path)
+    assert result['mode']['label'] == 'Soul Furnace Infinite'
+    assert result['mode']['fixedDifficulty'] == 'Hard'
+    assert result['task']['runs_before_lobby'] == 0
+    assert result['task']['soul_purchases'] == [{'item':'final_boss','trigger':'heat','target':3}]
+    from core.runner_soul_furnace import SOUL_ITEMS
+    assert set(result['items']) == set(SOUL_ITEMS)
+
+
+
+def test_lobby_interval_is_rendered_for_every_task_mode_and_matchmaking(tmp_path):
+    result = run_js(r"""
+        const start=src.indexOf('const SOUL_FORGE_ITEMS =');
+        const end=src.indexOf('let mapSetups =', start);
+        eval(src.slice(start,end)+';globalThis.registry=TASK_DATA;globalThis.catalog=SOUL_FORGE_ITEMS;');
+        const TASK_DATA=registry, SOUL_FORGE_ITEMS=catalog;
+        const MAX_EXTRACT_AFTER=9999, DEFAULT_INFINITE_WAVE_LIMIT=20;
+        let task;
+        const selectedTaskId='test', taskTemplates=[];
+        const editor={innerHTML:''};
+        const document={getElementById:()=>editor};
+        function findTask() { return task; }
+        function escapeHtml(value) { return String(value); }
+        for (const name of ['taskOpts','soulPurchaseRows','renderSoulPurchases','renderTaskBuilder']) eval(extract(name));
+        const rendered={};
+        for (const mode of Object.keys(TASK_DATA)) {
+            for (const play_mode of ['solo','matchmaking']) {
+                const data=TASK_DATA[mode];
+                task={id:'test',mode,map:(data.maps||[])[0]||'Map',stage:'1',difficulty:'Hard',repeat:5,
+                      runs_before_lobby:2,play_mode,extract_after:'4'};
+                renderTaskBuilder();
+                rendered[mode+'/'+play_mode]=editor.innerHTML.includes('Runs before returning to lobby');
+            }
+        }
+        console.log(JSON.stringify(rendered));
+    """, tmp_path)
+    assert result
+    assert all(result.values())
+    assert result['portals/solo']
+    assert result['raid/matchmaking']
+
+
+
+def test_soul_recommendation_shows_team_and_autoplay_screenshots(tmp_path):
+    result = run_js(r"""
+        const SOUL_FORGE_ITEMS={final_boss:'Final Boss'};
+        const soulRecommendation={team:'data:image/png;base64,dGVhbQ==',autoplay:'data:image/png;base64,cHJlc2V0'};
+        function escapeHtml(s) { return String(s); }
+        eval(extract('soulPurchaseRows')); eval(extract('renderSoulPurchases'));
+        const html=renderSoulPurchases({id:'test'});
+        console.log(JSON.stringify({html}));
+    """,tmp_path)
+    html=result['html']
+    assert '400+ Candy Corn in under 3 minutes' in html
+    assert 'View recommended team and equipment' in html
+    assert 'View recommended Auto Play preset' in html
+    assert 'data:image/png;base64,dGVhbQ==' in html
+    assert 'data:image/png;base64,cHJlc2V0' in html
+    assert 'same slot order' in html
+
+
+
+def test_full_size_setup_screenshot_blocks_game_until_closed(tmp_path):
+    result=run_js(r"""
+        const picture={open:true};
+        const document={getElementById:id => id==='soul-recommendation-dialog' ? picture : null};
+        const captureDanceActive=false;
+        eval(extract('isBlockingOverlayOpen'));
+        const whileOpen=isBlockingOverlayOpen();
+        picture.open=false;
+        console.log(JSON.stringify({whileOpen,afterClose:isBlockingOverlayOpen()}));
+    """,tmp_path)
+    assert result == {'whileOpen':True,'afterClose':False}

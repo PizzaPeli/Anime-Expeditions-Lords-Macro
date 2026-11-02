@@ -256,7 +256,7 @@ def test_v2_is_shorter_than_v1_for_a_single_template():
 
     payload = {
         "kind": "anime-expeditions-template",
-        "name": "Act3 Villian",
+        "name": "Act3 Variant",
         "blocks": {
             "prestart": [{"type": "walk_path", "params": {}, "once": True}],
             "battle": [
