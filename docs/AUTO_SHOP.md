@@ -8,8 +8,8 @@ header before scanning the four-column list. Futuristic Payload is excluded
 because it uses Gold rather than Expedition Coins. Gem and Gold quantities
 refer to the game's 50x purchase bundles.
 
-List / Squares changes presentation for both tabs and is saved with the
-settings. Squares adapt their columns to the available panel width. New shop
+Both tabs use compact item lists with columns adapting to the available panel
+width. The resource summary shows every enabled shop and its progress. New shop
 items start disabled, and existing Gold Shop choices survive migration.
 
 The November 1 captures live in `Assets/reference/auto_shop/expedition_20261101`;

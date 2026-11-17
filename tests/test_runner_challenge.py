@@ -70,6 +70,7 @@ class DailyEntryProbe(ChallengeProbe):
         super().__init__()
         self.clicked = []
         self._open_challenge_screen = lambda *_args: True
+        self._rift_lobby_boundary = lambda *_args: True
         self._set_status = lambda **_kwargs: None
         self._checkpoint = lambda _stop: False
         self._recover_to_lobby = lambda *_args: True

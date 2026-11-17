@@ -1,0 +1,25 @@
+{
+  "name": "Boss Rush Gate 6",
+  "events": [
+    {
+      "t": 0.0,
+      "key": "a",
+      "state": "down"
+    },
+    {
+      "t": 2.363,
+      "key": "a",
+      "state": "up"
+    },
+    {
+      "t": 3.126,
+      "key": "s",
+      "state": "down"
+    },
+    {
+      "t": 3.401,
+      "key": "s",
+      "state": "up"
+    }
+  ]
+}

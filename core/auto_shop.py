@@ -163,7 +163,7 @@ def item_definition(item_key: str) -> Mapping:
 
 
 def default_auto_shop_settings() -> dict:
-    return {"enabled": False, "view": "list", "shops": {
+    return {"enabled": False, "shops": {
         key: {"enabled": False, "items": {
             item["key"]: {"enabled": False, "target": 1} for item in catalog
         }} for key, catalog in SHOP_CATALOGS.items()
@@ -175,7 +175,6 @@ def normalize_auto_shop_settings(saved: Optional[Mapping]) -> dict:
     if not isinstance(saved, Mapping):
         return defaults
     defaults["enabled"] = bool(saved.get("enabled", False))
-    defaults["view"] = "squares" if saved.get("view") == "squares" else "list"
     saved_shops = saved.get("shops")
     if not isinstance(saved_shops, Mapping):
         return defaults

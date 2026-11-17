@@ -185,6 +185,17 @@ RUN_TESTS.bat      # compatibility launcher for the automated test suite
 CLEAR_DATA.bat     # compatibility launcher for resetting local user data
 ```
 
+**Settings > General > Import / Export** saves any combination of Settings,
+Tasks (the current queue and saved presets), Macros, and Resources into one
+backup file. Required macros, custom walking paths, and input recordings travel
+with the selected categories. Import lets you select categories present in the
+file and choose Merge or Replace. Merge keeps existing named macros and
+recordings, renames conflicting imports, and updates their references; imported
+setting values take priority. Replace replaces selected queues, presets, and
+macro libraries and overwrites matching bundled dependencies. Stop the macro
+before importing. Older settings, task, and macro exports remain importable.
+Settings backups include webhook settings, so review those before sharing.
+
 Playtests started with `TEST_BUILD.bat` keep their isolated data under the
 current Windows user's LocalAppData. When the test app closes, all session data
 (except the executable) is archived in this project's

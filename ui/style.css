@@ -2312,11 +2312,14 @@ li.fail .onb-ingame-name { color: var(--rose); }
 
 /* Shared shop catalog: keep controls usable at narrow widths. */
 .auto-shop-toolbar { display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; margin-top: 12px; }
+#resource-auto-shop-details { white-space: normal; overflow-wrap: anywhere; }
 .auto-shop-toolbar .seg-toggle { width: auto; max-width: 100%; flex-wrap: wrap; }
 .auto-shop-toolbar .seg-btn { min-height: 34px; white-space: normal; }
-.auto-shop-items { display: grid; gap: 10px; min-width: 0; }
-.auto-shop-list { grid-template-columns: minmax(0, 1fr); }
-.auto-shop-squares { grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); }
+.auto-shop-items { display: grid; gap: 6px; min-width: 0; }
+.auto-shop-list {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 460px), 1fr));
+  align-items: start;
+}
 .auto-shop-item { display: grid; min-width: 0; margin-bottom: 0 !important; }
 .auto-shop-item-body {
   display: grid; width: 100%; min-width: 0; gap: 12px;
@@ -2324,6 +2327,14 @@ li.fail .onb-ingame-name { color: var(--rose); }
 }
 .auto-shop-item-header { grid-column: 1 / -1; display: flex; justify-content: center; min-width: 0; }
 .auto-shop-list .auto-shop-item-header:empty { display: none; }
+.auto-shop-list .auto-shop-item { padding: 7px 9px; }
+.auto-shop-list .auto-shop-item-body { gap: 6px 10px; }
+.auto-shop-list .auto-shop-item-info { gap: 8px !important; }
+.auto-shop-list .auto-shop-icon { width: 34px; height: 34px; border-radius: 6px; }
+.auto-shop-list .auto-shop-item .tq-title { font-size: 12px !important; }
+.auto-shop-list .auto-shop-item-info .setting-desc { font-size: 11px !important; }
+.auto-shop-list .auto-shop-item-controls { gap: 5px !important; }
+.auto-shop-list .auto-shop-item-controls .seg-btn { padding: 4px 7px; }
 .auto-shop-item-info { flex-wrap: nowrap; }
 .auto-shop-icon { width: 44px; height: 44px; object-fit: contain; flex-shrink: 0; border-radius: 8px; }
 .auto-shop-item .toggle-switch { flex-shrink: 0; }
@@ -2332,17 +2343,7 @@ li.fail .onb-ingame-name { color: var(--rose); }
 .auto-shop-item-controls { flex-wrap: wrap; max-width: 100%; }
 .auto-shop-item-controls .seg-toggle { width: auto; }
 .auto-shop-item-controls button { min-height: 32px; }
-.auto-shop-squares .auto-shop-item-body {
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: 32px minmax(min-content, 1fr) auto;
-  align-items: center;
-}
-.auto-shop-squares .auto-shop-item { aspect-ratio: 1; min-height: 240px; align-items: stretch; }
-.auto-shop-squares .auto-shop-item-header { min-height: 32px; }
-.auto-shop-squares .auto-shop-item-info { width: 100%; gap: 8px !important; }
-.auto-shop-squares .auto-shop-icon { width: 54px; height: 54px; }
-.auto-shop-squares .auto-shop-item-controls { justify-content: space-between; align-self: end; margin-top: 0; }
-@media (max-width: 600px) {
+@media (max-width: 480px) {
   .auto-shop-list .auto-shop-item-body { grid-template-columns: minmax(0, 1fr); }
 }
 

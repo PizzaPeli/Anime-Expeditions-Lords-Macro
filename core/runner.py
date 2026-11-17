@@ -37,11 +37,14 @@ from .diagnostics import FailureCategory, RecoveryAction, FailureReport, create_
 from . import window as wm
 from .runner_constants import *  # noqa: F401,F403 -- see runner_constants' docstring
 from .runner_blocks import BlockOps
+from .runner_bossrush import BossrushOps
+from .bossrush import POLL_INTERVAL as BOSSRUSH_POLL_INTERVAL
 from .runner_challenge import ChallengeOps
 from .runner_crafting import CraftingOps
 from .runner_expedition import ExpeditionOps
 from .runner_fuel import FuelOps
 from .runner_shop import ShopOps
+from .runner_rifts import RiftOps
 from .runner_soul_furnace import SoulFurnaceOps, lobby_batch_due, SOUL_POLL_INTERVAL
 
 
@@ -235,7 +238,7 @@ def _find_team_load_button(frame, expected_y):
     return cx, cy
 
 
-class MacroRunner(SoulFurnaceOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, BlockOps):
+class MacroRunner(BossrushOps, RiftOps, SoulFurnaceOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, ExpeditionOps, BlockOps):
     """One run's worth of state -- module-level singleton via main.Api, same
     pattern as core.paths._recorder, since only one run can realistically be
     active at a time (one physical game window, one macro)."""
@@ -915,6 +918,8 @@ class MacroRunner(SoulFurnaceOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, E
         self._coords = coords
         default_walk_paths = default_walk_paths or {}
         webhook = webhook or {}
+        self._rift_default_walk_paths = default_walk_paths
+        self._rift_webhook = webhook
         self._active_task_progress = None
         self._current_task = None
         self._queue_continuation = None
@@ -982,6 +987,8 @@ class MacroRunner(SoulFurnaceOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, E
         if self._checkpoint(stop_event):
             return
         if not self._skip_first_task_setup:
+            if not self._rift_lobby_boundary(hwnd, stop_event, default_walk_paths, webhook):
+                return
             self._run_guarded_phase(
                 "Challenge", hwnd, stop_event,
                 lambda: self._run_challenges(
@@ -1008,6 +1015,13 @@ class MacroRunner(SoulFurnaceOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, E
             # than keep replaying a stale snapshot from when the run started.
             tasks = get_tasks()
             if not tasks:
+                from . import rifts
+                if rifts.load()['enabled']:
+                    if not self._rift_lobby_boundary(hwnd, stop_event, default_walk_paths, webhook):
+                        return
+                    self._set_status(action='Waiting for hourly Demonic Rift...')
+                    self._interruptible_sleep(1, stop_event)
+                    continue
                 if shop_enabled:
                     self._log("[Macro] Auto Shop pass finished and the Task Queue is empty -- going Idle.")
                 else:
@@ -1734,7 +1748,13 @@ class MacroRunner(SoulFurnaceOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, E
         is the one branch that does NOT rejoin that tail:
         it has no Select Stage and no Start button -- clicking Activate on the
         portal is the teleport -- so it returns from its own teleport wait."""
-        if mode == "soul_furnace":
+        if not self._rift_lobby_boundary(
+                hwnd, stop_event, getattr(self, '_rift_default_walk_paths', {}), webhook):
+            return False
+        if mode == "bossrush":
+            if not self._reach_bossrush(hwnd, stop_event, task):
+                return False
+        elif mode == "soul_furnace":
             if not self._reach_soul_furnace(hwnd, stop_event):
                 return False
         elif mode == "tournament":
@@ -1905,6 +1925,8 @@ class MacroRunner(SoulFurnaceOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, E
                 confirm_image = "soul_select_stage"
             elif mode == "expedition":
                 confirm_image = "exp_select_stage"
+            elif mode == "bossrush":
+                confirm_image = "bossrush_select_stage"
             else:
                 confirm_image = "nav_select_stage"
             self._set_status(action="Clicking Select Stage...")
@@ -2195,6 +2217,12 @@ class MacroRunner(SoulFurnaceOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, E
         Pre Start block so they only fire on the task's first entry into
         this stage, not on every repeat (see _run_prestart). Returns
         "win"/"loss", or None on failure/stop."""
+        self._exp_defense_state = {}
+        self._expedition_preparing_defense = False
+        self._expedition_first_repeat = first_repeat
+        self._expedition_battle_blocks = []
+        if task.get('mode') == 'bossrush':
+            self._bossrush_reset(task)
         if first_repeat and task.get("mode") in ("story", "raid"):
             task, default_walk_paths = self._resolve_in_match_map_setup(
                 hwnd, task, default_walk_paths)
@@ -2212,8 +2240,12 @@ class MacroRunner(SoulFurnaceOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, E
         if self._checkpoint(stop_event):
             return None
 
-        if not self._run_prestart(hwnd, stop_event, task, default_walk_paths, first_repeat):
-            return None
+        self._expedition_initial_setup = task.get('mode') == 'expedition'
+        try:
+            if not self._run_prestart(hwnd, stop_event, task, default_walk_paths, first_repeat):
+                return None
+        finally:
+            self._expedition_initial_setup = False
         if self._checkpoint(stop_event):
             return None
 
@@ -2223,9 +2255,23 @@ class MacroRunner(SoulFurnaceOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, E
             return None
         # Start Game genuinely applies to Expedition too (it can show up
         # more than once, similar to Infinite mode) -- not skipped here.
+        battle_blocks = self._load_battle_blocks(task)
+        if task.get('mode') == 'expedition':
+            self._expedition_battle_blocks = battle_blocks
         self._wait_out_start_game_warning(hwnd, stop_event)
         if self._checkpoint(stop_event):
             return None
+        if task.get('mode') == 'expedition':
+            self._expedition_battle_blocks = battle_blocks
+            # Usually this first prompt is cargo setup, not defense. If a
+            # defense really is already ready, handle it before the first vote.
+            while not self._prepare_expedition_defense(
+                    hwnd, stop_event, battle_blocks, first_repeat, task.get('macro')):
+                if self._checkpoint(stop_event):
+                    return None
+                if self._find_start_game_button(hwnd)[1] is None:
+                    break
+                self._interruptible_sleep(0.3, stop_event)
         start_name, start_match = self._find_start_game_button(hwnd, stop_event, START_GAME_BUTTON_WAIT_TIMEOUT)
         if start_match is None:
             # Not fatal: Start Game may already have been pressed by the
@@ -2235,6 +2281,17 @@ class MacroRunner(SoulFurnaceOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, E
             self._log("[Macro] Start Game not found -- already started, continuing.")
         else:
             for attempt in range(1, START_GAME_CLICK_RETRY_ATTEMPTS + 1):
+                if task.get('mode') == 'expedition':
+                    while not self._prepare_expedition_defense(
+                            hwnd, stop_event, battle_blocks, first_repeat, task.get('macro')):
+                        if self._checkpoint(stop_event):
+                            return None
+                        if self._find_start_game_button(hwnd)[1] is None:
+                            break
+                        self._interruptible_sleep(0.3, stop_event)
+                    start_name, start_match = self._find_start_game_button(hwnd)
+                    if start_match is None:
+                        break
                 debug_path = self._debug_save(hwnd, start_name, start_match)
                 suffix = f" Debug: {debug_path}" if debug_path else ""
                 self._log(f"[Macro] Found Start Game ({start_name}, score {start_match['score']:.2f}) -- "
@@ -2250,6 +2307,8 @@ class MacroRunner(SoulFurnaceOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, E
                 self._keyboard.tap(ord("Z"))
                 time.sleep(0.1)
                 vision.click_match(self._mouse, hwnd, start_match)
+                if task.get('mode') == 'expedition' and self._exp_defense_state.get('done'):
+                    self._exp_defense_state['start_clicked'] = True
                 self._interruptible_sleep(START_GAME_CLICK_VERIFY_SETTLE, stop_event)
                 if self._checkpoint(stop_event):
                     return None
@@ -2289,7 +2348,6 @@ class MacroRunner(SoulFurnaceOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, E
         self._set_status(action="Battle...")
         self._log("[Macro] Moving into Battle.")
 
-        battle_blocks = self._load_battle_blocks(task)
         self._battle_block_index = 0
         self._battle_block_state = {}
         # Battle clock for the "Leave at Minute" block (see runner_blocks).
@@ -2502,6 +2560,15 @@ class MacroRunner(SoulFurnaceOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, E
             # spend several seconds waiting for its info panel; putting the
             # wave check after that work made the narrow exit-wave window
             # much easier to miss.
+            if mode == "bossrush":
+                boss_result, boss_busy = self._bossrush_tick(hwnd, stop_event)
+                if boss_result is not None:
+                    return None if boss_result == 'failed' else boss_result
+                if boss_busy:
+                    self._bossrush_pause_blocks()
+                    self._interruptible_sleep(BOSSRUSH_POLL_INTERVAL, stop_event)
+                    continue
+
             if mode == "soul_furnace":
                 soul_result = self._soul_tick(hwnd, stop_event, task or {}, soul_state)
                 if soul_result == "shop_open":
@@ -2669,10 +2736,10 @@ class MacroRunner(SoulFurnaceOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, E
             if self._frame_is_frozen(hwnd, "watching for Victory/Defeat"):
                 return None
 
-            if mode == "soul_furnace":
+            if mode in ("soul_furnace", "bossrush"):
                 # _soul_tick already checked this poll's captured frame for
                 # results. Avoid two additional captures of the same HUD.
-                self._interruptible_sleep(SOUL_POLL_INTERVAL, stop_event)
+                self._interruptible_sleep(BOSSRUSH_POLL_INTERVAL if mode == 'bossrush' else SOUL_POLL_INTERVAL, stop_event)
                 continue
             try:
                 victory_match = vision.find_image(hwnd, "victory")
@@ -2818,8 +2885,15 @@ class MacroRunner(SoulFurnaceOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, E
         # generic Repeat Stage button. A lobby batch boundary passes repeat=False.
         self._result_repeated_in_place = False
         self._result_requires_lobby_setup = False
+        if self._rift_blocks_new_match():
+            repeat = False
+            self._result_requires_lobby_setup = True
         if task.get("mode") == "portals":
-            return self._handle_portal_result(hwnd, stop_event, task, repeat, webhook)
+            handled = self._handle_portal_result(hwnd, stop_event, task, repeat, webhook)
+            if handled and not repeat:
+                return self._rift_lobby_boundary(
+                    hwnd, stop_event, getattr(self, '_rift_default_walk_paths', {}), webhook)
+            return handled
 
         if repeat:
             if task.get("mode") == "tower":
@@ -2853,7 +2927,8 @@ class MacroRunner(SoulFurnaceOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, E
             self._log('[Macro] "Leave Stage" not found -- stopping.')
             return False
         self._click_return_to_lobby_if_found(hwnd, stop_event)
-        return True
+        return self._rift_lobby_boundary(
+            hwnd, stop_event, getattr(self, '_rift_default_walk_paths', {}), webhook)
 
     def _repeat_same_stage_result(self, hwnd, stop_event, label):
         """Click the actual Repeat Stage label, never a positional result slot.
@@ -4095,7 +4170,7 @@ class MacroRunner(SoulFurnaceOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, E
         self._log(f'[Macro] {"/".join(names)} still showing after {timeout:.0f}s -- continuing anyway.')
         return False
 
-    def _click_start_game_2_if_found(self, hwnd) -> bool:
+    def _click_start_game_2_if_found(self, hwnd, stop_event=None) -> bool:
         # nav_start_game_confirm (was "nav_start_game_2" -- renamed because
         # the _2 suffix made it look like a mere visual variant of
         # nav_start_game, which it is NOT): a second Start Game/confirm
@@ -4110,6 +4185,13 @@ class MacroRunner(SoulFurnaceOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, E
             return False
         if skip_match is None:
             return False
+        if self._current_task_mode() == 'expedition':
+            # This is another Start click, not an exemption from placement.
+            if stop_event is None or not self._prepare_expedition_defense(
+                    hwnd, stop_event, getattr(self, '_expedition_battle_blocks', []),
+                    getattr(self, '_expedition_first_repeat', True),
+                    (getattr(self, '_current_task', None) or {}).get('macro')):
+                return False
         self._log(f"[Macro] Found nav_start_game_confirm (score {skip_match['score']:.2f}) -- "
                    f"clicking it to skip the warning wait.")
         vision.click_match(self._mouse, hwnd, skip_match)
@@ -4163,7 +4245,7 @@ class MacroRunner(SoulFurnaceOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, E
             return
 
         self._log(f"[Macro] Found a warning (score {warning_match['score']:.2f}) -- checking for a way past it.")
-        if self._click_start_game_2_if_found(hwnd):
+        if self._click_start_game_2_if_found(hwnd, stop_event):
             return
 
         self._log(f"[Macro] Waiting up to {WARNING_WAIT_TIMEOUT:.0f}s for it to clear.")
@@ -4172,7 +4254,7 @@ class MacroRunner(SoulFurnaceOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, E
         while time.time() < deadline:
             if self._checkpoint(stop_event):
                 return
-            if self._click_start_game_2_if_found(hwnd):
+            if self._click_start_game_2_if_found(hwnd, stop_event):
                 return
             try:
                 warning_gone = vision.find_image(hwnd, "warning") is None
@@ -4366,12 +4448,13 @@ class MacroRunner(SoulFurnaceOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, E
         # own image (exp_enter_matchmaking / chal_enter) at an uncalibrated
         # position -- no matchmaking_region_* exists for either, so they're
         # searched full-window instead of the Story/Raid region restriction.
-        image_name = {"expedition": "exp_enter_matchmaking", "challenge": "chal_enter"}.get(mode, "enter_matchmaking")
+        image_name = {"expedition": "exp_enter_matchmaking", "challenge": "chal_enter",
+                      "bossrush": "bossrush_matchmaking"}.get(mode, "enter_matchmaking")
         # Event reuses Story/Raid's shared "enter_matchmaking" image, but its
         # button isn't at the calibrated Story/Raid position (matchmaking_
         # region_*) -- so it's searched full-window, same as Expedition/
         # Challenge, rather than boxed to a region it may not land in.
-        region = None if mode in ("expedition", "challenge", "event") else (
+        region = None if mode in ("expedition", "challenge", "event", "bossrush") else (
             coords["matchmaking_region_x"], coords["matchmaking_region_y"],
             coords["matchmaking_region_w"], coords["matchmaking_region_h"],
         )
@@ -6480,6 +6563,13 @@ class MacroRunner(SoulFurnaceOps, ChallengeOps, CraftingOps, FuelOps, ShopOps, E
 
         if not self._dismiss_party_overlay(hwnd, stop_event):
             return False
+
+        if mode == "bossrush":
+            match, name = self._find_gamemode_card(hwnd, stop_event, ('bossrush_mode',), 'Bossrush')
+            if match is None:
+                return False
+            return self._click_gamemode_target(
+                hwnd, stop_event, 'Bossrush', lambda: vision.click_match(self._mouse, hwnd, match))
 
         if mode == "expedition":
             self._log("[Macro] Menu open -- searching for Expedition...")

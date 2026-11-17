@@ -1,0 +1,15 @@
+{
+  "name": "Boss Rush Gate 2",
+  "events": [
+    {
+      "t": 0.0,
+      "key": "s",
+      "state": "down"
+    },
+    {
+      "t": 0.311,
+      "key": "s",
+      "state": "up"
+    }
+  ]
+}

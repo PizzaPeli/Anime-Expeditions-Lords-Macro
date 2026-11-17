@@ -1,3 +1,11 @@
+# v0.1.2 - Bossrush, Rifts & Expeditions Rework
+
+- Added **Bossrush** with configurable gate counts, buff choices, and support for Auto Play or custom macros.
+- Added **Demonic Rifts** under Resources, prioritizing hourly runs until two victories or entry becomes unavailable.
+- Reworked **Expeditions**, improving defense-stage unit placement and Auto Upgrade checks before starting rounds.
+- Updated **Auto Shop** with compact item lists and a summary showing all enabled shops.
+- Improved map recognition and recovery from stuck runs.
+
 # v0.1.1 - Soul Furnace Team Update
 
 - Update the recommended Soul Furnace team and equipment screenshot.

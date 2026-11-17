@@ -703,6 +703,17 @@ def _capture_game_gray_uncounted(hwnd: int, region: tuple = None) -> np.ndarray:
     return screen_gray
 
 
+def _grab_screen(monitor):
+    """Recreate stale GDI resources once after an RDP/display transition."""
+    for attempt in range(2):
+        try:
+            return _get_mss().grab(monitor)
+        except Exception:
+            close_mss()
+            if attempt:
+                raise
+
+
 def _screen_grab_gray(hwnd: int, region: tuple = None):
     """The mss screen-region grab (BitBlt), normalized to reference space.
     The DEFAULT capture path historically, but the screen BitBlt is what
@@ -722,11 +733,12 @@ def _screen_grab_gray(hwnd: int, region: tuple = None):
     if grab_w <= 0 or grab_h <= 0:
         return None
     try:
-        sct = _get_mss()
-        shot = sct.grab({"left": int(grab_left), "top": int(grab_top),
+        shot = _grab_screen({"left": int(grab_left), "top": int(grab_top),
                           "width": int(round(grab_w)), "height": int(round(grab_h))})
     except Exception:
-        close_mss()
+        fallback = _capture_window_gray(hwnd, region)
+        if fallback is not None:
+            return fallback
         raise
     bgra = np.frombuffer(shot.raw, dtype=np.uint8).reshape(shot.height, shot.width, 4)
     gray = cv2.cvtColor(bgra, cv2.COLOR_BGRA2GRAY)
@@ -815,11 +827,12 @@ def capture_game_bgr(hwnd: int, region: tuple = None) -> np.ndarray:
     if grab_w <= 0 or grab_h <= 0:
         return None
     try:
-        sct = _get_mss()
-        shot = sct.grab({"left": int(grab_left), "top": int(grab_top),
+        shot = _grab_screen({"left": int(grab_left), "top": int(grab_top),
                           "width": int(round(grab_w)), "height": int(round(grab_h))})
     except Exception:
-        close_mss()
+        fallback = _capture_window_bgr(hwnd, region)
+        if fallback is not None:
+            return fallback
         raise
     bgra = np.frombuffer(shot.raw, dtype=np.uint8).reshape(shot.height, shot.width, 4)
     bgr = cv2.cvtColor(bgra, cv2.COLOR_BGRA2BGR)

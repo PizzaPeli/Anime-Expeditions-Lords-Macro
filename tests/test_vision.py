@@ -165,3 +165,38 @@ def test_template_load_handles_non_ascii_asset_paths(monkeypatch, tmp_path):
     assert len(loaded) == 1
     assert loaded[0][0].shape == (12, 16)
 
+
+
+@pytest.mark.parametrize('color', [False, True])
+def test_screen_capture_recovers_after_two_bitblt_failures(monkeypatch, color):
+    from unittest.mock import MagicMock
+    from mss.exception import ScreenShotError
+    frame = np.full((756, 1152, 3) if color else (756, 1152), 42, np.uint8)
+    sct = MagicMock()
+    sct.grab.side_effect = ScreenShotError('BitBlt failed')
+    monkeypatch.setattr(vision, '_get_mss', lambda: sct)
+    close = MagicMock()
+    monkeypatch.setattr(vision, 'close_mss', close)
+    monkeypatch.setattr(vision, '_window_geometry', lambda h: (0, 0, 1, 1))
+    monkeypatch.setattr(vision, '_use_window_capture', False)
+    monkeypatch.setattr(vision, '_capture_window_bgr' if color else '_capture_window_gray', lambda *_: frame)
+    if color:
+        from core import wgc_capture
+        monkeypatch.setattr(wgc_capture, 'is_enabled', lambda: False)
+    result = vision.capture_game_bgr(1) if color else vision._screen_grab_gray(1)
+    assert result is frame
+    assert sct.grab.call_count == 2
+    assert close.call_count == 2
+
+
+def test_screen_grab_recreates_resources_after_transient_failure(monkeypatch):
+    from unittest.mock import MagicMock
+    first, second = MagicMock(), MagicMock()
+    first.grab.side_effect = RuntimeError('stale capture handle')
+    second.grab.return_value = 'pixels'
+    sources = iter([first, second])
+    monkeypatch.setattr(vision, '_get_mss', lambda: next(sources))
+    close = MagicMock()
+    monkeypatch.setattr(vision, 'close_mss', close)
+    assert vision._grab_screen({'left': 0}) == 'pixels'
+    close.assert_called_once()

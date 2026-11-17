@@ -1,6 +1,26 @@
 from core import map_setups
 
 
+def test_legacy_empty_catalog_restores_defaults_and_saved_paths(monkeypatch):
+    stored = {"map_setups": {}, "default_walk_paths": {"Rose Kingdom": "Rose route"}}
+    monkeypatch.setattr(map_setups.settings, "load", lambda: stored)
+    monkeypatch.setattr(map_setups.paths, "load_shipped_default_walk_paths", lambda: {})
+
+    loaded = map_setups.load()
+
+    assert set(loaded) == set(map_setups.INITIAL_MAPS)
+    assert loaded["Fairy King Forest"]["image"] == "Fairy King Forest"
+    assert loaded["Rose Kingdom"]["path"] == "Rose route"
+    assert stored["map_setups"] == {}
+
+
+def test_intentionally_empty_versioned_catalog_stays_empty(monkeypatch):
+    monkeypatch.setattr(map_setups.settings, "load",
+                        lambda: {"map_setups": {}, "map_catalog_version": 1})
+
+    assert map_setups.load() == {}
+
+
 def test_halloween_catalog_import_preserves_customizations_and_removals(monkeypatch):
     custom = {"mode": "both", "image": "Custom label", "path": "Custom route"}
     stored = {"map_setups": {"Hollow Desert": custom}}

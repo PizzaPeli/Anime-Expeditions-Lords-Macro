@@ -21,7 +21,7 @@ def capture(stamp):
 
 def test_old_settings_migrate_and_shops_stay_independent(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "SETTINGS_FILE", str(tmp_path / "settings.json"))
-    settings.update({"auto_shop": {"enabled": True, "shops": {"gold_shop": {
+    settings.update({"auto_shop": {"enabled": True, "view": "squares", "shops": {"gold_shop": {
         "enabled": True, "items": {"stat_lock": {"enabled": True, "target": 3}}
     }}}})
     api = object.__new__(Api)
@@ -33,9 +33,9 @@ def test_old_settings_migrate_and_shops_stay_independent(monkeypatch, tmp_path):
     assert api.set_auto_shop_item_enabled("expedition_shop", "exp_stat_lock", True)["ok"]
     assert api.set_auto_shop_item_target("expedition_shop", "exp_stat_lock", "max")["ok"]
     assert not api.set_auto_shop_item_enabled("expedition_shop", "stat_lock", True)["ok"]
-    assert api.set_auto_shop_view("squares")["ok"]
     reloaded = object.__new__(Api).get_auto_shop_settings()
-    assert reloaded["view"] == "squares"
+    assert "view" not in reloaded
+    assert "view" not in settings.load()["auto_shop"]
     gold = next(item for item in reloaded["shops"]["gold_shop"]["items"] if item["key"] == "stat_lock")
     assert gold["target"] == 3 and gold["enabled"]
     exp = next(item for item in reloaded["shops"]["expedition_shop"]["items"] if item["key"] == "exp_stat_lock")
@@ -120,7 +120,7 @@ def test_scheduler_includes_expedition_only_and_visits_both_shops(monkeypatch):
 
 def test_later_start_popup_replays_once_then_rearms(monkeypatch):
     runner = MacroRunner(MagicMock(), MagicMock(), MagicMock())
-    runner._battle_replayed = True  # initial Start Game still visible
+    runner._exp_defense_state = {'done': True}  # same prepared Start prompt still visible
     runner._battle_block_index = 9
     popup = [True]
     monkeypatch.setattr(runner, "_find_start_game_button", lambda *_a: ("nav_start_game", {"score": 1} if popup[0] else None))
@@ -130,6 +130,15 @@ def test_later_start_popup_replays_once_then_rearms(monkeypatch):
     monkeypatch.setattr(vision, "click_match", lambda *_a: None)
     monkeypatch.setattr(vision, "find_image", lambda *_a, **_k: None)
     from core import runner_expedition
+    from core.image_io import read_image
+    from pathlib import Path
+    import numpy as np
+    defense = np.zeros((756, 1152, 3), dtype=np.uint8)
+    hud = read_image(Path(__file__).parent / 'fixtures/expedition/defense_hud.png')
+    defense[:hud.shape[0]] = hud
+    monkeypatch.setattr(vision, 'capture_window_region_bgr', lambda *_a: defense)
+    monkeypatch.setattr(runner_expedition.wm, 'activate_window', lambda *_a: True)
+    monkeypatch.setattr(runner, '_interruptible_sleep', lambda *_a: None)
     monkeypatch.setattr(runner_expedition.wm, "get_window_rect_screen", lambda *_a: (0, 0, 1152, 756))
     monkeypatch.setattr(runner_expedition.time, "sleep", lambda _s: None)
     monkeypatch.setattr(runner, "_check_expedition_checkpoint_by_color", lambda *_a: None)

@@ -54,6 +54,70 @@ def run_js(body, tmp_path):
     return json.loads(proc.stdout.strip().splitlines()[-1])
 
 
+def test_auto_shop_summary_includes_enabled_shops_independent_of_tab(tmp_path):
+    out = run_js("""
+        let autoShopTab = 'gold_shop';
+        const item = (enabled, status) => ({enabled, state: {status}});
+        const autoShopState = {enabled: true, shops: {
+          gold_shop: {name: 'Gold Shop', enabled: true,
+            items: [item(true, 'completed'), item(false, 'pending')]},
+          expedition_shop: {name: 'Expedition Shop', enabled: true,
+            items: [item(true, 'pending'), item(true, 'out_of_stock')]}
+        }};
+        const details = {};
+        const document = {getElementById: id =>
+          id === 'resource-auto-shop-details' ? details : null};
+        eval(extract('renderAutoShopScreen'));
+        renderAutoShopScreen();
+        const goldTab = details.textContent;
+        autoShopTab = 'expedition_shop';
+        renderAutoShopScreen();
+        const expeditionTab = details.textContent;
+        autoShopState.shops.gold_shop.enabled = false;
+        renderAutoShopScreen();
+        const oneShop = details.textContent;
+        autoShopState.shops.expedition_shop.enabled = false;
+        renderAutoShopScreen();
+        console.log(JSON.stringify({goldTab, expeditionTab, oneShop, none: details.textContent}));
+    """, tmp_path)
+    expected = 'Gold Shop: 1 enabled | 1 complete · Expedition Shop: 2 enabled | 1 complete'
+    assert out['goldTab'] == out['expeditionTab'] == expected
+    assert out['oneShop'] == 'Expedition Shop: 2 enabled | 1 complete'
+    assert out['none'] == 'No shops enabled'
+
+
+def test_rift_controls_load_and_save_selected_macro(tmp_path):
+    out = run_js("""
+        let riftState = {enabled: false, macro: ''};
+        const taskTemplates = ['Rift Farm'];
+        const elements = {
+          'toggle-rifts': {classList: {toggle: (key, value) => elements['toggle-rifts'].on = value}},
+          'rift-summary': {classList: {toggle: () => {}}}, 'rift-macro': {value: '', innerHTML: ''}
+        };
+        global.document = {getElementById: key => elements[key]};
+        global.escapeHtml = value => value;
+        let saved;
+        global.pywebview = {api: {
+          get_rift_settings: async () => saved || {enabled: true, macro: 'Rift Farm'},
+          save_rift_settings: async (enabled, macro) => {saved = {enabled, macro};}
+        }};
+        eval(extract('refreshRiftSettings'));
+        eval(extract('saveRiftSettings'));
+        (async () => {
+          await refreshRiftSettings();
+          const loaded = {on: elements['toggle-rifts'].on,
+                          label: elements['rift-summary'].textContent,
+                          macro: elements['rift-macro'].value};
+          elements['rift-macro'].value = '';
+          await saveRiftSettings(false);
+          console.log(JSON.stringify({loaded, saved, label: elements['rift-summary'].textContent}));
+        })().catch(e => {console.error(e);process.exit(1)});
+    """, tmp_path)
+    assert out['loaded'] == {'on': True, 'label': 'Enabled', 'macro': 'Rift Farm'}
+    assert out['saved'] == {'enabled': False, 'macro': ''}
+    assert out['label'] == 'Disabled'
+
+
 def test_fuel_interval_input_converts_hours_to_minutes(tmp_path):
     out = run_js("""
         eval(extract('normalizeFuelIntervalInput'));
@@ -1618,7 +1682,7 @@ def test_auto_shop_card_renders_catalog_targets_and_daily_status(tmp_path):
     }
 
 
-def test_expedition_shop_tab_uses_its_own_actions_and_square_view(tmp_path):
+def test_expedition_shop_tab_uses_its_own_actions_and_compact_list(tmp_path):
     out = run_js("""
         global.autoShopTab = 'expedition_shop';
         global.autoShopState = {enabled: true, view: 'squares', shops: {
@@ -1641,7 +1705,7 @@ def test_expedition_shop_tab_uses_its_own_actions_and_square_view(tmp_path):
         selectAutoShopTab('gold_shop');
         console.log(JSON.stringify({exp, goldHtml: list.innerHTML, tab: autoShopTab}));
     """, tmp_path)
-    assert out['exp']['classes'] == 'auto-shop-items auto-shop-squares'
+    assert out['exp']['classes'] == 'auto-shop-items auto-shop-list'
     assert "setAutoShopItemMax('expedition_shop', 'exp_gem')" in out['exp']['html']
     assert 'data:image/png;base64,abc' in out['exp']['html']
     assert 'Expedition Shop: 1 enabled | 1 complete' == out['exp']['summary']

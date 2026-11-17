@@ -1072,6 +1072,18 @@ class Api:
         return {"ok": True, "encounter_walk_paths": self.get_encounter_walk_paths()}
 
     # ---- Challenge tab ----
+    def get_rift_settings(self) -> dict:
+        from core import rifts
+        return rifts.load()
+
+    def save_rift_settings(self, enabled: bool, macro: str = '') -> dict:
+        if macro and not tpl.template_exists(macro):
+            return {'ok': False, 'reason': 'macro_not_found'}
+        cfg.update({'demonic_rifts': {'enabled': bool(enabled), 'macro': macro or ''}})
+        self.push_log(f'[Rifts] Settings saved: {"enabled" if enabled else "disabled"}, '
+                      f'{macro or "Auto Play"}.')
+        return {'ok': True, **self.get_rift_settings()}
+
     def _default_challenge_settings(self) -> dict:
         return {
             "enabled": False,
@@ -1548,7 +1560,7 @@ class Api:
         if canonical != saved:
             cfg.update({"auto_shop": canonical})
         return {
-            "enabled": canonical["enabled"], "view": canonical["view"],
+            "enabled": canonical["enabled"],
             "reset_schedule": auto_shop.AUTO_SHOP_RESET_SCHEDULE,
             "shops": {key: {
                 "name": auto_shop.SHOP_NAMES[key],
@@ -1560,14 +1572,6 @@ class Api:
                 } for definition in catalog],
             } for key, catalog in auto_shop.SHOP_CATALOGS.items()},
         }
-
-    def set_auto_shop_view(self, view: str) -> dict:
-        if view not in ("list", "squares"):
-            return {"ok": False, "reason": "bad_view"}
-        settings = self.get_auto_shop_settings()
-        settings["view"] = view
-        self._save_auto_shop_settings(settings)
-        return {"ok": True}
 
     def set_auto_shop_enabled(self, enabled: bool) -> dict:
         settings = self.get_auto_shop_settings()
@@ -2294,10 +2298,53 @@ class Api:
     # here is actually task-specific except the default filename.
     @staticmethod
     def _transfer_directory(folder_kind: str) -> str:
+        if folder_kind == "backup":
+            return os.path.join(tpl.TEMPLATES_DIR, "Backups")
         if folder_kind == "tasks":
             from core import task_presets
             return task_presets.PRESETS_DIR
         return tpl.TEMPLATES_DIR
+
+    def _backup_setting_defaults(self) -> dict:
+        values = self.get_settings()
+        values.update(self.get_macro_coords())
+        saved = cfg.load()
+        for key, default in {
+            "hotkeys": dict(HOTKEY_DEFAULTS), "default_walk_paths": {},
+            "encounter_walk_paths": {}, "map_setups": {}, "image_thresholds": {},
+            "webhook_url": "", "webhook_enabled": False, "webhook_silent": False,
+            "webhook_mention_id": "", "webhook_progress_enabled": False,
+        }.items():
+            values[key] = saved.get(key, default)
+        return values
+
+    def create_backup_bundle(self, selected: list) -> dict:
+        from core import transfer
+        try:
+            resources = {
+                "challenge": self.get_challenge_settings(),
+                "crafting": self.get_crafting_settings(),
+                "auto_shop": self.get_auto_shop_settings(),
+                "fuel_refill": self.get_fuel_settings(),
+                "demonic_rifts": self.get_rift_settings(),
+            } if "resources" in selected else {}
+            payload = transfer.export_bundle(selected, self._backup_setting_defaults(), resources)
+            return {"ok": True, "data": payload}
+        except Exception as exc:
+            return {"ok": False, "reason": str(exc)}
+
+    def apply_backup_bundle(self, payload: dict, selected: list, mode: str) -> dict:
+        from core import transfer, pacing
+        if self.runner.is_running():
+            return {"ok": False, "reason": "Stop the macro before importing."}
+        try:
+            result = transfer.import_bundle(payload, selected, mode, self._backup_setting_defaults())
+            pacing.set_action_delay_ms(cfg.load().get("action_delay_ms", 0))
+            if "settings" in selected and self._on_hotkeys_changed:
+                self._on_hotkeys_changed(self.get_hotkeys())
+            return result
+        except Exception as exc:
+            return {"ok": False, "reason": str(exc)}
 
     def export_tasks_file(self, payload: dict, filename_prefix: str = "tasks") -> dict:
         import json

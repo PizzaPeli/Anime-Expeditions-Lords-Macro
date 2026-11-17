@@ -17,7 +17,7 @@ def placement_capture_reason(task):
     category = {"story": "Story", "raid": "Raid", "portal": "Portal",
                 "expedition": "Expedition", "event": "Event",
                 "soul_furnace": "Event", "tower": "Tower",
-                "tournament": "Tournament"}.get(task.get("mode"))
+                "tournament": "Tournament", "demonic_rift": "Rift", "bossrush": "Bossrush"}.get(task.get("mode"))
     name = "Expedition" if category == "Expedition" else task.get("map")
     if not category or not name:
         return None

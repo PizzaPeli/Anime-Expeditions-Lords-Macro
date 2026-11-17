@@ -109,6 +109,9 @@ class MatchResultProbe:
     def _clear_result_obtainment_modal(self, *_args):
         return True
 
+    def _rift_blocks_new_match(self):
+        return False
+
     def _click_and_verify_gone(self, _hwnd, _stop, image, timeout, **_kwargs):
         self.clicked_verify.append((image, timeout))
         return True

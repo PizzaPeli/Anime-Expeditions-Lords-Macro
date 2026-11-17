@@ -1,0 +1,25 @@
+{
+  "name": "Boss Rush Gate 3",
+  "events": [
+    {
+      "t": 0.0,
+      "key": "a",
+      "state": "down"
+    },
+    {
+      "t": 0.892,
+      "key": "a",
+      "state": "up"
+    },
+    {
+      "t": 1.167,
+      "key": "s",
+      "state": "down"
+    },
+    {
+      "t": 1.381,
+      "key": "s",
+      "state": "up"
+    }
+  ]
+}

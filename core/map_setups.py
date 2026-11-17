@@ -23,7 +23,10 @@ INITIAL_MAPS = {
 def load() -> dict:
     data = settings.load()
     saved = data.get("map_setups")
-    if not isinstance(saved, dict):
+    # Older settings exports included an empty placeholder before the editable
+    # catalog existed. Only versioned catalogs can represent deliberate removal
+    # of every map (save/remove both stamp map_catalog_version).
+    if not isinstance(saved, dict) or (not saved and data.get("map_catalog_version", 0) < 1):
         old_paths = {**paths.load_shipped_default_walk_paths(),
                      **(data.get("default_walk_paths", {}) or {})}
         saved = {name: {"mode": mode, "image": name,

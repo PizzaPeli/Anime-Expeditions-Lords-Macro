@@ -18,6 +18,7 @@ from . import input_record
 from . import keys
 from . import paths as walk_paths
 from . import vision
+from . import expedition_vision
 from . import window as wm
 from .config import FIXED_WIN_H, FIXED_WIN_W  # the 1152x756 reference client area
 from .runner_constants import *  # noqa: F401,F403 -- the shared constants namespace
@@ -168,8 +169,22 @@ class BlockOps:
         `times` budget and next-retry time) across calls.
         """
         while self._battle_block_index < len(battle_blocks):
+            if self._current_task_mode() == 'bossrush' and not self._bossrush_combat_ready(hwnd):
+                return  # retain this block's index and remaining progress
             block = battle_blocks[self._battle_block_index]
             btype = block.get("type")
+            if self._current_task_mode() == 'expedition':
+                if btype in ('place_unit', 'auto_upgrade_unit'):
+                    # Expedition's placements and Auto Upgrade are checked separately,
+                    # once before each confirmed defense's Start Game.
+                    self._release_quick_place_shift()
+                    self._battle_block_index += 1
+                    self._battle_block_state = {}
+                    continue
+                if btype in ('auto_upgrade_unit', 'upgrade_unit', 'sell_unit', 'target_priority'):
+                    if (not expedition_vision.is_defense(vision.capture_window_region_bgr(hwnd))
+                            or self._find_start_game_button(hwnd)[1] is not None):
+                        return  # cart-following coordinates cannot select these units
             # Control ops that core.detect.flatten injected for detect
             # then/else groups. _jump is pure index bookkeeping (skipping the
             # else branch after then ran) -- no game action, so it never
@@ -270,7 +285,7 @@ class BlockOps:
                 # this tick, and a card that keeps re-appearing must not hold
                 # it. The index is not advanced, so this same block runs again
                 # a poll later against a clear board.
-                if self._dismiss_reward_card_if_found(hwnd):
+                if self._current_task_mode() != 'bossrush' and self._dismiss_reward_card_if_found(hwnd):
                     self._log(f'[Macro] Battle block #{self._battle_block_index + 1} '
                               f'(Place Unit): cleared an upgrade card first -- placing next poll.')
                     return
@@ -308,9 +323,12 @@ class BlockOps:
                 done = True
                 self._battle_block_state = {}
             elif btype == "wait_ms":
-                self._run_wait_ms_tick(stop_event, block, self._battle_block_index + 1)
-                done = True
-                self._battle_block_state = {}
+                if self._current_task_mode() == 'bossrush':
+                    done = self._bossrush_wait_tick(block)
+                else:
+                    self._run_wait_ms_tick(stop_event, block, self._battle_block_index + 1)
+                    done = True
+                    self._battle_block_state = {}
             elif btype == "walk":
                 self._run_walk_block_tick(stop_event, block, self._battle_block_index + 1)
                 done = True
@@ -557,6 +575,8 @@ class BlockOps:
         deadline = time.time() + UPGRADE_PANEL_LOAD_TIMEOUT
         found_name, upgrade_match = None, None
         while True:
+            if self._current_task_mode() == 'bossrush' and not self._bossrush_combat_ready(hwnd):
+                return False
             found_name, upgrade_match = vision.find_upgrade_state(hwnd)
             if found_name is not None or time.time() >= deadline:
                 break
@@ -568,6 +588,8 @@ class BlockOps:
         else:
             not_upgrade_match = None
         if upgrade_match is not None:
+            if self._current_task_mode() == 'bossrush' and not self._bossrush_combat_ready(hwnd):
+                return False
             self._log(f'{label}: found Upgradeable (score {upgrade_match["score"]:.2f}) -- pressing T '
                        f'({state["remaining"]} left after this).')
             self._keyboard.tap(ord("T"))
@@ -862,6 +884,8 @@ class BlockOps:
         priority, either through the info-panel button or the user's matching
         in-game hotkey. Always "done" after one try -- setting a priority
         isn't a repeated action the way Upgrade Unit's clicks are."""
+        if self._current_task_mode() == 'expedition':
+            return self._run_expedition_auto_upgrade(hwnd, stop_event, block, block_num)
         label = f'Battle block #{block_num} (Auto Upgrade Unit)'
         pos = self._placed_unit_click_point(block, label)
         if pos is None:
@@ -986,6 +1010,123 @@ class BlockOps:
 
         self._reset_unit_info_panel(hwnd)
         return True
+
+    def _close_expedition_unit_panel(self, hwnd):
+        panel = expedition_vision.selected_unit(vision.capture_game_bgr(hwnd))
+        if panel is not None:
+            self._mouse.click(*vision.ref_to_screen(hwnd, *panel['close']))
+            time.sleep(0.15)
+
+    def _select_expedition_unit(self, hwnd, stop_event, position):
+        # Clear the old panel so its contents cannot falsely confirm a
+        # different, empty coordinate. Never use generic lobby/X recovery.
+        if getattr(self, '_expedition_preparing_defense', False):
+            if (self._find_start_game_button(hwnd)[1] is None
+                    or not expedition_vision.is_defense(vision.capture_game_bgr(hwnd))):
+                return None
+        self._close_expedition_unit_panel(hwnd)
+        if expedition_vision.selected_unit(vision.capture_game_bgr(hwnd)) is not None:
+            return None
+        self._keyboard.tap(ord('Z'))
+        time.sleep(0.1)
+        self._hover_click(*vision.ref_to_screen(hwnd, *position), hwnd)
+        deadline = time.time()+AUTO_UPGRADE_PANEL_LOAD_TIMEOUT
+        while not self._checkpoint(stop_event):
+            panel = expedition_vision.selected_unit(vision.capture_game_bgr(hwnd))
+            if panel is not None:
+                return panel
+            if time.time() >= deadline:
+                break
+            self._interruptible_sleep(AUTO_UPGRADE_PANEL_POLL_INTERVAL, stop_event)
+        return None
+
+    def _read_expedition_priority(self, hwnd, stop_event, previous=None):
+        """Wait for two agreeing panel reads, optionally after a state change."""
+        last = None
+        for _ in range(int(AUTO_UPGRADE_PANEL_LOAD_TIMEOUT / AUTO_UPGRADE_PANEL_POLL_INTERVAL) + 1):
+            if self._checkpoint(stop_event):
+                break
+            frame = vision.capture_game_bgr(hwnd)
+            panel = expedition_vision.selected_unit(frame)
+            state = expedition_vision.auto_upgrade_state(frame, panel) if panel is not None else None
+            reading = (panel, state)
+            if state is not None and state != previous and reading == last:
+                return panel, state
+            last = reading if state is not None else None
+            self._interruptible_sleep(AUTO_UPGRADE_PANEL_POLL_INTERVAL, stop_event)
+        return None, None
+
+    def _run_expedition_auto_upgrade(self, hwnd, stop_event, block, block_num):
+        label = f'Auto Upgrade Unit block #{block_num}'
+        pos = self._placed_unit_click_point(block, label)
+        if pos is None:
+            return True
+        params = block.get('params') or {}
+        priority = str(params.get('priority', 1))
+        try:
+            target = 0 if priority.lower() in ('none', 'off', '0') else int(priority)
+        except (TypeError, ValueError):
+            target = -1
+        if target not in range(7):
+            self._log(f'[Macro] {label}: invalid priority -- skipping.')
+            return True
+        use_hotkey = str(params.get('input') or 'click').lower() == 'hotkey'
+        vk = keys.key_name_to_vk(str((self._get_hotkeys() or {}).get('game_auto_upgrade') or '')) if use_hotkey else None
+        if use_hotkey and vk is None:
+            self._log(f'[Macro] {label}: bind Auto Upgrade in Settings > Hotkeys -- skipping.')
+            return True
+        try:
+            for attempt in range(1, 4):
+                if self._checkpoint(stop_event):
+                    return True
+                if (not getattr(self, '_expedition_initial_setup', False)
+                        and not expedition_vision.is_defense(vision.capture_game_bgr(hwnd))):
+                    self._log(f'[Macro] {label}: defense ended -- skipping.')
+                    return True
+                panel = self._select_expedition_unit(hwnd, stop_event, pos)
+                if panel is None:
+                    self._log(f'[Macro] {label}: no unit selected (attempt {attempt}/3).')
+                    continue
+                panel, current = self._read_expedition_priority(hwnd, stop_event)
+                if current is None:
+                    self._log(f'[Macro] {label}: cannot read priority (attempt {attempt}/3).')
+                    continue
+                if current == target:
+                    self._log(f'[Macro] {label}: priority {target or "off"} confirmed.')
+                    return True
+                self._log(f'[Macro] {label}: selected unit at {pos}, priority '
+                          f'{current or "off"} -> requested {target or "off"}.')
+                # Verify each individual transition. A dropped click must not
+                # make the rest of a batch cycle from an assumed state.
+                for _ in range((target-current) % 7):
+                    if self._checkpoint(stop_event):
+                        return True
+                    if (not getattr(self, '_expedition_initial_setup', False)
+                            and not expedition_vision.is_defense(vision.capture_game_bgr(hwnd))):
+                        return True
+                    if use_hotkey:
+                        self._keyboard.tap(vk)
+                    else:
+                        self._hover_click(*vision.ref_to_screen(hwnd, *panel['button']), hwnd)
+                    self._interruptible_sleep(AUTO_UPGRADE_STEP_DELAY, stop_event)
+                    panel, observed = self._read_expedition_priority(hwnd, stop_event, previous=current)
+                    if observed != (current + 1) % 7:
+                        break
+                    current = observed
+                else:
+                    self._log(f'[Macro] {label}: priority {target or "off"} confirmed.')
+                    return True
+                self._log(f'[Macro] {label}: state not confirmed (attempt {attempt}/3).')
+            self._log(f'[Macro] {label}: failed after 3 attempts -- skipping.')
+            try:
+                path = vision.save_region_debug(hwnd, f'auto_upgrade_block_{block_num}',
+                                                (0, 0, FIXED_WIN_W, FIXED_WIN_H))
+                self._log(f'[Macro] {label}: failure screenshot: {path}')
+            except Exception as exc:
+                self._log(f'[Macro] {label}: could not save failure screenshot: {exc}')
+            return True
+        finally:
+            self._close_expedition_unit_panel(hwnd)
 
     def _run_prestart_detect(self, hwnd, stop_event: threading.Event, block: dict, block_num: int):
         """Evaluate a Detect block, optionally polling it until it resolves.
@@ -1393,6 +1534,14 @@ class BlockOps:
             found = self._scan_place_search_box(hwnd, left, top, orig_x, orig_y)
             if found is not None:
                 dx, dy = found
+                if self._current_task_mode() == 'expedition':
+                    # The bright outline is beside the cursor's tile. Moving
+                    # onto that pixel can snap the ghost to a different tile.
+                    # Use it as evidence at the saved hover, never as a new
+                    # placement/selection coordinate on the narrow cargo.
+                    self._mouse.move_to(left + orig_x, top + orig_y)
+                    time.sleep(PLACE_PIXEL_SEARCH_SETTLE)
+                    return orig_x, orig_y
                 cx, cy = orig_x + dx, orig_y + dy
                 if (dx, dy) != (0, 0):
                     self._mouse.move_to(left + cx, top + cy)
@@ -1421,6 +1570,9 @@ class BlockOps:
         unhighlighted tiles and find nothing. Returns the settled (x, y)
         window-client offset or None, same contract as
         _find_valid_place_spot."""
+        if self._current_task_mode() == 'expedition':
+            self._log(f'[Macro] Place Unit "{name}": no nearby tile -- not searching into Expedition HUD.')
+            return None
         self._log(f'[Macro] Place Unit "{name}": no valid tile right at ({orig_x}, {orig_y}) -- '
                    f'searching outward around it.')
         deadline = time.time() + PLACE_SPIRAL_TIMEOUT
@@ -1450,7 +1602,8 @@ class BlockOps:
 
     def _run_place_unit_block(self, hwnd, stop_event: threading.Event, left: int, top: int, block: dict,
                                 index: int, macro_name: str, unit_ordinal: int = None,
-                                next_is_same_unit: bool = False, verify: bool = True) -> None:
+                                next_is_same_unit: bool = False, verify: bool = True,
+                                _attempt: int = 1) -> None:
         params = block.get("params") or {}
         name = params.get("name") or f"#{index}"
         hotkey = block.get("hotkey")
@@ -1469,6 +1622,13 @@ class BlockOps:
                 self._release_quick_place_shift()
             return
         orig_x, orig_y = int(orig_x), int(orig_y)
+        expedition_setup = (self._current_task_mode() == 'expedition'
+                            and getattr(self, '_expedition_initial_setup', False))
+        if expedition_setup:
+            self._release_quick_place_shift()
+            next_is_same_unit = False
+            if unit_ordinal is not None:
+                self._placed_unit_positions.pop(unit_ordinal, None)
 
         # Quick place: a run of consecutive Place Unit blocks for the SAME
         # unit (matched by hotkey) holds Left Shift down from right before
@@ -1487,14 +1647,8 @@ class BlockOps:
         # already solid evidence the placement landed -- good enough for a
         # fast consecutive run, even without also re-confirming after.
         is_quick_place = self._quick_place_shift_down or next_is_same_unit
-        # verify=False for every Pre Start placement, not just quick-place
-        # chains (see _run_prestart_blocks/_run_battle_blocks_tick's own
-        # calls) -- the wait-for-unit_exist-then-maybe-double-click-to-
-        # recheck step only makes sense for a mid-battle reinforcement,
-        # where confirming it actually landed matters more than speed.
-        # Pre Start already trusts the pre-click pixel-white confirmation
-        # for quick-place; this extends that same trust to every other
-        # Pre Start placement too instead of just the chained ones.
+        # Other modes retain the fast Pre Start/quick-place path.
+        # Expedition setup instead confirms the individual panel below.
         skip_verify = is_quick_place or not verify
 
         # "Keep Placing" (block toggle): keep re-doing the whole placement
@@ -1503,7 +1657,7 @@ class BlockOps:
         # which normally skips verification for speed) since it needs that
         # signal to know when to stop, and it never applies to a quick-place
         # chain (those can't verify mid-run).
-        if bool(block.get("retryUntilPlaced")) and not is_quick_place:
+        if bool(block.get("retryUntilPlaced")) and not is_quick_place and not expedition_setup:
             self._place_unit_retrying(hwnd, stop_event, left, top, name, hotkey,
                                        orig_x, orig_y, block, unit_ordinal)
             return
@@ -1556,12 +1710,26 @@ class BlockOps:
             self._release_quick_place_shift()
             return
         if spot is None:
+            if getattr(self, '_expedition_preparing_defense', False):
+                # Capture before Z removes the ghost/highlight: this shows
+                # whether the game registered the hotkey or rejected a tile.
+                self._save_debug_screenshot_unconditional(hwnd, f'expedition_defense_unit_{index}_no_tile')
             self._log(f'[Macro] Place Unit "{name}": no valid (white) tile found at ({orig_x}, {orig_y}) '
                        f'or within {PLACE_SPIRAL_RADII[-1]}px around it -- giving up on this block.')
             if not next_is_same_unit:
                 self._release_quick_place_shift()
             return
         cur_x, cur_y = spot
+
+        if self._current_task_mode() == 'expedition' and not (30 <= cur_x < 1005 and 240 <= cur_y < 640):
+            self._release_quick_place_shift()
+            self._log(f'[Macro] Place Unit "{name}": tile overlaps Expedition HUD -- skipping.')
+            return
+        if getattr(self, '_expedition_preparing_defense', False):
+            if (self._find_start_game_button(hwnd)[1] is None
+                    or not expedition_vision.is_defense(vision.capture_window_region_bgr(hwnd))):
+                self._release_quick_place_shift()
+                return
 
         self._mouse.click(left + cur_x, top + cur_y)
         time.sleep(PLACE_UNIT_CLICK_SETTLE)
@@ -1586,6 +1754,33 @@ class BlockOps:
         # release Shift now that the click that needed it is done.
         if not next_is_same_unit:
             self._release_quick_place_shift()
+
+        if expedition_setup:
+            # A highlight/click is not proof the game accepted placement.
+            # Clear placement mode and any stale panel before selecting this
+            # unit, just as the defense checks do. Finish this bounded check
+            # before moving to the next configured unit (Atom before Alu).
+            panel = self._select_expedition_unit(hwnd, stop_event, (cur_x, cur_y))
+            self._close_expedition_unit_panel(hwnd)
+            self._exit_placement_mode()
+            if self._checkpoint(stop_event):
+                return
+            if panel is not None:
+                if unit_ordinal is not None:
+                    self._placed_unit_positions[unit_ordinal] = (cur_x, cur_y)
+                self._log(f'[Macro] Place Unit "{name}": selected at ({cur_x}, {cur_y}) '
+                          '(Pre Start placement confirmed).')
+            elif _attempt < 3:
+                self._log(f'[Macro] Place Unit "{name}": Pre Start placement unconfirmed '
+                          f'(attempt {_attempt}/3) -- retrying before the next unit.')
+                self._run_place_unit_block(hwnd, stop_event, left, top, block, index,
+                                           macro_name, unit_ordinal, verify=verify,
+                                           _attempt=_attempt + 1)
+            else:
+                self._log(f'[Macro] Place Unit "{name}": Pre Start placement unconfirmed '
+                          'after 3 attempts -- skipping.')
+                self._save_debug_screenshot_unconditional(hwnd, f'expedition_prestart_unit_{index}_unconfirmed')
+            return
 
         if skip_verify:
             # No verify here -- see skip_verify's own comment above.

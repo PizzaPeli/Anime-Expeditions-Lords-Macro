@@ -13,24 +13,163 @@ from . import vision
 from . import window as wm
 from . import paths as walk_paths
 from . import settings as cfg
+from . import expedition_vision
+from . import detect
 from .runner_constants import *  # noqa: F401,F403 -- the shared constants namespace
 from .runner_constants import _exp_green, _exp_green_loose, _exp_red  # underscore names, skipped by *
 
 
 class ExpeditionOps:
     def _strip_auto_upgrade_for_expedition(self, blocks: list, task: dict) -> list:
-        # Auto Upgrade Unit reads the unit's upgrade-cost/affordability UI to
-        # decide when to click -- Expedition's version of that panel isn't
-        # what it was built against, so it just spins without ever actually
-        # upgrading. Rather than have it silently fail on every run, skip
-        # the block entirely for Expedition tasks (Pre Start's copy of this
-        # same block is skipped the same way -- see _run_prestart_blocks).
-        if task.get("mode") != "expedition":
-            return blocks
-        filtered = [b for b in blocks if b.get("type") != "auto_upgrade_unit"]
-        if len(filtered) != len(blocks):
-            self._log("[Macro] Skipping Auto Upgrade Unit block(s) -- not reliable on Expedition, ignoring them.")
-        return filtered
+        # Kept as a compatibility hook for phase loaders. The individual
+        # panel's verified 0..6 control now supports Expedition too.
+        return blocks
+
+    def _prepare_expedition_defense(self, hwnd, stop_event, blocks, first_repeat, macro_name):
+        """Check Battle placements once per defense, BEFORE voting Start Game.
+
+        Cargo units leave at each defense, so past placement bookkeeping is
+        never evidence a unit is still at its position. Pre Start is untouched.
+        """
+        if self._dismiss_reward_card_if_found(hwnd):
+            return False
+        frame = vision.capture_window_region_bgr(hwnd)
+        stage = expedition_vision.stage(frame)
+        if stage is None:
+            self._set_status(action='Waiting for Expedition stage HUD before Start Game...')
+            if not getattr(self, '_exp_unknown_start_saved', False):
+                self._save_debug_screenshot_unconditional(hwnd, 'expedition_start_stage_unknown')
+                self._log('[Macro] Start Game held -- Expedition stage is not yet identified.')
+                self._exp_unknown_start_saved = True
+            return False
+        self._exp_unknown_start_saved = False
+        # Start can precede the HUD/camera transition. Even a positively
+        # identified setup/assault frame needs a second observation.
+        self._interruptible_sleep(0.6, stop_event)
+        if self._checkpoint(stop_event):
+            return False
+        settled = vision.capture_window_region_bgr(hwnd)
+        if expedition_vision.stage(settled) != stage:
+            return False
+        if stage != 'defense':
+            return True
+        if not wm.activate_window(hwnd):
+            self._log('[Macro] Defense placement deferred -- Roblox focus not confirmed.')
+            return False
+        state = getattr(self, '_exp_defense_state', None)
+        if state is None:
+            state = self._exp_defense_state = {}
+        if state.get('done'):
+            return True
+        if self._dismiss_reward_card_if_found(hwnd):
+            return False
+        import numpy as np
+        # A strip on the cargo's left rim avoids the Start Game modal and
+        # unit effects. Movement of the camera must settle before coordinates.
+        if np.mean(np.abs(frame[300:430, 100:260].astype(float)
+                          - settled[300:430, 100:260].astype(float))) > 12:
+            return False
+        self._set_status(action='Checking defense-stage units before Start Game...')
+        index = state.get('index', 0)
+        self._expedition_preparing_defense = True
+        try:
+            while index < len(blocks):
+                if self._checkpoint(stop_event) or self._find_start_game_button(hwnd)[1] is None:
+                    return False
+                if not expedition_vision.is_defense(vision.capture_window_region_bgr(hwnd)):
+                    return False
+                if self._dismiss_reward_card_if_found(hwnd):
+                    return False
+                block = blocks[index]
+                kind = block.get('type')
+                if 'expedition' in (block.get('skip_modes') or []) or (block.get('once') and not first_repeat):
+                    index += block.get('_else_offset', 1) if kind == 'detect' else 1
+                elif kind == '_jump':
+                    index += block.get('_offset', 1)
+                elif kind == 'detect':
+                    found, _ = detect.evaluate(self, hwnd, block)
+                    index += 1 if found else block.get('_else_offset', 1)
+                else:
+                    if kind == 'place_unit':
+                        if self._check_defense_placement(hwnd, stop_event, block, index+1, macro_name) is False:
+                            return False
+                    elif kind == 'auto_upgrade_unit':
+                        # Priority belongs to the newly selected defense unit,
+                        # before voting Start, just like placement validation.
+                        self._run_expedition_auto_upgrade(hwnd, stop_event, block, index+1)
+                    index += 1
+                state['index'] = index
+            state['done'] = True
+            self._battle_block_index = 0
+            self._battle_block_state = {}
+            self._log('[Macro] Defense placement and Auto Upgrade checks complete -- ready for Start Game.')
+            return True
+        finally:
+            self._expedition_preparing_defense = False
+            self._release_quick_place_shift()
+
+    def _check_defense_placement(self, hwnd, stop_event, block, index, macro_name):
+        params = block.get('params') or {}
+        x, y = params.get('x'), params.get('y')
+        ordinal = block.get('_ordinal')
+        name = params.get('name') or f'#{index}'
+        if not (x or y):  # e.g. Aizen, deployed by the game alongside another unit
+            return
+        try:
+            x, y = int(x), int(y)
+        except (TypeError, ValueError):
+            return
+        # In particular, never allow the tile search to wander into the
+        # right-hand Unit Manager/Stage Info buttons.
+        if not (30 <= x < 1005 and 240 <= y < 640):
+            self._log(f'[Macro] Defense unit "{name}": position overlaps HUD -- skipping.')
+            return
+        previous_position = self._placed_unit_positions.pop(ordinal, None)
+        if previous_position is not None and not (
+                30 <= previous_position[0] < 1005 and 240 <= previous_position[1] < 640):
+            previous_position = None
+        if self._checkpoint(stop_event):
+            return False
+        if self._find_start_game_button(hwnd)[1] is None:
+            return False
+        if not expedition_vision.is_defense(vision.capture_window_region_bgr(hwnd)):
+            return False
+        # The tile highlighter can align a placement ~18px away from the
+        # saved point. Probe that actual point first, but still select it
+        # afresh: a previous defense's success is never proof of presence.
+        position = previous_position or (x, y)
+        panel = self._select_expedition_unit(hwnd, stop_event, position)
+        if panel is None and position != (x, y):
+            position = (x, y)
+            panel = self._select_expedition_unit(hwnd, stop_event, position)
+        if panel is not None:
+            if ordinal is not None:
+                self._placed_unit_positions[ordinal] = position
+            self._close_expedition_unit_panel(hwnd)
+            self._log(f'[Macro] Defense unit "{name}": selected at its position -- keeping it.')
+            return
+        left, top = vision.ref_to_screen(hwnd, 0, 0)
+        if (self._find_start_game_button(hwnd)[1] is None
+                or not expedition_vision.is_defense(vision.capture_window_region_bgr(hwnd))):
+            return False
+        placement = dict(block, retryUntilPlaced=False)
+        self._log(f'[Macro] Defense unit "{name}": missing -- single placement attempt.')
+        self._run_place_unit_block(hwnd, stop_event, left, top, placement, index,
+                                   macro_name, ordinal, next_is_same_unit=False, verify=False)
+        actual = self._placed_unit_positions.pop(ordinal, (x, y))
+        if (self._find_start_game_button(hwnd)[1] is None
+                or not expedition_vision.is_defense(vision.capture_window_region_bgr(hwnd))):
+            return False
+        if self._select_expedition_unit(hwnd, stop_event, actual) is not None:
+            if ordinal is not None:
+                self._placed_unit_positions[ordinal] = actual
+            self._close_expedition_unit_panel(hwnd)
+            self._log(f'[Macro] Defense unit "{name}": placement confirmed.')
+            return
+        self._close_expedition_unit_panel(hwnd)
+        self._log(f'[Macro] Defense unit "{name}": placement unconfirmed after one attempt -- waiting for the next defense.')
+        self._exit_placement_mode()
+        self._save_debug_screenshot_unconditional(hwnd, f'expedition_defense_unit_{index}_unconfirmed')
 
     def _check_expedition_wave_result(self, hwnd, stop_event: threading.Event) -> str:
         """Expedition doesn't show a Victory popup mid-run. exp_continue is
@@ -64,45 +203,34 @@ class ExpeditionOps:
         webhook a Defeat that never happened). None makes the caller treat
         it the same as any other setup failure: recover to the lobby and
         retry, with nothing false recorded."""
-        # The SAME "Start Game?" confirmation _play_one_match already
-        # clicks once before entering Battle can show up AGAIN mid-run --
-        # confirmed from a real stuck report: exp_continue/continue_2
-        # advanced to a new wave, then the run just sat there silently for
-        # over a minute on an identical "Start Game?" popup that nothing
-        # was checking for anymore, since this poll loop only ever watched
-        # for exp_continue/exp_extract once past the initial click. One-
-        # shot per tick (not the full retried version _play_one_match uses)
-        # is enough here -- a missed click just gets caught on the very
-        # next poll a moment later.
         start_name, start_match = self._find_start_game_button(hwnd)
         if start_match is not None:
-            debug_path = self._debug_save(hwnd, start_name, start_match)
-            suffix = f" Debug: {debug_path}" if debug_path else ""
-            self._log(f'[Macro] Found "{start_name}" again mid-run -- clicking it.{suffix}')
-            # Same Z-deselect as the first Start Game click: mid-run this
-            # popup can appear right after a Battle place/upgrade block, and
-            # a still-selected unit eats the click just as readily here.
-            self._keyboard.tap(ord("Z"))
-            time.sleep(0.1)
-            vision.click_match(self._mouse, hwnd, start_match)
-            # Also clicks dead center of the screen once -- a real stuck
-            # report showed this same button getting re-found and re-clicked
-            # for minutes straight without ever actually going away, which a
-            # click landing but not registering (something invisible eating
-            # it, or the game just not picking up a single click here) fits
-            # better than a detection problem would. A follow-up click
-            # somewhere neutral is cheap and harmless if the first one
-            # already worked, but gives a real shot at clearing whatever's
-            # actually blocking it if it didn't.
-            left, top, _, _ = wm.get_window_rect_screen(hwnd)
-            self._mouse.click(left + self._coords["screen_middle_x"], top + self._coords["screen_middle_y"])
+            if getattr(self, '_exp_defense_state', {}).get('prompt_cleared'):
+                self._exp_defense_state = {}
+            blocks = getattr(self, '_expedition_battle_blocks', [])
+            if not self._prepare_expedition_defense(
+                    hwnd, stop_event, blocks,
+                    getattr(self, '_expedition_first_repeat', True),
+                    (getattr(self, '_current_task', None) or {}).get('macro')):
+                self._note_checkpoint_intercepted()
+                return None
+            if self._checkpoint(stop_event):
+                return None
+            # A reward card can have appeared during unit selection. Defer
+            # starting until the next clear observation in that case.
+            if self._dismiss_reward_card_if_found(hwnd):
+                self._note_checkpoint_intercepted()
+                return None
+            start_name, start_match = self._find_start_game_button(hwnd)
+            if start_match is not None:
+                self._keyboard.tap(ord('Z'))
+                time.sleep(0.1)
+                self._log(f'[Macro] Found "{start_name}" -- starting after defense checks (if applicable).')
+                vision.click_match(self._mouse, hwnd, start_match)
+                if getattr(self, '_exp_defense_state', {}).get('done'):
+                    self._exp_defense_state['start_clicked'] = True
             self._note_checkpoint_intercepted()
-            self._replay_battle_after_restage()
             return None
-
-        # Re-arm on popup disappearance, so repeated frames of one Start
-        # Game cannot rewind Battle, but each later sub-round can.
-        self._battle_replayed = False
 
         # Same idea as the nav_start_game re-check above -- a level-up
         # "Select an upgrade!" reward-card modal (confirmed via a real
@@ -113,6 +241,15 @@ class ExpeditionOps:
         if self._dismiss_reward_card_if_found(hwnd):
             self._note_checkpoint_intercepted()
             return None
+
+        # A card temporarily hiding Start must not re-arm placement. Once
+        # our vote really cleared, the next Start is a new defense even if
+        # two shield nodes are consecutive on the route.
+        state = getattr(self, '_exp_defense_state', {})
+        if expedition_vision.stage(vision.capture_window_region_bgr(hwnd)) in ('setup', 'assault'):
+            self._exp_defense_state = {}
+        elif state:
+            state['prompt_cleared'] = True
 
         # A failed run (team/base wiped) ends on the Defeat result screen
         # with Repeat/Leave Stage -- same panel Story/Raid loses land on, so

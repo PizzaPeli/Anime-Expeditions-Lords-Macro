@@ -9,6 +9,11 @@
 window.addEventListener('keydown', (e) => {
   if (e.key === 'F11') e.preventDefault();
   if (e.key === 'Escape') {
+    const backupModal = document.getElementById('backup-modal');
+    if (backupModal && backupModal.style.display !== 'none') {
+      closeBackupTransfer();
+      return;
+    }
     const faqModal = document.getElementById('faq-modal');
     if (faqModal && faqModal.style.display !== 'none') {
       closeFaqModal();
@@ -207,7 +212,7 @@ function isBlockingOverlayOpen() {
     const el = document.getElementById(id);
     return el && el.style.display !== 'none' && el.style.display !== '';
   };
-  if (['update-modal', 'scale-warning-modal', 'onboarding-modal', 'subscribe-modal', 'faq-modal', 'share-code-modal'].some(isOpen)) return true;
+  if (['update-modal', 'scale-warning-modal', 'onboarding-modal', 'subscribe-modal', 'faq-modal', 'share-code-modal', 'backup-modal'].some(isOpen)) return true;
   if (!captureDanceActive && ['im-modal', 'pu-modal', 'path-name-modal', 'fuel-paths-modal'].some(isOpen)) return true;
   return false;
 }
@@ -2301,6 +2306,9 @@ const TASK_DATA = {
     stages: ['1', '2', '3'],
     fixedDifficulty: 'Hard',
   },
+  bossrush: {
+    label: 'Bossrush', maps: ['District 7'], fixedDifficulty: 'Hard',
+  },
   expedition: {
     label: 'Expedition',
     maps: ['School Grounds', 'Flower Forest', 'Rose Kingdom', 'East Town'],
@@ -2443,6 +2451,7 @@ function defaultTask() {
     infinite_wave_limit: DEFAULT_INFINITE_WAVE_LIMIT,
     extract_after: '1',
     runs_before_lobby: 0,
+    bossrush_gates: 2, bossrush_card: 'random',
     soul_purchases: [{ item: 'final_boss', trigger: 'heat', target: 3 }],
     repeat: 1, team: '', equipment: 'include', play_mode: 'solo', macro: '',
     card_select: 'let_game_decide',
@@ -2574,6 +2583,109 @@ async function importCustomRecordings(recordings) {
   }
 }
 
+let backupImportData = null;
+let backupBusy = false;
+
+function backupSelection() {
+  return ['settings', 'tasks', 'macros', 'resources'].filter(k => {
+    const box = document.getElementById('backup-' + k);
+    return box.checked && !box.disabled;
+  });
+}
+
+function selectAllBackupCategories() {
+  for (const k of ['settings', 'tasks', 'macros', 'resources']) {
+    const box = document.getElementById('backup-' + k);
+    box.checked = !box.disabled;
+  }
+}
+
+async function openBackupTransfer(action = 'export', category = '') {
+  if (backupBusy) return;
+  backupImportData = null;
+  if (action === 'import') {
+    const running = await pywebview.api.is_macro_running();
+    if (running.running) { addLog('[Import / Export] Stop the macro before importing.'); return; }
+    const result = await pywebview.api.import_tasks_file('backup');
+    if (!result || !result.ok) {
+      if (result && result.reason !== 'cancelled') addLog('[Import / Export] ' + result.reason);
+      return;
+    }
+    const data = result.data;
+    if (!data || data.kind !== 'anime-expeditions-backup' || data.version !== 1 || !data.sections) {
+      if (data && data.kind === 'anime-expeditions-settings') {
+        await importSettings(result);
+      } else if (data && (data.kind === 'anime-expeditions-tasks' || (!data.kind && Array.isArray(data.tasks)))) {
+        await importTasks(result);
+      } else if (data && (data.kind === 'anime-expeditions-templates' || data.kind === 'anime-expeditions-template-pack')) {
+        await importTemplates(result);
+      } else {
+        addLog('[Import / Export] This file is not a supported backup or legacy export.');
+      }
+      return;
+    }
+    backupImportData = data;
+  }
+  for (const k of ['settings', 'tasks', 'macros', 'resources']) {
+    const box = document.getElementById('backup-' + k);
+    box.disabled = !!backupImportData && !Object.hasOwn(backupImportData.sections, k);
+    box.checked = !box.disabled && (!!backupImportData || !category || category === k);
+  }
+  document.getElementById('backup-title').textContent = backupImportData ? 'Import Backup' : 'Export Backup';
+  document.getElementById('backup-import-options').style.display = backupImportData ? 'block' : 'none';
+  document.getElementById('backup-apply').textContent = backupImportData ? 'Import Selected' : 'Export Selected';
+  document.getElementById('backup-message').textContent = '';
+  document.getElementById('backup-modal').style.display = 'flex';
+  await pywebview.api.hide_game();
+}
+
+function closeBackupTransfer() {
+  if (backupBusy) return;
+  document.getElementById('backup-modal').style.display = 'none';
+  backupImportData = null;
+  restoreGameIfDashboard();
+}
+
+async function applyBackupTransfer() {
+  if (backupBusy) return;
+  const selected = backupSelection();
+  const message = document.getElementById('backup-message');
+  if (!selected.length) { message.textContent = 'Select at least one category.'; return; }
+  const mode = document.getElementById('backup-mode').value;
+  if (backupImportData && mode === 'replace' && !confirm(
+      'Replace ' + selected.join(', ') + '?\n\nSelected queues, presets, and macro libraries are replaced. Bundled dependencies with matching names are overwritten. Other categories stay as they are.')) return;
+  backupBusy = true;
+  document.getElementById('backup-apply').disabled = true;
+  message.textContent = 'Working…';
+  try {
+    clearTimeout(taskSaveTimer);
+    await pywebview.api.save_tasks(taskCards);
+    let result;
+    if (backupImportData) {
+      result = await pywebview.api.apply_backup_bundle(backupImportData, selected, mode);
+    } else {
+      const prepared = await pywebview.api.create_backup_bundle(selected);
+      if (!prepared || !prepared.ok) throw new Error(prepared && prepared.reason || 'Could not prepare backup.');
+      result = await pywebview.api.export_tasks_file(prepared.data, 'backup');
+    }
+    if (!result || !result.ok) throw new Error(result && result.reason || 'Transfer failed.');
+    if (backupImportData) {
+      await Promise.all([refreshTaskQueue(), refreshTaskPresets(), refreshTemplateList(),
+        loadSettingsUI(), loadWebhookUI(), refreshChallengeScreen(), refreshCraftingScreen(),
+        refreshFuelScreen(), refreshAutoShopScreen(), refreshSavedPaths(), refreshSavedRecordings(),
+        loadDefaultWalkPaths(), loadEncounterWalkPaths(), loadMacroCoords()]);
+    }
+    message.textContent = backupImportData ? 'Imported successfully. Restart the app to apply all window and capture settings.' : 'Backup exported successfully.';
+    addLog('[Import / Export] ' + message.textContent + (result.path ? ' ' + result.path : ''));
+  } catch (e) {
+    message.textContent = e.message === 'cancelled' ? 'Cancelled.' : 'Failed: ' + (e.message || e);
+    addLog('[Import / Export] ' + message.textContent);
+  } finally {
+    backupBusy = false;
+    document.getElementById('backup-apply').disabled = false;
+  }
+}
+
 async function exportSettings() {
   try {
     const s = await pywebview.api.get_settings();
@@ -2592,9 +2704,9 @@ async function exportSettings() {
   }
 }
 
-async function importSettings() {
+async function importSettings(loadedResult = null) {
   try {
-    const result = await pywebview.api.import_tasks_file();
+    const result = loadedResult || await pywebview.api.import_tasks_file();
     if (!result || !result.ok) {
       if (!result) {
         addLog('[Settings] Import failed: the file dialog could not be opened.');
@@ -2666,10 +2778,10 @@ async function exportTasks() {
   else addLog(`[Task] Export failed: ${result.reason || 'error'}`);
 }
 
-async function importTasks() {
+async function importTasks(loadedResult = null) {
   let result = null;
   let errMsg = null;
-  try { result = await pywebview.api.import_tasks_file('tasks'); }
+  try { result = loadedResult || await pywebview.api.import_tasks_file('tasks'); }
   catch (e) { errMsg = (e && e.message) || String(e); }
   if (!result || !result.ok) {
     if (!result) {
@@ -2929,6 +3041,7 @@ function setTaskProp(id, key, value) {
   // rebuilt when the *shape* changed so typing in the Repeat field doesn't
   // lose focus mid-keystroke to an innerHTML swap.
   const structural = ['mode', 'stage', 'card_select'];
+  if (key === 'bossrush_gates') t.bossrush_gates = Math.max(2, Math.min(6, parseInt(value, 10) || 2));
   if (key === 'mode') {
     const d = TASK_DATA[t.mode];
     if (d.maps) t.map = d.maps[0];
@@ -2942,6 +3055,12 @@ function setTaskProp(id, key, value) {
     // Tournament silently waiting on an Enter Matchmaking button.
     if (d.isTournament || d.isSoulFurnace) t.play_mode = 'solo';
     if (d.isSoulFurnace) t.difficulty = 'Hard';
+    if (t.mode === 'bossrush') {
+      t.difficulty = 'Hard';
+      t.stage = 'Boss Rush';
+      t.bossrush_gates = Math.max(2, Math.min(6, parseInt(t.bossrush_gates, 10) || 2));
+      t.bossrush_card = ['random', 'dark', 'light', 'flame'].includes(t.bossrush_card) ? t.bossrush_card : 'random';
+    }
     if (d.isTower) {
       t.map = d.maps[0];
       t.stage = d.stages[0];
@@ -2971,7 +3090,7 @@ function taskOpts(list, current, fmt) {
 }
 
 // One accent per mode so the queue scans by color before you even read it.
-const TASK_MODE_COLORS = { soul_furnace: 'var(--brand)', story: 'var(--brand)', raid: 'var(--brand)', expedition: 'var(--brand)', tournament: 'var(--brand)', tower: 'var(--brand)', portals: 'var(--brand)' };
+const TASK_MODE_COLORS = { bossrush: 'var(--brand)', soul_furnace: 'var(--brand)', story: 'var(--brand)', raid: 'var(--brand)', expedition: 'var(--brand)', tournament: 'var(--brand)', tower: 'var(--brand)', portals: 'var(--brand)' };
 
 function portalSlotsReady(t) {
   return !!String(t.portal_name || '').trim();
@@ -2984,7 +3103,7 @@ function taskSummary(t) {
   let title = d.label;
   if (t.mode === 'story' || t.mode === 'raid') {
     title += ` · ${t.map} · ${/^\d+$/.test(t.stage) ? 'Stage ' + t.stage : t.stage}`;
-  } else if (t.mode === 'expedition' || t.mode === 'tournament') {
+  } else if (t.mode === 'expedition' || t.mode === 'tournament' || t.mode === 'bossrush') {
     title += ` · ${t.map}`;
   } else if (t.mode === 'event') {
     title += ` · Act ${t.stage}`;
@@ -2993,6 +3112,7 @@ function taskSummary(t) {
   const diff = ((t.mode === 'story' && !specialStage) || t.mode === 'expedition') ? t.difficulty
              : (d.fixedDifficulty || specialStage) ? 'Hard' : '';
   const meta = [
+    t.mode === 'bossrush' ? `${t.bossrush_gates || 2} gates / ${t.bossrush_card || 'random'} cards` : '',
     t.mode === 'portals' ? '' : `×${t.repeat}`,
     diff,
     t.mode === 'story' && t.stage === 'Infinite'
@@ -3073,7 +3193,7 @@ function renderTaskBuilder() {
   const field = (label, control, tooltip = '') => `<div class="task-field" ${tooltip ? `data-tooltip="${escapeHtml(tooltip)}"` : ''}><span>${label}</span>${control}</div>`;
 
   const fields = [
-    field('Mode', sel('mode', Object.keys(TASK_DATA), k => TASK_DATA[k].label, 'Select game mode: Story, Raid, Expedition, Event, Tournament, Tower, or Portals'), 'Choose game mode'),
+    field('Mode', sel('mode', Object.keys(TASK_DATA), k => TASK_DATA[k].label, 'Select game mode: Story, Raid, Bossrush, Expedition, Event, Tournament, Tower, or Portals'), 'Choose game mode'),
   ];
   // Portals counts portals, not repeats -- its "Portals Then Exit" field is
   // the count (and can be 0 = until stopped, which Repeat can't express), so
@@ -3094,6 +3214,12 @@ function renderTaskBuilder() {
     fields.push(field('Map', sel('map', d.maps, null, 'Select map')));
     const stageTooltip = t.mode === 'raid' ? 'Select Raid Act 1, Act 2, or Act 3' : 'Select Stage 1-5, Infinite, or Mastery';
     fields.push(field('Stage', sel('stage', d.stages, s => /^\d+$/.test(s) ? 'Stage ' + s : s, stageTooltip), stageTooltip));
+  } else if (t.mode === 'bossrush') {
+    fields.push(field('Map', sel('map', d.maps, null, 'Select Bossrush map')));
+    fields.push(field('Gates before boss', sel('bossrush_gates', [2, 3, 4, 5, 6], null),
+      'Clear gates in order, then choose Fight Boss. Default: 2 gates.'));
+    fields.push(field('Buff cards', sel('bossrush_card', ['random', 'dark', 'light', 'flame'],
+      c => c[0].toUpperCase() + c.slice(1)), 'Random chooses a new card each gate; a specific type is always selected.'));
   } else if (t.mode === 'expedition') {
     fields.push(field('Expedition', sel('map', d.maps, null, 'Select Expedition map')));
   } else if (t.mode === 'tournament') {
@@ -3183,6 +3309,7 @@ function renderTaskBuilder() {
     <div class="task-builder-grid">${fields.join('')}</div>
     ${extractHint}
     ${infiniteHint}
+    ${t.mode === 'bossrush' ? '<div class="wh-hint">Walks gates in order from spawn. Units and custom macro progress carry across gates and the boss; Pre Start runs once per complete Bossrush run.</div>' : ''}
     ${t.mode === 'soul_furnace' ? renderSoulPurchases(t) : ''}
     <div class="wh-hint" style="margin-top: 8px;">The macro's Team Loadout comes from its template (Macro Manager tab).</div>
     <div class="flex items-center gap-2" style="margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border);">
@@ -3454,7 +3581,32 @@ async function refreshChallengeScreen() {
     challengeState = null;
   }
   await refreshTaskTemplates();  // shares the same Macro Operation list Task Builder uses
+  await refreshRiftSettings();
   renderChallengeScreen();
+}
+
+let riftState = { enabled: false, macro: '' };
+async function refreshRiftSettings() {
+  try { riftState = await pywebview.api.get_rift_settings(); } catch (e) { return; }
+  document.getElementById('toggle-rifts')?.classList.toggle('on', riftState.enabled);
+  const summary = document.getElementById('rift-summary');
+  if (summary) {
+    summary.textContent = riftState.enabled ? 'Enabled' : 'Disabled';
+    summary.classList.toggle('active', !!riftState.enabled);
+  }
+  const select = document.getElementById('rift-macro');
+  if (select) {
+    const names = [...new Set([...taskTemplates, ...(riftState.macro ? [riftState.macro] : [])])];
+    select.innerHTML = '<option value="">Auto Play</option>' + names.map(n =>
+      `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join('');
+    select.value = riftState.macro;
+  }
+}
+
+async function saveRiftSettings(enabled = riftState.enabled) {
+  const macro = document.getElementById('rift-macro').value;
+  try { await pywebview.api.save_rift_settings(enabled, macro); } catch (e) {}
+  await refreshRiftSettings();
 }
 
 function renderChallengeScreen() {
@@ -3852,14 +4004,6 @@ function selectAutoShopTab(key) {
   renderAutoShopScreen();
 }
 
-async function setAutoShopView(view) {
-  try {
-    const result = await pywebview.api.set_auto_shop_view(view);
-    if (!result.ok) return;
-  } catch (e) { return; }
-  await refreshAutoShopScreen();
-}
-
 function autoShopStatusLabel(status) {
   return {
     completed: 'Complete',
@@ -3886,26 +4030,14 @@ function renderAutoShopScreen() {
   const state = autoShopState;
   const shopKey = autoShopTab;
   const goldShop = state && state.shops ? state.shops[shopKey] : null;
-  const view = state && state.view === 'squares' ? 'squares' : 'list';
   for (const key of ['gold_shop', 'expedition_shop']) {
     const button = document.getElementById('auto-shop-tab-' + key);
     button?.classList.toggle('active', shopKey === key);
     button?.setAttribute('aria-selected', String(shopKey === key));
   }
-  for (const key of ['list', 'squares']) {
-    const button = document.getElementById('auto-shop-view-' + key);
-    button?.classList.toggle('active', view === key);
-    button?.setAttribute('aria-pressed', String(view === key));
-  }
   const heading = document.getElementById('auto-shop-selected-name');
   if (heading) heading.textContent = goldShop ? goldShop.name : 'Shop';
   const items = (goldShop && goldShop.items) || [];
-  const enabledItems = items.filter(item => item.enabled);
-  const completeItems = enabledItems.filter(
-    item => ['completed', 'out_of_stock', 'max_inventory'].includes(
-      (item.state || {}).status
-    )
-  );
 
   const summary = document.getElementById('resource-auto-shop-summary');
   if (summary) {
@@ -3914,7 +4046,14 @@ function renderAutoShopScreen() {
   }
   const details = document.getElementById('resource-auto-shop-details');
   if (details) {
-    details.textContent = `${goldShop ? goldShop.name : "Shop"}: ${enabledItems.length} enabled | ${completeItems.length} complete`;
+    const enabledShops = Object.values((state && state.shops) || {}).filter(shop => shop.enabled);
+    details.textContent = enabledShops.map(shop => {
+      const enabled = (shop.items || []).filter(item => item.enabled);
+      const complete = enabled.filter(item =>
+        ['completed', 'out_of_stock', 'max_inventory'].includes((item.state || {}).status)
+      );
+      return `${shop.name}: ${enabled.length} enabled | ${complete.length} complete`;
+    }).join(' · ') || 'No shops enabled';
     details.title = details.textContent;
   }
   document.getElementById('toggle-auto-shop-enabled')?.classList.toggle(
@@ -3932,7 +4071,7 @@ function renderAutoShopScreen() {
     list.innerHTML = '<div class="rh-empty">Couldn\'t load Auto Shop settings.</div>';
     return;
   }
-  list.className = 'auto-shop-items auto-shop-' + view;
+  list.className = 'auto-shop-items auto-shop-list';
   list.innerHTML = items.map(item => {
     const isMax = String(item.target).toLowerCase() === 'max';
     const numericTarget = isMax ? '' : item.target;
@@ -3945,7 +4084,7 @@ function renderAutoShopScreen() {
                  onclick="resetAutoShopItemToday('${shopKey}', '${item.key}')">Reset Today</button>`
       : '';
     return `
-      <div class="task-card auto-shop-item" data-key="${escapeHtml(item.key)}" style="--tqc: var(--amber); cursor: default; padding: 10px 14px; margin-bottom: 6px;">
+      <div class="task-card auto-shop-item" data-key="${escapeHtml(item.key)}" style="--tqc: var(--amber); cursor: default;">
         <div class="tq-text auto-shop-item-body">
           <div class="auto-shop-item-header">${resetToday}</div>
           <div class="auto-shop-item-info" style="display: flex; align-items: center; gap: 12px; min-width: 0; flex: 1;">
@@ -7554,10 +7693,10 @@ async function exportTemplates() {
   else addLog(`[Macro Manager] Export failed: ${result.reason || 'error'}`);
 }
 
-async function importTemplates() {
+async function importTemplates(loadedResult = null) {
   let result = null;
   let errMsg = null;
-  try { result = await pywebview.api.import_tasks_file('templates'); }
+  try { result = loadedResult || await pywebview.api.import_tasks_file('templates'); }
   catch (e) { errMsg = (e && e.message) || String(e); }
   if (!result || !result.ok) {
     if (!result) {

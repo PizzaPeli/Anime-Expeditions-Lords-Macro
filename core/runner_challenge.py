@@ -561,6 +561,9 @@ class ChallengeOps:
         equivalent of _run_task_setup, except there's no map/difficulty to
         pick (the game assigns both at random), just a fixed-position
         stage row and a screen-load confirmation."""
+        if not self._rift_lobby_boundary(
+                hwnd, stop_event, getattr(self, '_rift_default_walk_paths', {}), webhook):
+            return False
         if not self._open_challenge_screen(hwnd, stop_event):
             return False
 
@@ -579,6 +582,9 @@ class ChallengeOps:
     def _enter_daily_challenge_stage(self, hwnd, stop_event: threading.Event, play_mode: str,
                                       coords: dict, webhook: dict) -> str:
         """Enter Daily Challenge, or report its gray unavailable state."""
+        if not self._rift_lobby_boundary(
+                hwnd, stop_event, getattr(self, '_rift_default_walk_paths', {}), webhook):
+            return 'stopped'
         if not self._open_challenge_screen(hwnd, stop_event):
             return None
         # Available and unavailable are the SAME card in two states, and a
