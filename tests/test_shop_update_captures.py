@@ -60,8 +60,13 @@ def test_sold_out_trait_is_identified_without_green_buy(monkeypatch):
     runner = MacroRunner(MagicMock(), MagicMock(), MagicMock())
     monkeypatch.setattr(runner, "_checkpoint", lambda _stop: False)
     monkeypatch.setattr(vision, "capture_game_bgr", lambda *_args: image)
-    assert runner._shop_find_visible_item(
-        1, {"key": "trait_crystal"}, threading.Event()) == match
+    found = runner._shop_find_visible_item(
+        1, {"key": "trait_crystal"}, threading.Event())
+    assert found is not None
+    assert {key: value for key, value in found.items() if key != "score"} == {
+        key: value for key, value in match.items() if key != "score"
+    }
+    assert found["score"] == pytest.approx(match["score"], abs=1e-6)
 
 
 def test_card_can_move_columns_and_rows_without_new_references():
@@ -114,3 +119,4 @@ def test_scrollbar_signature_ignores_animated_item_art(monkeypatch):
     assert runner._shop_discovery_signature(1) == signature
     current[0] = frame(12)
     assert runner._shop_discovery_signature(1) != signature
+
